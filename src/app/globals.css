@@ -33,11 +33,18 @@ body {
 }
 .custumer {
   padding: 4px;
-  margin: 16px 0 16px 0;
-  width: 100%;
+  margin: 16px auto;
   border: solid 1px var(--foreground);
 }
 .custumer-list {
   width: 30%;
   padding: 10px;
+  
+  
 }
+.add-btn {
+  margin: 32px auto;
+  border: solid 1px var(--foreground);
+  padding: 14px;
+  width: 400px;
+};
