@@ -1,9 +1,22 @@
+import { IData } from '@/app/[customer]/page'
 import './form.css'
+import axios from 'axios'
+export default async function FormCus ({id}:{id: string}) {
 
-export default async function FormCus () {
+
+
+    let dataInvoice = await axios.get(`http://127.0.0.1:8090/api/collections/invoices/records/${id}`)
+    let dataCustomer = await axios.get(`http://127.0.0.1:8090/api/collections/customers/records/${dataInvoice.data.customer}`)
+    let dataServices = await axios.get(`http://127.0.0.1:8090/api/collections/services/records/${dataCustomer.data.defaultservices[0]}`)
+    let services = dataServices.data
+    
+    let custumer = dataCustomer.data
+    console.log(dataCustomer)
+
+
     let num = "0000"
     let date = "20 августа 2025"
-    let name = "Название организации"
+    let name = dataCustomer.data.fullName
     let inn = "123456789"
     let service = {
         name: "Оплата по договору 481 от 21 августа 2024 остаточной суммы",
@@ -53,8 +66,8 @@ export default async function FormCus () {
         </div>
 
         <div>
-            <p><strong>Плательщик:</strong> {name}</p>
-            <p>ИНН: {inn}</p>
+            <p><strong>Плательщик:</strong> {custumer.fullname}</p>
+            <p>ИНН: {custumer.inn}</p>
         </div>
 
         <table>
@@ -69,22 +82,15 @@ export default async function FormCus () {
                 </tr>
             </thead>
             <tbody>
-                <tr>
+                {<tr>
                     <td>1</td>
                     <td>{service.name}</td>
                     <td>шт</td>
                     <td>1</td>
                     <td>{service.price}</td>
                     <td>{convertToCost(service.price)}</td>
-                </tr>
-                <tr>
-                    <td>1</td>
-                    <td>{service.name}</td>
-                    <td>шт</td>
-                    <td>1</td>
-                    <td>{service.price}</td>
-                    <td>{convertToCost(service.price)}</td>
-                </tr>
+                </tr>}
+            
             </tbody>
             <tfoot>
                 <tr>
@@ -108,6 +114,7 @@ export default async function FormCus () {
             <p>Руководитель предприятия: Л.В. Мыльникова</p>
            
         </div>
+        
     </div>
 
 

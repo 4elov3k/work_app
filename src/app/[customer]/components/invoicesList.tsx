@@ -9,15 +9,8 @@ export default function InvoicesList ({slug}:{slug:string}){
    
     const [fetchItems, setFetchItems] = useState<Iitem[]>([{id:"1"}])
     const [list, setList] = useState<boolean>(false)
-
-    
-   
- 
     const handleClickAdd = (evet: React.MouseEvent<HTMLDivElement>) => {
-        
         addInvoice()
-        
-        
       }
   
     useEffect(()=>{
@@ -37,21 +30,12 @@ export default function InvoicesList ({slug}:{slug:string}){
               setFetchItems([{id:"1"}])
               return
             }
-
-            
-            
             setFetchItems(data.items)
-           
           })
       }, [list])
-      
-
-
-
-
 
       const defaultItem: Iitem = {
-        "customer": "sy3x0ul7zy63e0w",
+        "customer": `${slug}`,
         "number": "123",
         "date": "24 июля 2014"
     };
@@ -79,8 +63,9 @@ export default function InvoicesList ({slug}:{slug:string}){
                    {item.date}
                </div>
              </div>
+             
            ))}
-
+            
           
            <div className="add-btn text-center cursor-pointer w-[400px]"
                 onClick={handleClickAdd}>

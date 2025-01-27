@@ -21,7 +21,7 @@ export default async function Page({
             {(await params).invoice}
 
 
-            <FormCus/>
+            <FormCus id={(await params).invoice}/>
         </div>
     )
 

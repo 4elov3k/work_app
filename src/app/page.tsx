@@ -19,7 +19,9 @@ export interface Item {
   created: string
   id: string
   name: string
+  fullname:string
   updated: string
+  inn:string
 }
 
 
@@ -63,12 +65,18 @@ useEffect(() => {
 
                 
                   <li key={item.id} className="custumer">
-                    <div>
-                        <strong><Link href={`/${item.id ?? '/'}`}>{item.name}</Link></strong>
-                    </div>
-                    <div>
-                        {item.name} ИНН: {item.id}
-                    </div>
+                    <Link href={`/${item.id ?? '/'}`}>
+                      <div>
+                          <strong>{item.name}</strong>
+                      </div>
+                      <div>
+                          <strong>{item.fullname}</strong>
+                          
+                      </div>
+                      <div>
+                        ИНН: {item.inn}
+                      </div>
+                    </Link>
                   </li>
                 
               ) )}
