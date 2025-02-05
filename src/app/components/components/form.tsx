@@ -1,4 +1,5 @@
-import { IData } from '@/app/[customer]/page'
+import { IData, Iitem } from '@/app/[customer]/page'
+import * as rubles from "rubles"
 import './form.css'
 import axios from 'axios'
 export default async function FormCus ({id}:{id: string}) {
@@ -11,18 +12,17 @@ export default async function FormCus ({id}:{id: string}) {
     let services = dataServices.data
     
     let custumer = dataCustomer.data
-    console.log(dataCustomer)
+    
+  
+    
+    let num = dataInvoice.data.number
+    let date = dataInvoice.data.date
 
-
-    let num = "0000"
-    let date = "20 августа 2025"
-    let name = dataCustomer.data.fullName
-    let inn = "123456789"
     let service = {
-        name: "Оплата по договору 481 от 21 августа 2024 остаточной суммы",
+        name: services.name    ,
         unit: "шт",
         count: 1,
-        price: 39786,
+        price: services.price,
     };
     function convertToCost(price: number | string): string {
         let amount: number;
@@ -87,31 +87,34 @@ export default async function FormCus ({id}:{id: string}) {
                     <td>{service.name}</td>
                     <td>шт</td>
                     <td>1</td>
-                    <td>{service.price}</td>
-                    <td>{convertToCost(service.price)}</td>
+                    <td className='whitespace-nowrap w-[1%]'>{convertToCost(service.price)}</td>
+                    <td className='whitespace-nowrap w-[1%]'>{convertToCost(service.price)}</td>
                 </tr>}
+                
             
             </tbody>
             <tfoot>
                 <tr>
-                    <td colSpan="5">Итого:</td>
-                    <td>31,250.00</td>
+                    <td colSpan={5}>Итого:</td>
+                    <td>{convertToCost(service.price)}</td>
                 </tr>
                 <tr>
-                    <td colSpan="5">Без налога (НДС):</td>
-                    <td>31,250.00</td>
+                    <td colSpan={5}>Без налога (НДС):</td>
+                    <td>{convertToCost(service.price)}</td>
                 </tr>
                 <tr>
-                    <td colSpan="5">Всего к оплате:</td>
-                    <td>31,250.00</td>
+                    <td colSpan={5}>Всего к оплате:</td>
+                    <td>{convertToCost(service.price)}</td>
                 </tr>
             </tfoot>
         </table>
 
-        <p>Всего наименований 1, на сумму тридцать одна тысяча двести пятьдесят рублей 00 копеек.</p>
+        <p>Всего наименований 1, на {rubles.rubles(service.price)}</p>
 
         <div className="signature">
-            <p>Руководитель предприятия: Л.В. Мыльникова</p>
+            <p className='mb-4'>Руководитель предприятия: Л.В. Мыльникова</p>
+            ______________________
+            <p>М.П</p>
            
         </div>
         

@@ -18,7 +18,7 @@ export default async function Page({
                 </div>
                 </nav>
                 
-            {(await params).invoice}
+            
 
 
             <FormCus id={(await params).invoice}/>

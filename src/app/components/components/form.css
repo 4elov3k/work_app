@@ -4,7 +4,8 @@
 
 .container {
     width: 210mm;
-    height: 297mm;
+    min-width: 210mm;
+    
     margin: auto;
     background: #fff;
     padding: 30px;
