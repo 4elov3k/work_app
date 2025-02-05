@@ -21,6 +21,8 @@ export interface Iitem {
 	services?: string[]
 	number?: string
 	date?: string
+  name?: string
+  price?: string
 	created?: string
 	updated?: string
   }

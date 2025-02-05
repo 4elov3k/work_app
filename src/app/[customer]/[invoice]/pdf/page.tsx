@@ -4,7 +4,7 @@ export default function Pdf () {
     return (
 
         <>
-        <FormCus id="vlcw6l17305fi75"></FormCus> 
+        <FormCus id="" ></FormCus> 
         </>
     )
 }
