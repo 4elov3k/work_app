@@ -3,19 +3,19 @@
 
 
 .container {
-    width: 210mm;
-    min-width: 210mm;
     
+    
+    width: 210mm;
     margin: auto;
     background: #fff;
     padding: 30px;
     box-sizing: border-box;
-    border: 1px solid #ccc;
-    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    
+    box-shadow: 0 0 1px rgba(0, 0, 0, 0.1);
     font-family: Arial, sans-serif;
     line-height: 1.5;
 
-    background-color: #f9f9f9;
+    
 }
 h1 {
     text-align: center;
@@ -31,12 +31,12 @@ table {
     margin-bottom: 20px;
 }
 th, td {
-    border: 1px solid #000;
+    border: 0.3mm solid #00000080;
     padding: 8px;
     text-align: left;
 }
 th {
-    background-color: #f2f2f2;
+    background-color: #ffffff;
 }
 .signature {
     margin-top: 30px;
@@ -46,12 +46,26 @@ th {
     height: 80px;
 }
 @media print {
+   
     body {
         background: none;
-        margin: 0;
+        
+        padding: 3mm;
+        
     }
     .container {
+        
         box-shadow: none;
         border: none;
+        padding: 8mm;
+                
     }
+    .not-print {
+        
+        display: none;
+    }
+    .wrapper{
+        width: 100%;
+    }
+    
 }

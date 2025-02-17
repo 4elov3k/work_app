@@ -12,10 +12,12 @@ export default function InvoicesList ({slug}:{slug:string}){
     const [isOpen, setIsOpen] = useState<boolean>(false)
     const [number, setNumber] =useState<string>("")
     const [date, setDate] =useState<string>("")
-	const [serviceName, setServiceName] =useState<string>("")
-	const [servicePrice, setServicePrice] =useState<string>("")
-	const [serviceDefault, setServiceDefault] =useState<boolean>(true)
+    const [serviceName, setServiceName] =useState<string>("")
+    const [servicePrice, setServicePrice] =useState<string>("")
+    const [serviceDefault, setServiceDefault] =useState<boolean>(true)
+    
     const handleClickOpen = (event: React.MouseEvent<HTMLDivElement>) => {
+
       setIsOpen(!isOpen)
     }
     
@@ -45,7 +47,7 @@ export default function InvoicesList ({slug}:{slug:string}){
     
     function addInvoice(dataToFetch:Iitem) {
         
-		fetch("http://127.0.0.1:8090/api/collections/invoices/records", {
+		return fetch("http://127.0.0.1:8090/api/collections/invoices/records", {
             method:"POST",
             headers: {
                 'Content-Type': 'application/json;charset=utf-8'
@@ -53,42 +55,60 @@ export default function InvoicesList ({slug}:{slug:string}){
             body: JSON.stringify(dataToFetch)
         }).then(() => setList(!list));
         
+        
 	}
 	function addService(serviceToFetch:Iitem) {
         
-		fetch("http://127.0.0.1:8090/api/collections/services/records", {
+		 return fetch("http://127.0.0.1:8090/api/collections/services/records", {
             method:"POST",
             headers: {
                 'Content-Type': 'application/json;charset=utf-8'
               },
             body: JSON.stringify(serviceToFetch)
-        }).then(() => setList(!list));
-        
+        }).then(response => response.json())
+        .then(data => {
+            
+            const dataToFetch: Iitem = {
+                number: number,
+                date: newDate,
+                services: data.id,
+                customer: slug
+            }
+            
+            return addInvoice(dataToFetch)
+        })
+      
 	}
+
+
+
+
 	const newDate = date.split("-").reverse().join(".")
 	const handleClickAdd = (event: React.MouseEvent<HTMLButtonElement>) => {
 		
-		const dataToFetch: Iitem = {
-			number: number,
-			date: newDate,
-			customer: `${slug}`
-		}
+
+        
+        
 		const serviceToFetch:Iitem = {
 			name: serviceName,
 			price: servicePrice,
-			
 		}
-		addService(serviceToFetch)
-        addInvoice(dataToFetch)
-		setNumber("")
-		setDate("")
-		setServiceName("")
-		setServicePrice("")
-		setIsOpen(!isOpen)
-		
+        
+        addService(serviceToFetch)
+        
+   
+    
+        setNumber("")
+        setDate("")
+        setServiceName("")
+        setServicePrice("")
+        setIsOpen(!isOpen)
+    
+   
+    
       }
 	  
-
+      
     return (
        <>
            {fetchItems.map((item) => (
@@ -98,6 +118,7 @@ export default function InvoicesList ({slug}:{slug:string}){
                </div>
                <div>
                    {item.date}
+                   
                </div>
              </div>
              

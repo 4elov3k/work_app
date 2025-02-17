@@ -5,11 +5,15 @@ import axios from 'axios'
 export default async function FormCus ({id}:{id: string}) {
 
 
-
+    
     let dataInvoice = await axios.get(`http://127.0.0.1:8090/api/collections/invoices/records/${id}`)
     let dataCustomer = await axios.get(`http://127.0.0.1:8090/api/collections/customers/records/${dataInvoice.data.customer}`)
-    let dataServices = await axios.get(`http://127.0.0.1:8090/api/collections/services/records/${dataCustomer.data.defaultservices[0]}`)
-    let services = dataServices.data
+    let dataServices = await axios.get(`http://127.0.0.1:8090/api/collections/invoices/records/${id}?expand=services`)
+    
+    
+    
+    let services = dataServices.data.expand.services
+  
     
     let custumer = dataCustomer.data
     
@@ -17,13 +21,13 @@ export default async function FormCus ({id}:{id: string}) {
     
     let num = dataInvoice.data.number
     let date = dataInvoice.data.date
-
-    let service = {
-        name: services.name    ,
-        unit: "шт",
-        count: 1,
-        price: services.price,
-    };
+    let sum = 0
+    services.forEach(element => {
+        element = Number(element.price)
+       sum += element
+    });
+    
+    
     function convertToCost(price: number | string): string {
         let amount: number;
         
@@ -45,7 +49,7 @@ export default async function FormCus ({id}:{id: string}) {
       
         return result;
       }
-    
+      
    return ( 
    
     <div className="container text-black">
@@ -82,34 +86,35 @@ export default async function FormCus ({id}:{id: string}) {
                 </tr>
             </thead>
             <tbody>
-                {<tr>
+                {services.map((service) => (<tr key={service.id}>
                     <td>1</td>
                     <td>{service.name}</td>
                     <td>шт</td>
                     <td>1</td>
                     <td className='whitespace-nowrap w-[1%]'>{convertToCost(service.price)}</td>
                     <td className='whitespace-nowrap w-[1%]'>{convertToCost(service.price)}</td>
-                </tr>}
+                </tr>))}
                 
             
             </tbody>
             <tfoot>
                 <tr>
                     <td colSpan={5}>Итого:</td>
-                    <td>{convertToCost(service.price)}</td>
+                    <td>{convertToCost(sum)}</td>
                 </tr>
                 <tr>
                     <td colSpan={5}>Без налога (НДС):</td>
-                    <td>{convertToCost(service.price)}</td>
+                    <td>{convertToCost(sum)}</td>
                 </tr>
                 <tr>
                     <td colSpan={5}>Всего к оплате:</td>
-                    <td>{convertToCost(service.price)}</td>
+                    <td>{convertToCost(sum)}</td>
                 </tr>
             </tfoot>
+           
+        
         </table>
-
-        <p>Всего наименований 1, на {rubles.rubles(service.price)}</p>
+        <p>Всего наименований {services.length}, на {rubles.rubles(sum)}</p>
 
         <div className="signature">
             <p className='mb-4'>Руководитель предприятия: Л.В. Мыльникова</p>
@@ -117,6 +122,7 @@ export default async function FormCus ({id}:{id: string}) {
             <p>М.П</p>
            
         </div>
+        
         
     </div>
 
