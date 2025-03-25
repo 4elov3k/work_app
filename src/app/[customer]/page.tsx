@@ -2,6 +2,7 @@
 import axios from "axios"
 import Back from "../components/components/routeBack"
 import InvoicesList from "./components/invoicesList"
+import Lists from "./components/lists"
 
 export interface IData {
   collectionId?: string
@@ -44,9 +45,10 @@ export default async function Page({
     
     return (
       <div className="wrapper">
-		<Back/>
-		<InvoicesList slug={slug}/>
-		
+        <Back/>
+        <Lists slug={slug}/>
+        
+        
       </div>
       
 
