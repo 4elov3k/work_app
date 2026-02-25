@@ -1,35 +1,30 @@
 "use client"
-import InvoicesList from "./invoicesList"
-import СertificateList from "./certificateList" 
-import { useState } from "react"
+import ContractsList from "./contractsList"
+import ServicesList from "./servicesList"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Folder, Wrench } from "lucide-react"
 
+export default function Lists({ slug }: { slug: string }) {
+  return (
+    <Tabs defaultValue="contracts" className="w-full">
+      <TabsList className="grid w-full max-w-md grid-cols-2">
+        <TabsTrigger value="contracts" className="flex items-center gap-2">
+          <Folder className="h-4 w-4" />
+          Договоры
+        </TabsTrigger>
+        <TabsTrigger value="services" className="flex items-center gap-2">
+          <Wrench className="h-4 w-4" />
+          Услуги
+        </TabsTrigger>
+      </TabsList>
 
+      <TabsContent value="contracts" className="mt-6">
+        <ContractsList slug={slug} />
+      </TabsContent>
 
-
-
-
-
-export default function Lists ({slug}:{slug:string}) {
-    const [isOpen, setIsOpen] = useState(false);
-    const handleChenge = () => { 
-        setIsOpen(!isOpen)
-    }
-
-    return (
-
-
-        <div>
-            <div className="flex">
-                <button disabled={isOpen} data-selected={isOpen} className="data-[selected=true]:border-b-2 mx-8 pb-2" onClick={handleChenge}>Счета</button>
-                <button disabled={!isOpen} data-selected={!isOpen} className="data-[selected=true]:border-b-2 mx-8 pb-2" onClick={handleChenge}>Акты</button>
-
-            </div>
-            
-           
-            
-            {isOpen && <InvoicesList slug={slug}/>}
-            {!isOpen && <СertificateList slug={slug}/> }
-        
-        </div>
-    )
+      <TabsContent value="services" className="mt-6">
+        <ServicesList />
+      </TabsContent>
+    </Tabs>
+  )
 }

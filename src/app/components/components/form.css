@@ -1,71 +1,45 @@
+/* Стили для печати счетов */
 
-
-
-
-.container {
-    
-    
-    width: 210mm;
-    margin: auto;
-    background: #fff;
-    padding: 30px;
-    box-sizing: border-box;
-    
-    box-shadow: 0 0 1px rgba(0, 0, 0, 0.1);
-    font-family: Arial, sans-serif;
-    line-height: 1.5;
-
-    
-}
-h1 {
-    text-align: center;
-    font-size: 24px;
-}
-.header, .footer {
-    text-align: center;
-    margin-bottom: 20px;
-}
-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-bottom: 20px;
-}
-th, td {
-    border: 0.3mm solid #00000080;
-    padding: 8px;
-    text-align: left;
-}
-th {
-    background-color: #ffffff;
-}
-.signature {
-    margin-top: 30px;
-    text-align: right;
-}
-.signature img {
-    height: 80px;
-}
 @media print {
-   
-    body {
-        background: none;
-        
-        padding: 3mm;
-        
-    }
-    .container {
-        
-        box-shadow: none;
-        border: none;
-        padding: 8mm;
-                
-    }
-    .not-print {
-        
-        display: none;
-    }
-    .wrapper{
-        width: 100%;
+    @page {
+        size: A4;
+        margin: 10mm;
     }
     
+    body {
+        background: white !important;
+        print-color-adjust: exact;
+        -webkit-print-color-adjust: exact;
+    }
+    
+    /* Скрываем элементы навигации при печати */
+    .not-print {
+        display: none !important;
+    }
+    
+    /* Убираем тени и border radius при печати */
+    * {
+        box-shadow: none !important;
+        border-radius: 0 !important;
+    }
+    
+    /* Форматирование таблицы для печати */
+    table {
+        page-break-inside: avoid;
+    }
+    
+    tr {
+        page-break-inside: avoid;
+        page-break-after: auto;
+    }
+    
+    /* Убираем hover эффекты */
+    a, button {
+        text-decoration: none !important;
+    }
+}
+
+/* Табличные числа для выравнивания */
+.tabular-nums {
+    font-variant-numeric: tabular-nums;
 }

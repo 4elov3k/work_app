@@ -1,91 +1,137 @@
 "use client"
 import { ChangeEvent, useEffect, useState } from "react";
 import Link from "next/link";
+import { Search, Building2, FileText } from "lucide-react";
 
-import axios from "axios";
-
-
-export interface Root {
-  items: Item[]
-  page: number
-  perPage: number
-  totalItems: number
-  totalPages: number
-}
-
-export interface Item {
-  collectionId: string
-  collectionName: string
-  created: string
-  id: string
-  name: string
-  fullname:string
-  updated: string
-  inn:string
-}
-
+import { customersAPI, Customer } from "@/lib/api";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import CreateCustomerDialog from "./components/CreateCustomerDialog";
 
 
 export default function Home() {
-const [items, setItems] = useState<Item[]>([]);
-const [value, setValue] = useState('')
+  const [items, setItems] = useState<Customer[]>([]);
+  const [value, setValue] = useState('')
+  const [loading, setLoading] = useState(true)
 
-useEffect(()=>{
-  axios.get("http://127.0.0.1:8090/api/collections/customers/records").then(resp => resp.data).then(data => {
-    if(!data.items) {
+  useEffect(()=>{
+    customersAPI.getAll().then(response => {
+      setItems(response.data || [])
+    }).catch(err => {
+      console.error('Failed to load customers:', err)
       setItems([])
-      return
-    }
-    setItems(data.items)
-  })
-}, [])
+    }).finally(() => {
+      setLoading(false)
+    })
+  }, [])
 
-const handleSearchChange = (event: ChangeEvent<HTMLInputElement>): void => {
-  setValue(event.target.value)
+  const handleSearchChange = (event: ChangeEvent<HTMLInputElement>): void => {
+    setValue(event.target.value)
+  };
   
-};
-useEffect(() => {
-  axios.get(`http://127.0.0.1:8090/api/collections/customers/records?filter=(name~'${value}')`)
-      .then(resp => setItems(resp.data.items))
-  
-}, [value])
-  
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (value.trim() === '') {
+        customersAPI.getAll().then(response => {
+          setItems(response.data || [])
+        }).catch(err => {
+          console.error('Failed to load customers:', err)
+          setItems([])
+        })
+      } else {
+        customersAPI.search(value).then(response => {
+          setItems(response.data || [])
+        }).catch(err => {
+          console.error('Failed to search customers:', err)
+          setItems([])
+        })
+      }
+    }, 300)
+
+    return () => clearTimeout(timer)
+  }, [value])
 
   return (
-    <div className="wrapper">
+    <div className="container mx-auto py-8 px-4 max-w-7xl">
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="text-4xl font-bold tracking-tight mb-2">Контрагенты</h1>
+          <p className="text-muted-foreground">Управление клиентами и контрагентами</p>
+        </div>
+        <div className="flex gap-2">
+          <Link href="/invoices">
+            <Button variant="outline">
+              <FileText className="mr-2 h-4 w-4" />
+              Все документы
+            </Button>
+          </Link>
+          <CreateCustomerDialog />
+        </div>
+      </div>
 
-        <h1>Список контрагентов</h1>
-        <input type="text"
-        
-        onChange={handleSearchChange} 
-        placeholder="Поиск контрагентов..." className="border mt-24 ml-6 border-gray-50 bg-[var(--background)]"/>
-        {
-          <ul className="custumer-list">
-            {items.map( (item) => (
+      <div className="mb-6 relative">
+        <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+        <Input
+          type="text"
+          placeholder="Поиск контрагентов по названию или ИНН..."
+          value={value}
+          onChange={handleSearchChange}
+          className="pl-10"
+        />
+      </div>
 
-                
-                  <li key={item.id} className="custumer">
-                    <Link href={`/${item.id ?? '/'}`}>
-                      <div>
-                          <strong>{item.name}</strong>
-                      </div>
-                      <div>
-                          <strong>{item.fullname}</strong>
-                          
-                      </div>
-                      <div>
-                        ИНН: {item.inn}
-                      </div>
-                    </Link>
-                  </li>
-                
-              ) )}
-          </ul>
-        }
-       
-        
+      {loading ? (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {[1, 2, 3].map((i) => (
+            <Card key={i} className="animate-pulse">
+              <CardHeader>
+                <div className="h-4 bg-muted rounded w-3/4 mb-2"></div>
+                <div className="h-3 bg-muted rounded w-1/2"></div>
+              </CardHeader>
+            </Card>
+          ))}
+        </div>
+      ) : items.length === 0 ? (
+        <Card>
+          <CardContent className="py-10 text-center">
+            <Building2 className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
+            <p className="text-muted-foreground">
+              {value ? 'Контрагенты не найдены' : 'Нет контрагентов'}
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {items.map((item) => (
+            <Link key={item.id} href={`/${item.id}`}>
+              <Card className="h-full hover:shadow-lg transition-shadow cursor-pointer">
+                <CardHeader>
+                  <div className="flex items-start justify-between">
+                    <Building2 className="h-5 w-5 text-muted-foreground" />
+                    <Badge variant="secondary" className="ml-2">
+                      <FileText className="h-3 w-3 mr-1" />
+                      Активен
+                    </Badge>
+                  </div>
+                  <CardTitle className="text-xl">{item.name}</CardTitle>
+                  <CardDescription className="line-clamp-1">
+                    {item.fullname}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center text-sm text-muted-foreground">
+                    <span className="font-medium mr-1">ИНН:</span>
+                    <span>{item.inn}</span>
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
-
 
