@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"invoices-backend/internal/export/updxml"
 	"invoices-backend/internal/models"
 )
 
@@ -93,6 +94,46 @@ func (h *Handlers) GetActWithServices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondWithJSON(w, http.StatusOK, models.ActWithServicesResponse{Data: *act})
+}
+
+// ExportActUPDXML обрабатывает GET /api/acts/{id}/export/upd-xml
+func (h *Handlers) ExportActUPDXML(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respondWithError(w, http.StatusBadRequest, "Act ID is required")
+		return
+	}
+
+	act, err := h.db.GetActWithServices(ctx, id)
+	if err != nil {
+		log.Printf("Error exporting act XML (ID: %s): %v", id, err)
+		respondWithError(w, http.StatusNotFound, "Act not found")
+		return
+	}
+
+	customer, err := h.db.GetCustomerByID(ctx, act.CustomerID)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Customer not found for act")
+		return
+	}
+
+	contract, err := h.db.GetContractByID(ctx, act.ContractID)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Contract not found for act")
+		return
+	}
+
+	data, filename, err := updxml.BuildActUPDXML(*act, *customer, *contract)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 // CreateAct обрабатывает POST /api/acts

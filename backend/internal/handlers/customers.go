@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -114,6 +115,7 @@ func (h *Handlers) CreateCustomer(w http.ResponseWriter, r *http.Request) {
 	// Создаем контрагента
 	customer, err := h.db.CreateCustomer(ctx, req)
 	if err != nil {
+		log.Printf("CreateCustomer failed: %v", err)
 		respondWithError(w, http.StatusInternalServerError, "Failed to create customer")
 		return
 	}

@@ -4,41 +4,42 @@ import { Plus, Loader2, Building2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { customersAPI } from "@/lib/api"
-import { useRouter } from "next/navigation"
+import { Customer, customersAPI } from "@/lib/api"
 
-export default function CreateCustomerDialog() {
+interface CreateCustomerDialogProps {
+  onCreated?: (customer: Customer) => void
+}
+
+export default function CreateCustomerDialog({ onCreated }: CreateCustomerDialogProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [name, setName] = useState("")
   const [fullname, setFullname] = useState("")
   const [address, setAddress] = useState("")
   const [inn, setInn] = useState("")
-  const router = useRouter()
 
   const handleCreate = async (event: React.FormEvent) => {
     event.preventDefault()
     setSubmitting(true)
 
     try {
-      await customersAPI.create({
+      const response = await customersAPI.create({
         name,
         fullname,
         address,
         inn
       })
+      onCreated?.(response.data)
 
       setIsOpen(false)
       setName("")
       setFullname("")
       setAddress("")
       setInn("")
-      
-      // Обновляем страницу
-      router.refresh()
     } catch (err) {
       console.error('Failed to create customer:', err)
-      alert('Ошибка при создании контрагента')
+      const message = err instanceof Error ? err.message : 'Неизвестная ошибка'
+      alert(`Ошибка при создании контрагента: ${message}`)
     } finally {
       setSubmitting(false)
     }

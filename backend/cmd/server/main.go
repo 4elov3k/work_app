@@ -85,6 +85,7 @@ func main() {
 		r.Get("/acts", h.GetActs)
 		r.Post("/acts", h.CreateAct)
 		r.Get("/acts/{id}/services", h.GetActWithServices)
+		r.Get("/acts/{id}/export/upd-xml", h.ExportActUPDXML)
 		r.Get("/acts/{id}", h.GetActByID)
 		r.Post("/acts/{id}/invoices", h.LinkActInvoices)
 		r.Post("/acts/{id}/lines", h.AddActLine)

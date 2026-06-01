@@ -23,7 +23,16 @@ createdb invoices_db
 
 ```bash
 psql -d invoices_db -f migrations/001_initial_schema.sql
+psql -d invoices_db -f migrations/003_add_document_type.sql
+psql -d invoices_db -f migrations/004_add_contract_number.sql
+psql -d invoices_db -f migrations/005_add_contract_to_customers.sql
+psql -d invoices_db -f migrations/006_repair_contract_number.sql
+psql -d invoices_db -f migrations/007_contracts_acts_lines.sql
+psql -d invoices_db -f migrations/008_contract_topics.sql
+psql -d invoices_db -f migrations/009_archive_flags.sql
 ```
+
+Если база была создана через `docker-compose` до этого изменения, существующий volume нужно либо пересоздать, либо применить миграции вручную: init-скрипты Postgres выполняются только при первом создании пустой БД.
 
 ### 2. Настройка переменных окружения
 

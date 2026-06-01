@@ -13,6 +13,13 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/migrations/001_initial_schema.sql:/docker-entrypoint-initdb.d/001_initial_schema.sql
+      - ./backend/migrations/003_add_document_type.sql:/docker-entrypoint-initdb.d/003_add_document_type.sql
+      - ./backend/migrations/004_add_contract_number.sql:/docker-entrypoint-initdb.d/004_add_contract_number.sql
+      - ./backend/migrations/005_add_contract_to_customers.sql:/docker-entrypoint-initdb.d/005_add_contract_to_customers.sql
+      - ./backend/migrations/006_repair_contract_number.sql:/docker-entrypoint-initdb.d/006_repair_contract_number.sql
+      - ./backend/migrations/007_contracts_acts_lines.sql:/docker-entrypoint-initdb.d/007_contracts_acts_lines.sql
+      - ./backend/migrations/008_contract_topics.sql:/docker-entrypoint-initdb.d/008_contract_topics.sql
+      - ./backend/migrations/009_archive_flags.sql:/docker-entrypoint-initdb.d/009_archive_flags.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U invoices_user -d invoices_db"]
       interval: 10s

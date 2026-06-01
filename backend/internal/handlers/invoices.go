@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -191,8 +192,28 @@ func (h *Handlers) CreateInvoice(w http.ResponseWriter, r *http.Request) {
 	// Создаем счет
 	invoice, err := h.db.CreateInvoice(ctx, req)
 	if err != nil {
+		log.Printf("CreateInvoice failed: %+v; payload={contract_id:%q customer_id:%q contract_number:%q number:%q date:%q service_ids:%d services:%d lines:%d}",
+			err, req.ContractID, req.CustomerID, req.ContractNumber, req.Number, req.Date, len(req.ServiceIDs), len(req.Services), len(req.Lines))
 		if isUniqueViolation(err) {
 			respondWithError(w, http.StatusConflict, "Invoice with this number already exists for this contract")
+			return
+		}
+		message := err.Error()
+		switch {
+		case strings.Contains(message, "contract not found"):
+			respondWithError(w, http.StatusBadRequest, "Contract not found")
+			return
+		case strings.Contains(message, "contract_id is required"):
+			respondWithError(w, http.StatusBadRequest, "Contract ID is required")
+			return
+		case strings.Contains(message, "at least one line is required"):
+			respondWithError(w, http.StatusBadRequest, "At least one service is required")
+			return
+		case strings.Contains(message, "one or more services not found"), strings.Contains(message, "service not found"):
+			respondWithError(w, http.StatusBadRequest, "One or more services not found")
+			return
+		case strings.Contains(message, "invalid service"), strings.Contains(message, "invalid invoice line"):
+			respondWithError(w, http.StatusBadRequest, "Invalid invoice data")
 			return
 		}
 		respondWithError(w, http.StatusInternalServerError, "Failed to create invoice")

@@ -53,6 +53,11 @@ export default function Home() {
     return () => clearTimeout(timer)
   }, [value])
 
+  const handleCustomerCreated = (customer: Customer): void => {
+    setValue("")
+    setItems((current) => [customer, ...current.filter((item) => item.id !== customer.id)])
+  }
+
   return (
     <div className="container mx-auto py-8 px-4 max-w-7xl">
       <div className="mb-8 flex items-start justify-between">
@@ -67,7 +72,7 @@ export default function Home() {
               Все документы
             </Button>
           </Link>
-          <CreateCustomerDialog />
+          <CreateCustomerDialog onCreated={handleCustomerCreated} />
         </div>
       </div>
 
@@ -134,4 +139,3 @@ export default function Home() {
     </div>
   );
 }
-
