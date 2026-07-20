@@ -60,7 +60,7 @@ func (db *DB) GetActs(ctx context.Context, customerID, contractID string, archiv
 		}
 	}
 
-	query += " ORDER BY a.created_at DESC"
+	query += " ORDER BY to_date(a.date, 'DD.MM.YYYY') DESC, a.number DESC"
 	if perPage > 0 {
 		offset := (page - 1) * perPage
 		query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argCount, argCount+1)
@@ -143,7 +143,7 @@ func (db *DB) GetActWithServices(ctx context.Context, id string) (*models.ActWit
 	}
 
 	linesQuery := `
-		SELECT id, title_snapshot, price_snapshot
+		SELECT id, title_snapshot, unit_snapshot, price_snapshot, qty, amount
 		FROM act_lines
 		WHERE act_id = $1
 		ORDER BY id
@@ -161,19 +161,71 @@ func (db *DB) GetActWithServices(ctx context.Context, id string) (*models.ActWit
 	for rows.Next() {
 		var lineID string
 		var title string
+		var unit string
 		var price float64
-		if err := rows.Scan(&lineID, &title, &price); err != nil {
+		var qty float64
+		var amount float64
+		if err := rows.Scan(&lineID, &title, &unit, &price, &qty, &amount); err != nil {
 			return nil, fmt.Errorf("failed to scan act line: %w", err)
 		}
-		services = append(services, models.Service{ID: lineID, Name: title, Price: price})
+		services = append(services, models.Service{
+			ID:     lineID,
+			Name:   title,
+			Unit:   unit,
+			Price:  price,
+			Qty:    qty,
+			Amount: amount,
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating act lines: %w", err)
 	}
 
+	invoicesQuery := `
+		SELECT i.id, i.contract_id, i.customer_id, i.number, i.date, i.status, i.total_amount,
+		       i.archived, i.contract_number, i.created_at, i.updated_at
+		FROM act_invoices ai
+		JOIN invoices i ON i.id = ai.invoice_id
+		WHERE ai.act_id = $1
+		ORDER BY to_date(i.date, 'DD.MM.YYYY'), i.number
+	`
+	invoiceRows, err := db.QueryContext(ctx, invoicesQuery, id)
+	if err != nil {
+		if debug {
+			log.Printf("[DEBUG] Query act invoices failed: %v", err)
+		}
+		return nil, fmt.Errorf("failed to query act invoices: %w", err)
+	}
+	defer invoiceRows.Close()
+
+	var invoices []models.Invoice
+	for invoiceRows.Next() {
+		var invoice models.Invoice
+		if err := invoiceRows.Scan(
+			&invoice.ID,
+			&invoice.ContractID,
+			&invoice.CustomerID,
+			&invoice.Number,
+			&invoice.Date,
+			&invoice.Status,
+			&invoice.TotalAmount,
+			&invoice.Archived,
+			&invoice.ContractNumber,
+			&invoice.CreatedAt,
+			&invoice.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan act invoice: %w", err)
+		}
+		invoices = append(invoices, invoice)
+	}
+	if err := invoiceRows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating act invoices: %w", err)
+	}
+
 	return &models.ActWithServices{
 		Act:      *act,
 		Services: services,
+		Invoices: invoices,
 	}, nil
 }
 
@@ -384,6 +436,105 @@ func (db *DB) AddActLine(ctx context.Context, actID string, line models.InvoiceL
 	}
 
 	if _, err := tx.ExecContext(ctx, `UPDATE acts SET total_amount = total_amount + $1 WHERE id = $2`, amount, actID); err != nil {
+		return fmt.Errorf("failed to update act total: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	return nil
+}
+
+// UpdateActLine обновляет строку акта и пересчитывает сумму.
+func (db *DB) UpdateActLine(ctx context.Context, actID, lineID string, line models.InvoiceLineInput) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var archived bool
+	if err := tx.QueryRowContext(ctx, `SELECT archived FROM acts WHERE id = $1`, actID).Scan(&archived); err != nil {
+		if err == sql.ErrNoRows {
+			return sql.ErrNoRows
+		}
+		return fmt.Errorf("failed to check act: %w", err)
+	}
+	if archived {
+		return fmt.Errorf("act is archived")
+	}
+
+	snapshot, _, err := buildSingleInvoiceLine(ctx, tx, line)
+	if err != nil {
+		return err
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE act_lines
+		SET service_id = $1,
+		    title_snapshot = $2,
+		    unit_snapshot = $3,
+		    vat_snapshot = $4,
+		    price_snapshot = $5,
+		    qty = $6,
+		    amount = $7
+		WHERE id = $8 AND act_id = $9
+	`, snapshot.ServiceID, snapshot.Title, snapshot.Unit, snapshot.VAT, snapshot.Price, snapshot.Qty, snapshot.Amount, lineID, actID)
+	if err != nil {
+		return fmt.Errorf("failed to update act line: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE acts
+		SET total_amount = COALESCE((SELECT SUM(amount) FROM act_lines WHERE act_id = $1), 0)
+		WHERE id = $1
+	`, actID); err != nil {
+		return fmt.Errorf("failed to update act total: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	return nil
+}
+
+// DeleteActLine удаляет строку акта и пересчитывает сумму.
+func (db *DB) DeleteActLine(ctx context.Context, actID, lineID string) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var archived bool
+	if err := tx.QueryRowContext(ctx, `SELECT archived FROM acts WHERE id = $1`, actID).Scan(&archived); err != nil {
+		if err == sql.ErrNoRows {
+			return sql.ErrNoRows
+		}
+		return fmt.Errorf("failed to check act: %w", err)
+	}
+	if archived {
+		return fmt.Errorf("act is archived")
+	}
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM act_lines WHERE id = $1 AND act_id = $2`, lineID, actID)
+	if err != nil {
+		return fmt.Errorf("failed to delete act line: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE acts
+		SET total_amount = COALESCE((SELECT SUM(amount) FROM act_lines WHERE act_id = $1), 0)
+		WHERE id = $1
+	`, actID); err != nil {
 		return fmt.Errorf("failed to update act total: %w", err)
 	}
 

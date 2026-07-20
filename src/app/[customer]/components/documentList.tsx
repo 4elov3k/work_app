@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import { Plus, FileText, FileCheck, Calendar, Loader2, Trash2 } from "lucide-react"
 
-import { Invoice, Act, Contract, invoicesAPI, actsAPI, contractsAPI } from "@/lib/api"
+import { Invoice, Act, Contract, Service, invoicesAPI, actsAPI, contractsAPI, servicesAPI } from "@/lib/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -57,6 +57,7 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
   const cfg = CONFIG[documentType]
   const [fetchItems, setFetchItems] = useState<(Invoice | Act)[]>([])
   const [contracts, setContracts] = useState<Contract[]>([])
+  const [services, setServices] = useState<Service[]>([])
   const [loading, setLoading] = useState(true)
   const [isOpen, setIsOpen] = useState<boolean>(false)
   const [submitting, setSubmitting] = useState(false)
@@ -68,6 +69,7 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
   const [archiveFilter, setArchiveFilter] = useState<"all" | "true" | "false">("all")
   const [serviceName, setServiceName] = useState<string>("")
   const [servicePrice, setServicePrice] = useState<string>("")
+  const [selectedServiceId, setSelectedServiceId] = useState<string>("")
   const [error, setError] = useState<string>("")
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Invoice | Act | null>(null)
@@ -107,6 +109,16 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
       })
   }, [fixedContractId, selectedContractId, slug])
 
+  const loadServices = useCallback(() => {
+    servicesAPI
+      .getAll(1, 1000)
+      .then((response) => setServices(response.data || []))
+      .catch((err) => {
+        console.error("Failed to load services:", err)
+        setServices([])
+      })
+  }, [])
+
   const loadNextNumber = useCallback(async (contractID: string) => {
     setAutoLoading(true)
     try {
@@ -124,7 +136,8 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
   useEffect(() => {
     loadDocuments()
     loadContracts()
-  }, [loadDocuments, loadContracts])
+    loadServices()
+  }, [loadDocuments, loadContracts, loadServices])
 
   useEffect(() => {
     if (!manualNumber && selectedContractId) {
@@ -161,7 +174,8 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
           customer_id: slug,
           number: number,
           date: newDate,
-          services: [{ name: serviceName, price: parseFloat(servicePrice) }],
+          service_ids: selectedServiceId ? [selectedServiceId] : undefined,
+          services: selectedServiceId ? undefined : [{ name: serviceName, price: parseFloat(servicePrice) }],
         })
       } else {
         await actsAPI.create({
@@ -169,7 +183,8 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
           customer_id: slug,
           number: number,
           date: newDate,
-          services: [{ name: serviceName, price: parseFloat(servicePrice) }],
+          service_ids: selectedServiceId ? [selectedServiceId] : undefined,
+          services: selectedServiceId ? undefined : [{ name: serviceName, price: parseFloat(servicePrice) }],
         })
       }
 
@@ -179,6 +194,7 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
       setDate("")
       setServiceName("")
       setServicePrice("")
+      setSelectedServiceId("")
       setIsOpen(false)
     } catch (err: unknown) {
       console.error(`Failed to create ${documentType}:`, err)
@@ -318,30 +334,52 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
                   </div>
                 )}
                 <div className="space-y-2">
-                  <label htmlFor="serviceName" className="text-sm font-medium">
-                    Название услуги
+                  <label htmlFor="serviceId" className="text-sm font-medium">
+                    Готовая услуга
                   </label>
-                  <Input
-                    id="serviceName"
-                    placeholder="Консультация"
-                    value={serviceName}
-                    onChange={(e) => setServiceName(e.target.value)}
-                    required
-                  />
+                  <select
+                    id="serviceId"
+                    className="w-full border rounded-md px-3 py-2 text-sm bg-background"
+                    value={selectedServiceId}
+                    onChange={(e) => setSelectedServiceId(e.target.value)}
+                  >
+                    <option value="">Не выбрано</option>
+                    {services.map((service) => (
+                      <option key={service.id} value={service.id}>
+                        {service.name} • {service.price} ₽
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <div className="space-y-2">
-                  <label htmlFor="servicePrice" className="text-sm font-medium">
-                    Цена
-                  </label>
-                  <Input
-                    id="servicePrice"
-                    type="number"
-                    placeholder="5000"
-                    value={servicePrice}
-                    onChange={(e) => setServicePrice(e.target.value)}
-                    required
-                  />
-                </div>
+                {!selectedServiceId && (
+                  <>
+                    <div className="space-y-2">
+                      <label htmlFor="serviceName" className="text-sm font-medium">
+                        Название услуги
+                      </label>
+                      <Input
+                        id="serviceName"
+                        placeholder="Консультация"
+                        value={serviceName}
+                        onChange={(e) => setServiceName(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label htmlFor="servicePrice" className="text-sm font-medium">
+                        Цена
+                      </label>
+                      <Input
+                        id="servicePrice"
+                        type="number"
+                        placeholder="5000"
+                        value={servicePrice}
+                        onChange={(e) => setServicePrice(e.target.value)}
+                        required
+                      />
+                    </div>
+                  </>
+                )}
               </div>
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setIsOpen(false)} disabled={submitting}>

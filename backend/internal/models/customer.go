@@ -9,6 +9,7 @@ type Customer struct {
 	Fullname  string    `json:"fullname"`
 	Address   string    `json:"address"`
 	INN       string    `json:"inn"`
+	KPP       string    `json:"kpp"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -26,10 +27,27 @@ type CustomerResponse struct {
 	Data Customer `json:"data"`
 }
 
+// CustomerLookup представляет найденные по ИНН реквизиты контрагента.
+type CustomerLookup struct {
+	Name     string `json:"name"`
+	Fullname string `json:"fullname"`
+	Address  string `json:"address"`
+	INN      string `json:"inn"`
+	KPP      string `json:"kpp"`
+	Type     string `json:"type"`
+	Status   string `json:"status"`
+}
+
+// CustomerLookupResponse представляет ответ проверки контрагента по ИНН.
+type CustomerLookupResponse struct {
+	Data CustomerLookup `json:"data"`
+}
+
 // CreateCustomerRequest представляет запрос на создание контрагента
 type CreateCustomerRequest struct {
 	Name     string `json:"name"`
 	Fullname string `json:"fullname"`
 	Address  string `json:"address"`
 	INN      string `json:"inn"`
+	KPP      string `json:"kpp"`
 }

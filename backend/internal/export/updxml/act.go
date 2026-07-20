@@ -2,6 +2,8 @@ package updxml
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"math"
@@ -13,6 +15,7 @@ import (
 )
 
 const (
+	actFilePrefix    = "ON_NSCHFDOPPR"
 	sellerFullName   = "Индивидуальный предприниматель Мыленкова Любовь Валерьевна"
 	sellerINN        = "526220116209"
 	sellerOGRNIP     = "312526227100047"
@@ -31,17 +34,14 @@ func BuildActUPDXML(act models.ActWithServices, customer models.Customer, contra
 	if strings.TrimSpace(act.Date) == "" {
 		return nil, "", fmt.Errorf("act date is required")
 	}
-	if strings.TrimSpace(customer.INN) == "" {
-		return nil, "", fmt.Errorf("customer INN is required")
-	}
-	if strings.TrimSpace(customer.Fullname) == "" && strings.TrimSpace(customer.Name) == "" {
-		return nil, "", fmt.Errorf("customer name is required")
-	}
-	if strings.TrimSpace(customer.Address) == "" {
-		return nil, "", fmt.Errorf("customer address is required")
+	if err := validateCustomer(customer); err != nil {
+		return nil, "", err
 	}
 	if len(act.Services) == 0 {
 		return nil, "", fmt.Errorf("act has no service lines")
+	}
+	if err := validateServicesForEDO(act.Services); err != nil {
+		return nil, "", err
 	}
 
 	docDate, err := parseRuDate(act.Date)
@@ -54,7 +54,7 @@ func BuildActUPDXML(act models.ActWithServices, customer models.Customer, contra
 	enc := xml.NewEncoder(&b)
 	enc.Indent("", "  ")
 
-	fileID := fileID(act, customer, docDate)
+	fileID := actFileID(act, customer, docDate)
 	root := xml.StartElement{
 		Name: xml.Name{Local: "Файл"},
 		Attr: []xml.Attr{
@@ -75,7 +75,11 @@ func BuildActUPDXML(act models.ActWithServices, customer models.Customer, contra
 	if err := enc.Flush(); err != nil {
 		return nil, "", err
 	}
-	return b.Bytes(), fileID + ".xml", nil
+	return b.Bytes(), xmlFilename(fileID), nil
+}
+
+func xmlFilename(fileID string) string {
+	return fileID + ".xml"
 }
 
 func writeDocument(enc *xml.Encoder, act models.ActWithServices, customer models.Customer, contract models.Contract, docDate time.Time) error {
@@ -101,7 +105,7 @@ func writeDocument(enc *xml.Encoder, act models.ActWithServices, customer models
 	if err := writeTable(enc, act.Services); err != nil {
 		return err
 	}
-	if err := writeTransferInfo(enc, docDate); err != nil {
+	if err := writeTransferInfo(enc, act, docDate); err != nil {
 		return err
 	}
 	if err := writeSigner(enc); err != nil {
@@ -114,9 +118,8 @@ func writeInvoiceInfo(enc *xml.Encoder, act models.ActWithServices, customer mod
 	start := xml.StartElement{
 		Name: xml.Name{Local: "СвСчФакт"},
 		Attr: []xml.Attr{
-			{Name: xml.Name{Local: "НомерСчФ"}, Value: act.Number},
-			{Name: xml.Name{Local: "ДатаСчФ"}, Value: docDate.Format("02.01.2006")},
-			{Name: xml.Name{Local: "КодОКВ"}, Value: "643"},
+			{Name: xml.Name{Local: "НомерДок"}, Value: strings.TrimSpace(act.Number)},
+			{Name: xml.Name{Local: "ДатаДок"}, Value: docDate.Format("02.01.2006")},
 		},
 	}
 	if err := enc.EncodeToken(start); err != nil {
@@ -125,16 +128,76 @@ func writeInvoiceInfo(enc *xml.Encoder, act models.ActWithServices, customer mod
 	if err := writeSeller(enc); err != nil {
 		return err
 	}
+	if err := writePaymentDocuments(enc, act.Invoices); err != nil {
+		return err
+	}
+	if err := writeShipmentDocumentInfo(enc, act, docDate); err != nil {
+		return err
+	}
 	if err := writeBuyer(enc, customer); err != nil {
 		return err
 	}
+	if err := writeCurrency(enc); err != nil {
+		return err
+	}
 	if strings.TrimSpace(contract.Number) != "" {
-		if err := writeSimpleElement(enc, "ИнфПолФХЖ1", map[string]string{
-			"Идентиф": "Договор",
-			"Значен":  contract.Number,
-		}); err != nil {
+		if err := writeInfoField1(enc, "Договор", strings.TrimSpace(contract.Number)); err != nil {
 			return err
 		}
+	}
+	return enc.EncodeToken(start.End())
+}
+
+func writePaymentDocuments(enc *xml.Encoder, invoices []models.Invoice) error {
+	for _, invoice := range invoices {
+		number := strings.TrimSpace(invoice.Number)
+		date := strings.TrimSpace(invoice.Date)
+		if number == "" || date == "" {
+			continue
+		}
+		parsedDate, err := parseRuDate(date)
+		if err != nil {
+			return fmt.Errorf("invalid linked invoice date %q: expected DD.MM.YYYY", date)
+		}
+		attrs := map[string]string{
+			"НомерПРД": number,
+			"ДатаПРД":  parsedDate.Format("02.01.2006"),
+		}
+		if invoice.TotalAmount > 0 {
+			attrs["СуммаПРД"] = moneyText(invoice.TotalAmount)
+		}
+		if err := writeSimpleElement(enc, "СвПРД", attrs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeShipmentDocumentInfo(enc *xml.Encoder, act models.ActWithServices, docDate time.Time) error {
+	return writeSimpleElement(enc, "ДокПодтвОтгрНом", map[string]string{
+		"РеквНаимДок":  "Акт выполненных работ",
+		"РеквНомерДок": strings.TrimSpace(act.Number),
+		"РеквДатаДок":  docDate.Format("02.01.2006"),
+	})
+}
+
+func writeCurrency(enc *xml.Encoder) error {
+	return writeSimpleElement(enc, "ДенИзм", map[string]string{
+		"КодОКВ":  "643",
+		"НаимОКВ": "Российский рубль",
+	})
+}
+
+func writeInfoField1(enc *xml.Encoder, id, value string) error {
+	start := xml.StartElement{Name: xml.Name{Local: "ИнфПолФХЖ1"}}
+	if err := enc.EncodeToken(start); err != nil {
+		return err
+	}
+	if err := writeSimpleElement(enc, "ТекстИнф", map[string]string{
+		"Идентиф": id,
+		"Значен":  value,
+	}); err != nil {
+		return err
 	}
 	return enc.EncodeToken(start.End())
 }
@@ -158,18 +221,30 @@ func writeBuyer(enc *xml.Encoder, customer models.Customer) error {
 	if err := enc.EncodeToken(start); err != nil {
 		return err
 	}
+	if err := writeBuyerIdentity(enc, customer); err != nil {
+		return err
+	}
+	if err := writeAddress(enc, customer.Address); err != nil {
+		return err
+	}
+	return enc.EncodeToken(start.End())
+}
+
+func writeBuyerIdentity(enc *xml.Encoder, customer models.Customer) error {
 	id := xml.StartElement{Name: xml.Name{Local: "ИдСв"}}
 	if err := enc.EncodeToken(id); err != nil {
 		return err
 	}
-	if len(digitsOnly(customer.INN)) == 12 {
-		if err := writePersonID(enc, "", customer.INN, "", "", "", ""); err != nil {
+	inn := digitsOnly(customer.INN)
+	if len(inn) == 12 {
+		if err := writePersonID(enc, "", inn, "", "", "", ""); err != nil {
 			return err
 		}
 	} else {
 		if err := writeSimpleElement(enc, "СвЮЛУч", map[string]string{
 			"НаимОрг": customerName(customer),
-			"ИННЮЛ":   customer.INN,
+			"ИННЮЛ":   inn,
+			"КПП":     digitsOnly(customer.KPP),
 		}); err != nil {
 			return err
 		}
@@ -177,10 +252,7 @@ func writeBuyer(enc *xml.Encoder, customer models.Customer) error {
 	if err := enc.EncodeToken(id.End()); err != nil {
 		return err
 	}
-	if err := writeAddress(enc, customer.Address); err != nil {
-		return err
-	}
-	return enc.EncodeToken(start.End())
+	return nil
 }
 
 func writePersonID(enc *xml.Encoder, wrapper, inn, ogrnip, lastName, firstName, middleName string) error {
@@ -230,8 +302,9 @@ func writeAddress(enc *xml.Encoder, address string) error {
 		return err
 	}
 	if err := writeSimpleElement(enc, "АдрИнф", map[string]string{
-		"КодСтр":   "643",
-		"АдрТекст": address,
+		"КодСтр":    "643",
+		"НаимСтран": "Россия",
+		"АдрТекст":  address,
 	}); err != nil {
 		return err
 	}
@@ -245,16 +318,16 @@ func writeTable(enc *xml.Encoder, services []models.Service) error {
 	}
 	total := 0.0
 	for index, service := range services {
-		amount := money(service.Price)
+		qty, unitPrice, amount := serviceLineNumbers(service)
 		total += amount
 		row := xml.StartElement{
 			Name: xml.Name{Local: "СведТов"},
 			Attr: []xml.Attr{
 				{Name: xml.Name{Local: "НомСтр"}, Value: fmt.Sprint(index + 1)},
-				{Name: xml.Name{Local: "НаимТов"}, Value: service.Name},
+				{Name: xml.Name{Local: "НаимТов"}, Value: strings.TrimSpace(service.Name)},
 				{Name: xml.Name{Local: "ОКЕИ_Тов"}, Value: "796"},
-				{Name: xml.Name{Local: "КолТов"}, Value: "1"},
-				{Name: xml.Name{Local: "ЦенаТов"}, Value: moneyText(amount)},
+				{Name: xml.Name{Local: "КолТов"}, Value: quantityText(qty)},
+				{Name: xml.Name{Local: "ЦенаТов"}, Value: moneyText(unitPrice)},
 				{Name: xml.Name{Local: "СтТовБезНДС"}, Value: moneyText(amount)},
 				{Name: xml.Name{Local: "НалСт"}, Value: "без НДС"},
 				{Name: xml.Name{Local: "СтТовУчНал"}, Value: moneyText(amount)},
@@ -293,15 +366,30 @@ func writeTable(enc *xml.Encoder, services []models.Service) error {
 	return enc.EncodeToken(start.End())
 }
 
-func writeTransferInfo(enc *xml.Encoder, docDate time.Time) error {
+func writeTransferInfo(enc *xml.Encoder, act models.ActWithServices, docDate time.Time) error {
 	start := xml.StartElement{Name: xml.Name{Local: "СвПродПер"}}
 	if err := enc.EncodeToken(start); err != nil {
 		return err
 	}
-	if err := writeSimpleElement(enc, "СвПер", map[string]string{
-		"СодОпер": "Услуги оказаны",
-		"ДатаПер": docDate.Format("02.01.2006"),
+
+	transfer := xml.StartElement{
+		Name: xml.Name{Local: "СвПер"},
+		Attr: []xml.Attr{
+			{Name: xml.Name{Local: "СодОпер"}, Value: "Услуги оказаны"},
+			{Name: xml.Name{Local: "ДатаПер"}, Value: docDate.Format("02.01.2006")},
+		},
+	}
+	if err := enc.EncodeToken(transfer); err != nil {
+		return err
+	}
+	if err := writeSimpleElement(enc, "ОснПер", map[string]string{
+		"РеквНаимДок":  "Акт выполненных работ",
+		"РеквНомерДок": strings.TrimSpace(act.Number),
+		"РеквДатаДок":  docDate.Format("02.01.2006"),
 	}); err != nil {
+		return err
+	}
+	if err := enc.EncodeToken(transfer.End()); err != nil {
 		return err
 	}
 	return enc.EncodeToken(start.End())
@@ -311,15 +399,13 @@ func writeSigner(enc *xml.Encoder) error {
 	start := xml.StartElement{
 		Name: xml.Name{Local: "Подписант"},
 		Attr: []xml.Attr{
-			{Name: xml.Name{Local: "ОблПолн"}, Value: "6"},
-			{Name: xml.Name{Local: "Статус"}, Value: "1"},
-			{Name: xml.Name{Local: "ОснПолн"}, Value: "Индивидуальный предприниматель"},
+			{Name: xml.Name{Local: "СпосПодтПолном"}, Value: "1"},
 		},
 	}
 	if err := enc.EncodeToken(start); err != nil {
 		return err
 	}
-	if err := writePersonID(enc, "", sellerINN, sellerOGRNIP, sellerLastName, sellerFirstName, sellerMiddleName); err != nil {
+	if err := writeFIO(enc, sellerLastName, sellerFirstName, sellerMiddleName); err != nil {
 		return err
 	}
 	return enc.EncodeToken(start.End())
@@ -365,12 +451,88 @@ func parseRuDate(value string) (time.Time, error) {
 	return parsed, nil
 }
 
+func validateCustomer(customer models.Customer) error {
+	inn := digitsOnly(customer.INN)
+	if inn == "" {
+		return fmt.Errorf("customer INN is required")
+	}
+	switch len(inn) {
+	case 10:
+		kpp := digitsOnly(customer.KPP)
+		if kpp == "" {
+			return fmt.Errorf("customer KPP is required for organizations")
+		}
+		if len(kpp) != 9 {
+			return fmt.Errorf("customer KPP must contain 9 digits")
+		}
+	case 12:
+	default:
+		return fmt.Errorf("customer INN must contain 10 or 12 digits")
+	}
+	if strings.TrimSpace(customer.Fullname) == "" && strings.TrimSpace(customer.Name) == "" {
+		return fmt.Errorf("customer name is required")
+	}
+	if strings.TrimSpace(customer.Address) == "" {
+		return fmt.Errorf("customer address is required")
+	}
+	return nil
+}
+
+func validateServicesForEDO(services []models.Service) error {
+	for index, service := range services {
+		lineNumber := index + 1
+		if strings.TrimSpace(service.Name) == "" {
+			return fmt.Errorf("service line %d name is required", lineNumber)
+		}
+		if len([]rune(strings.TrimSpace(service.Name))) > 1000 {
+			return fmt.Errorf("service line %d name is too long", lineNumber)
+		}
+		qty, unitPrice, amount := serviceLineNumbers(service)
+		if qty <= 0 {
+			return fmt.Errorf("service line %d quantity must be positive", lineNumber)
+		}
+		if unitPrice <= 0 {
+			return fmt.Errorf("service line %d price must be positive", lineNumber)
+		}
+		if amount <= 0 {
+			return fmt.Errorf("service line %d amount must be positive", lineNumber)
+		}
+		if money(unitPrice*qty) != amount {
+			return fmt.Errorf("service line %d amount must equal price multiplied by quantity", lineNumber)
+		}
+	}
+	return nil
+}
+
+func serviceLineNumbers(service models.Service) (qty, unitPrice, amount float64) {
+	qty = service.Qty
+	if qty == 0 {
+		qty = 1
+	}
+	amount = service.Amount
+	if amount > 0 {
+		amount = money(amount)
+		unitPrice = money(amount / qty)
+		return qty, unitPrice, amount
+	}
+	unitPrice = money(service.Price)
+	amount = money(unitPrice * qty)
+	return qty, unitPrice, amount
+}
+
 func money(value float64) float64 {
 	return math.Round(value*100) / 100
 }
 
 func moneyText(value float64) string {
 	return fmt.Sprintf("%.2f", money(value))
+}
+
+func quantityText(value float64) string {
+	if math.Mod(value, 1) == 0 {
+		return fmt.Sprintf("%.0f", value)
+	}
+	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.3f", value), "0"), ".")
 }
 
 func customerName(customer models.Customer) string {
@@ -385,8 +547,42 @@ func digitsOnly(value string) string {
 	return re.ReplaceAllString(value, "")
 }
 
-func fileID(act models.ActWithServices, customer models.Customer, docDate time.Time) string {
-	raw := fmt.Sprintf("WORKAPP_UPD_%s_%s_%s", sellerINN, digitsOnly(customer.INN), act.Number+"_"+docDate.Format("20060102"))
-	raw = strings.ToUpper(regexp.MustCompile(`[^A-ZА-Я0-9_]+`).ReplaceAllString(raw, "_"))
+func actFileID(act models.ActWithServices, customer models.Customer, docDate time.Time) string {
+	raw := fmt.Sprintf("%s_%s_%s_%s_%s",
+		actFilePrefix,
+		edoParticipantID(sellerINN, ""),
+		edoParticipantID(customer.INN, customer.KPP),
+		docDate.Format("20060102"),
+		documentUID(act.Number, docDate),
+	)
+	return sanitizeFileID(raw)
+}
+
+func invoiceFileID(invoice models.InvoiceWithServices, customer models.Customer, docDate time.Time) string {
+	raw := fmt.Sprintf("WORKAPP_INVOICE_%s_%s_%s_%s",
+		sellerINN,
+		digitsOnly(customer.INN),
+		strings.TrimSpace(invoice.Number),
+		docDate.Format("20060102"),
+	)
+	return sanitizeFileID(raw)
+}
+
+func edoParticipantID(inn, kpp string) string {
+	id := digitsOnly(inn)
+	if strings.TrimSpace(kpp) != "" {
+		id += digitsOnly(kpp)
+	}
+	return id
+}
+
+func documentUID(number string, docDate time.Time) string {
+	seed := sanitizeFileID(fmt.Sprintf("%s_%s", strings.TrimSpace(number), docDate.Format("20060102")))
+	sum := sha256.Sum256([]byte(seed))
+	return seed + "_" + strings.ToUpper(hex.EncodeToString(sum[:6]))
+}
+
+func sanitizeFileID(value string) string {
+	raw := strings.ToUpper(regexp.MustCompile(`[^A-ZА-Я0-9_]+`).ReplaceAllString(value, "_"))
 	return strings.Trim(raw, "_")
 }

@@ -1,0 +1,5 @@
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS kpp VARCHAR(9) DEFAULT '';
+
+UPDATE customers
+SET kpp = ''
+WHERE kpp IS NULL;

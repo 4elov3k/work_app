@@ -16,8 +16,8 @@ export default async function FormCus ({id, type}:{id: string, type: "invoice" |
     
     // Выбираем шаблон в зависимости от типа документа
     if (type === "act") {
-      return <CertificateTemplate invoice={invoiceData} customer={customer} />
+      return <CertificateTemplate invoice={invoiceData} customer={customer} docId={id} />
     }
     
-    return <InvoiceTemplate invoice={invoiceData} customer={customer} />
+    return <InvoiceTemplate invoice={invoiceData} customer={customer} docId={id} />
 }

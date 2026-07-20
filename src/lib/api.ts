@@ -8,8 +8,19 @@ export interface Customer {
   fullname: string;
   address: string;
   inn: string;
+  kpp: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface CustomerLookup {
+  name: string;
+  fullname: string;
+  address: string;
+  inn: string;
+  kpp: string;
+  type: string;
+  status: string;
 }
 
 export interface Contract {
@@ -56,7 +67,10 @@ export interface Act {
 export interface Service {
   id: string;
   name: string;
+  unit?: string;
   price: number;
+  qty?: number;
+  amount?: number;
   created_at: string;
   updated_at: string;
 }
@@ -150,12 +164,21 @@ export const customersAPI = {
     return handleResponse<SingleResponse<Customer>>(response);
   },
 
+  // Проверить и подтянуть реквизиты по ИНН
+  lookupByInn: async (inn: string, kpp = ""): Promise<SingleResponse<CustomerLookup>> => {
+    const params = new URLSearchParams({ inn });
+    if (kpp) params.set("kpp", kpp);
+    const response = await fetch(`${API_BASE}/customers/lookup?${params.toString()}`);
+    return handleResponse<SingleResponse<CustomerLookup>>(response);
+  },
+
   // Создать контрагента
   create: async (data: {
     name: string;
     fullname: string;
     address: string;
     inn: string;
+    kpp?: string;
   }): Promise<SingleResponse<Customer>> => {
     const response = await fetch(`${API_BASE}/customers`, {
       method: 'POST',
@@ -320,6 +343,29 @@ export const invoicesAPI = {
     return handleResponse<{ status: string }>(response);
   },
 
+  updateLine: async (id: string, lineId: string, line: {
+    service_id?: string;
+    title?: string;
+    unit?: string;
+    vat?: number;
+    price?: number;
+    qty?: number;
+  }): Promise<{ status: string }> => {
+    const response = await fetch(`${API_BASE}/invoices/${id}/lines/${lineId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ line }),
+    });
+    return handleResponse<{ status: string }>(response);
+  },
+
+  deleteLine: async (id: string, lineId: string): Promise<{ status: string }> => {
+    const response = await fetch(`${API_BASE}/invoices/${id}/lines/${lineId}`, {
+      method: 'DELETE',
+    });
+    return handleResponse<{ status: string }>(response);
+  },
+
   createActFromInvoice: async (id: string, data: { number: string; date: string; status?: string }): Promise<SingleResponse<Act>> => {
     const response = await fetch(`${API_BASE}/invoices/${id}/act`, {
       method: 'POST',
@@ -419,6 +465,29 @@ export const actsAPI = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ line }),
+    });
+    return handleResponse<{ status: string }>(response);
+  },
+
+  updateLine: async (id: string, lineId: string, line: {
+    service_id?: string;
+    title?: string;
+    unit?: string;
+    vat?: number;
+    price?: number;
+    qty?: number;
+  }): Promise<{ status: string }> => {
+    const response = await fetch(`${API_BASE}/acts/${id}/lines/${lineId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ line }),
+    });
+    return handleResponse<{ status: string }>(response);
+  },
+
+  deleteLine: async (id: string, lineId: string): Promise<{ status: string }> => {
+    const response = await fetch(`${API_BASE}/acts/${id}/lines/${lineId}`, {
+      method: 'DELETE',
     });
     return handleResponse<{ status: string }>(response);
   },

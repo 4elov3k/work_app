@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -25,9 +26,12 @@ func main() {
 		log.Fatal("DATABASE_URL is required")
 	}
 
-	corsOrigin := os.Getenv("CORS_ORIGIN")
-	if corsOrigin == "" {
-		corsOrigin = "http://localhost:3000"
+	corsOrigins := strings.Split(os.Getenv("CORS_ORIGIN"), ",")
+	if len(corsOrigins) == 1 && strings.TrimSpace(corsOrigins[0]) == "" {
+		corsOrigins = []string{"http://localhost:3000"}
+	}
+	for index := range corsOrigins {
+		corsOrigins[index] = strings.TrimSpace(corsOrigins[index])
 	}
 
 	// Подключение к базе данных
@@ -47,10 +51,10 @@ func main() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{corsOrigin},
+		AllowedOrigins:   corsOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
-		ExposedHeaders:   []string{"Link"},
+		ExposedHeaders:   []string{"Link", "Content-Disposition"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
@@ -60,6 +64,7 @@ func main() {
 		// Customers
 		r.Get("/customers", h.GetCustomers)
 		r.Post("/customers", h.CreateCustomer)
+		r.Get("/customers/lookup", h.LookupCustomerByINN)
 		r.Get("/customers/{id}", h.GetCustomerByID)
 
 		// Contracts
@@ -74,9 +79,12 @@ func main() {
 		r.Get("/invoices", h.GetInvoices)
 		r.Post("/invoices/duplicate", h.DuplicateInvoice)
 		r.Get("/invoices/{id}/services", h.GetInvoiceWithServices)
+		r.Get("/invoices/{id}/export/upd-xml", h.ExportInvoiceXML)
 		r.Get("/invoices/{id}", h.GetInvoiceByID)
 		r.Post("/invoices", h.CreateInvoice)
 		r.Post("/invoices/{id}/lines", h.AddInvoiceLine)
+		r.Patch("/invoices/{id}/lines/{lineID}", h.UpdateInvoiceLine)
+		r.Delete("/invoices/{id}/lines/{lineID}", h.DeleteInvoiceLine)
 		r.Post("/invoices/{id}/act", h.CreateActFromInvoice)
 		r.Patch("/invoices/{id}", h.UpdateInvoice)
 		r.Delete("/invoices/{id}", h.DeleteInvoice)
@@ -89,6 +97,8 @@ func main() {
 		r.Get("/acts/{id}", h.GetActByID)
 		r.Post("/acts/{id}/invoices", h.LinkActInvoices)
 		r.Post("/acts/{id}/lines", h.AddActLine)
+		r.Patch("/acts/{id}/lines/{lineID}", h.UpdateActLine)
+		r.Delete("/acts/{id}/lines/{lineID}", h.DeleteActLine)
 		r.Patch("/acts/{id}", h.UpdateAct)
 		r.Delete("/acts/{id}", h.DeleteAct)
 

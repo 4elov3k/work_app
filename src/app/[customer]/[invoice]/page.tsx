@@ -11,6 +11,7 @@ import { invoicesAPI } from "@/lib/api.server"
 import AddLine from "../components/addLine"
 import EditDocument from "../components/editDocument"
 import CreateActFromInvoice from "./components/createActFromInvoice"
+import DocumentActionsMenu from "../components/documentActionsMenu"
 
 export default async function Page({
     params
@@ -27,7 +28,7 @@ export default async function Page({
     return (
         <div className="container mx-auto py-8 px-4 max-w-5xl">
           <div className="not-print mb-6">
-              <div className="flex gap-4 items-center mb-6">
+              <div className="flex flex-wrap gap-4 items-center mb-6">
                   <Link href={`/${customerId}`}>
                     <Button variant="outline">
                       <ArrowLeft className="mr-2 h-4 w-4" />
@@ -42,19 +43,23 @@ export default async function Page({
                   </Link>
                   {invoice.archived && <Badge variant="secondary">В архиве</Badge>}
                   <div className="flex-1"></div>
-                  <EditDocument
-                    docType="invoice"
-                    docId={invoiceId}
-                    number={invoice.number}
-                    date={invoice.date}
-                    status={invoice.status}
-                    archived={invoice.archived}
-                  />
-                  {!invoice.archived && <AddLine docId={invoiceId} docType="invoice" />}
-                  {!invoice.archived && <CreateActFromInvoice invoiceId={invoiceId} customerId={customerId} />}
-                  <DownloadPdf fileName={fileName} />
-                  <Duplicate invoiceId={invoiceId} customerId={customerId} />
-                  <Print/>
+                  <DocumentActionsMenu>
+                    <EditDocument
+                      docType="invoice"
+                      docId={invoiceId}
+                      number={invoice.number}
+                      date={invoice.date}
+                      status={invoice.status}
+                      archived={invoice.archived}
+                    />
+                    {!invoice.archived && <AddLine docId={invoiceId} docType="invoice" />}
+                    {!invoice.archived && (
+                      <CreateActFromInvoice invoiceId={invoiceId} customerId={customerId} contractId={invoice.contract_id} />
+                    )}
+                    <DownloadPdf fileName={fileName} />
+                    <Duplicate invoiceId={invoiceId} customerId={customerId} />
+                    <Print/>
+                  </DocumentActionsMenu>
               </div>
               <Separator />
           </div>

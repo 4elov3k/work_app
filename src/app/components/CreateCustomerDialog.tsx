@@ -1,6 +1,6 @@
 "use client"
 import { useState } from "react"
-import { Plus, Loader2, Building2 } from "lucide-react"
+import { Plus, Loader2, Building2, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
@@ -13,10 +13,54 @@ interface CreateCustomerDialogProps {
 export default function CreateCustomerDialog({ onCreated }: CreateCustomerDialogProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [lookupLoading, setLookupLoading] = useState(false)
+  const [lookupMessage, setLookupMessage] = useState("")
   const [name, setName] = useState("")
   const [fullname, setFullname] = useState("")
   const [address, setAddress] = useState("")
   const [inn, setInn] = useState("")
+  const [kpp, setKpp] = useState("")
+
+  const resetForm = () => {
+    setName("")
+    setFullname("")
+    setAddress("")
+    setInn("")
+    setKpp("")
+    setLookupMessage("")
+  }
+
+  const handleLookup = async () => {
+    const cleanInn = inn.replace(/\D/g, "")
+    const cleanKpp = kpp.replace(/\D/g, "")
+    if (cleanInn.length !== 10 && cleanInn.length !== 12) {
+      setLookupMessage("ИНН должен содержать 10 или 12 цифр")
+      return
+    }
+    if (cleanKpp && cleanKpp.length !== 9) {
+      setLookupMessage("КПП должен содержать 9 цифр")
+      return
+    }
+
+    setLookupLoading(true)
+    setLookupMessage("")
+    try {
+      const response = await customersAPI.lookupByInn(cleanInn, cleanKpp)
+      const found = response.data
+      setName(found.name)
+      setFullname(found.fullname)
+      setAddress(found.address)
+      setInn(found.inn)
+      setKpp(found.kpp)
+      setLookupMessage(found.status === "ACTIVE" ? "Реквизиты найдены" : `Найдено, статус: ${found.status || "не указан"}`)
+    } catch (err) {
+      console.error("Failed to lookup customer:", err)
+      const message = err instanceof Error ? err.message : "Неизвестная ошибка"
+      setLookupMessage(message)
+    } finally {
+      setLookupLoading(false)
+    }
+  }
 
   const handleCreate = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -27,15 +71,13 @@ export default function CreateCustomerDialog({ onCreated }: CreateCustomerDialog
         name,
         fullname,
         address,
-        inn
+        inn: inn.replace(/\D/g, ""),
+        kpp: kpp.replace(/\D/g, "")
       })
       onCreated?.(response.data)
 
       setIsOpen(false)
-      setName("")
-      setFullname("")
-      setAddress("")
-      setInn("")
+      resetForm()
     } catch (err) {
       console.error('Failed to create customer:', err)
       const message = err instanceof Error ? err.message : 'Неизвестная ошибка'
@@ -45,8 +87,15 @@ export default function CreateCustomerDialog({ onCreated }: CreateCustomerDialog
     }
   }
 
+  const handleOpenChange = (open: boolean) => {
+    setIsOpen(open)
+    if (!open) {
+      resetForm()
+    }
+  }
+
   return (
-    <Dialog open={isOpen} onOpenChange={setIsOpen}>
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button size="lg">
           <Plus className="mr-2 h-5 w-5" />
@@ -101,16 +150,52 @@ export default function CreateCustomerDialog({ onCreated }: CreateCustomerDialog
               <label htmlFor="inn" className="text-sm font-medium">
                 ИНН <span className="text-destructive">*</span>
               </label>
-              <Input
-                id="inn"
-                placeholder="7701234567"
-                value={inn}
-                onChange={(e) => setInn(e.target.value)}
-                maxLength={12}
-                required
-              />
+              <div className="flex gap-2">
+                <Input
+                  id="inn"
+                  placeholder="7701234567"
+                  value={inn}
+                  onChange={(e) => setInn(e.target.value.replace(/\D/g, ""))}
+                  maxLength={12}
+                  required
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleLookup}
+                  disabled={lookupLoading || submitting}
+                >
+                  {lookupLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Search className="h-4 w-4" />
+                  )}
+                  <span className="ml-2 hidden sm:inline">Проверить</span>
+                </Button>
+              </div>
               <p className="text-xs text-muted-foreground">
                 10 цифр для организаций, 12 для ИП
+              </p>
+              {lookupMessage && (
+                <p className="text-xs text-muted-foreground">
+                  {lookupMessage}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="kpp" className="text-sm font-medium">
+                КПП
+              </label>
+              <Input
+                id="kpp"
+                placeholder="770101001"
+                value={kpp}
+                onChange={(e) => setKpp(e.target.value.replace(/\D/g, ""))}
+                maxLength={9}
+              />
+              <p className="text-xs text-muted-foreground">
+                Обязательно для организаций, для ИП оставить пустым
               </p>
             </div>
             
@@ -134,7 +219,7 @@ export default function CreateCustomerDialog({ onCreated }: CreateCustomerDialog
             <Button 
               type="button" 
               variant="outline" 
-              onClick={() => setIsOpen(false)} 
+              onClick={() => handleOpenChange(false)}
               disabled={submitting}
             >
               Отмена

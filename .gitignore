@@ -12,6 +12,7 @@
 
 # testing
 /coverage
+/.cache/
 
 # next.js
 /.next/
@@ -19,6 +20,7 @@
 
 # production
 /build
+/export/
 
 # misc
 .DS_Store

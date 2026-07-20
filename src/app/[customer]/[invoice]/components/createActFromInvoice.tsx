@@ -1,9 +1,9 @@
 "use client"
-import React, { useState } from "react"
+import React, { useCallback, useEffect, useState } from "react"
 import { Loader2, Wand2 } from "lucide-react"
 import { useRouter } from "next/navigation"
 
-import { invoicesAPI } from "@/lib/api"
+import { contractsAPI, invoicesAPI } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -16,18 +16,43 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 
+const DUPLICATE_NUMBER_MESSAGE = "Номер счета совпадает с уже существующим номером акта по этому договору"
+
 type Props = {
   invoiceId: string
   customerId: string
+  contractId: string
 }
 
-export default function CreateActFromInvoice({ invoiceId, customerId }: Props) {
+export default function CreateActFromInvoice({ invoiceId, customerId, contractId }: Props) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [loadingNumber, setLoadingNumber] = useState(false)
   const [number, setNumber] = useState("")
   const [date, setDate] = useState("")
   const [error, setError] = useState("")
+
+  const loadNextNumber = useCallback(async () => {
+    setLoadingNumber(true)
+    setError("")
+    try {
+      const response = await contractsAPI.getNextDocNumber(contractId, "act")
+      setNumber(response.number)
+    } catch (err: unknown) {
+      console.error("Failed to load next act number:", err)
+      const message = err instanceof Error ? err.message : "Не удалось получить номер акта"
+      setError(message)
+    } finally {
+      setLoadingNumber(false)
+    }
+  }, [contractId])
+
+  useEffect(() => {
+    if (open && !number) {
+      loadNextNumber()
+    }
+  }, [loadNextNumber, number, open])
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -41,9 +66,13 @@ export default function CreateActFromInvoice({ invoiceId, customerId }: Props) {
       setDate("")
       router.push(`/${customerId}/acts/${response.data.id}`)
     } catch (err: unknown) {
-      console.error("Failed to create act from invoice:", err)
       const message = err instanceof Error ? err.message : "Ошибка при создании акта"
-      setError(message)
+      if (message.includes("HTTP 409") || message.includes("already exists")) {
+        setError(DUPLICATE_NUMBER_MESSAGE)
+      } else {
+        console.error("Failed to create act from invoice:", err)
+        setError(message)
+      }
     } finally {
       setSubmitting(false)
     }
@@ -64,7 +93,7 @@ export default function CreateActFromInvoice({ invoiceId, customerId }: Props) {
             <DialogDescription>Укажите номер и дату акта.</DialogDescription>
           </DialogHeader>
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded text-sm">
+            <div role="alert" className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded text-sm">
               {error}
             </div>
           )}
@@ -73,7 +102,7 @@ export default function CreateActFromInvoice({ invoiceId, customerId }: Props) {
               <label htmlFor="actNumber" className="text-sm font-medium">
                 Номер акта
               </label>
-              <Input id="actNumber" value={number} onChange={(e) => setNumber(e.target.value)} required />
+              <Input id="actNumber" value={number} onChange={(e) => setNumber(e.target.value)} required disabled={loadingNumber} />
             </div>
             <div className="space-y-2">
               <label htmlFor="actDate" className="text-sm font-medium">
@@ -86,11 +115,11 @@ export default function CreateActFromInvoice({ invoiceId, customerId }: Props) {
             <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={submitting}>
               Отмена
             </Button>
-            <Button type="submit" disabled={submitting}>
-              {submitting ? (
+            <Button type="submit" disabled={submitting || loadingNumber}>
+              {submitting || loadingNumber ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Создание...
+                  {loadingNumber ? "Загрузка..." : "Создание..."}
                 </>
               ) : (
                 "Создать"

@@ -84,7 +84,7 @@ func (db *DB) GetInvoices(ctx context.Context, customerID, contractID string, ar
 		}
 	}
 
-	query += " ORDER BY created_at DESC"
+	query += " ORDER BY to_date(date, 'DD.MM.YYYY') DESC, number DESC"
 
 	if perPage > 0 {
 		offset := (page - 1) * perPage
@@ -177,7 +177,7 @@ func (db *DB) GetInvoiceWithServices(ctx context.Context, id string) (*models.In
 
 	// Получаем строки счета и восстанавливаем услуги из snapshot
 	linesQuery := `
-		SELECT id, title_snapshot, price_snapshot
+		SELECT id, title_snapshot, unit_snapshot, price_snapshot, qty, amount
 		FROM invoice_lines
 		WHERE invoice_id = $1
 		ORDER BY id
@@ -196,17 +196,23 @@ func (db *DB) GetInvoiceWithServices(ctx context.Context, id string) (*models.In
 	for rows.Next() {
 		var lineID string
 		var title string
+		var unit string
 		var price float64
-		if err := rows.Scan(&lineID, &title, &price); err != nil {
+		var qty float64
+		var amount float64
+		if err := rows.Scan(&lineID, &title, &unit, &price, &qty, &amount); err != nil {
 			if debug {
 				log.Printf("[DEBUG] Scan invoice line failed: %v", err)
 			}
 			return nil, fmt.Errorf("failed to scan invoice line: %w", err)
 		}
 		services = append(services, models.Service{
-			ID:    lineID,
-			Name:  title,
-			Price: price,
+			ID:     lineID,
+			Name:   title,
+			Unit:   unit,
+			Price:  price,
+			Qty:    qty,
+			Amount: amount,
 		})
 	}
 	if debug {
@@ -636,6 +642,105 @@ func (db *DB) AddInvoiceLine(ctx context.Context, invoiceID string, line models.
 	}
 
 	if _, err := tx.ExecContext(ctx, `UPDATE invoices SET total_amount = total_amount + $1 WHERE id = $2`, amount, invoiceID); err != nil {
+		return fmt.Errorf("failed to update invoice total: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	return nil
+}
+
+// UpdateInvoiceLine обновляет строку счета и пересчитывает сумму.
+func (db *DB) UpdateInvoiceLine(ctx context.Context, invoiceID, lineID string, line models.InvoiceLineInput) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var archived bool
+	if err := tx.QueryRowContext(ctx, `SELECT archived FROM invoices WHERE id = $1`, invoiceID).Scan(&archived); err != nil {
+		if err == sql.ErrNoRows {
+			return sql.ErrNoRows
+		}
+		return fmt.Errorf("failed to check invoice: %w", err)
+	}
+	if archived {
+		return fmt.Errorf("invoice is archived")
+	}
+
+	snapshot, _, err := buildSingleInvoiceLine(ctx, tx, line)
+	if err != nil {
+		return err
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE invoice_lines
+		SET service_id = $1,
+		    title_snapshot = $2,
+		    unit_snapshot = $3,
+		    vat_snapshot = $4,
+		    price_snapshot = $5,
+		    qty = $6,
+		    amount = $7
+		WHERE id = $8 AND invoice_id = $9
+	`, snapshot.ServiceID, snapshot.Title, snapshot.Unit, snapshot.VAT, snapshot.Price, snapshot.Qty, snapshot.Amount, lineID, invoiceID)
+	if err != nil {
+		return fmt.Errorf("failed to update invoice line: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE invoices
+		SET total_amount = COALESCE((SELECT SUM(amount) FROM invoice_lines WHERE invoice_id = $1), 0)
+		WHERE id = $1
+	`, invoiceID); err != nil {
+		return fmt.Errorf("failed to update invoice total: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	return nil
+}
+
+// DeleteInvoiceLine удаляет строку счета и пересчитывает сумму.
+func (db *DB) DeleteInvoiceLine(ctx context.Context, invoiceID, lineID string) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var archived bool
+	if err := tx.QueryRowContext(ctx, `SELECT archived FROM invoices WHERE id = $1`, invoiceID).Scan(&archived); err != nil {
+		if err == sql.ErrNoRows {
+			return sql.ErrNoRows
+		}
+		return fmt.Errorf("failed to check invoice: %w", err)
+	}
+	if archived {
+		return fmt.Errorf("invoice is archived")
+	}
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM invoice_lines WHERE id = $1 AND invoice_id = $2`, lineID, invoiceID)
+	if err != nil {
+		return fmt.Errorf("failed to delete invoice line: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE invoices
+		SET total_amount = COALESCE((SELECT SUM(amount) FROM invoice_lines WHERE invoice_id = $1), 0)
+		WHERE id = $1
+	`, invoiceID); err != nil {
 		return fmt.Errorf("failed to update invoice total: %w", err)
 	}
 

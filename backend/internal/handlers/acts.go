@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -131,7 +132,7 @@ func (h *Handlers) ExportActUPDXML(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="act.xml"; filename*=UTF-8''`+url.PathEscape(filename))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }
@@ -374,6 +375,69 @@ func (h *Handlers) AddActLine(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respondWithError(w, http.StatusBadRequest, "Failed to add act line")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// UpdateActLine обрабатывает PATCH /api/acts/{id}/lines/{lineID}
+func (h *Handlers) UpdateActLine(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	lineID := chi.URLParam(r, "lineID")
+	if id == "" || lineID == "" {
+		respondWithError(w, http.StatusBadRequest, "Act ID and line ID are required")
+		return
+	}
+
+	var req models.AddActLineRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	line := normalizeLineInput(req.Line)
+	if !validLineInput(line) {
+		respondWithError(w, http.StatusBadRequest, "Invalid act line")
+		return
+	}
+
+	if err := h.db.UpdateActLine(ctx, id, lineID, line); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, http.StatusNotFound, "Act line not found")
+			return
+		}
+		if err.Error() == "act is archived" {
+			respondWithError(w, http.StatusBadRequest, "Archived act cannot be modified")
+			return
+		}
+		respondWithError(w, http.StatusBadRequest, "Failed to update act line")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// DeleteActLine обрабатывает DELETE /api/acts/{id}/lines/{lineID}
+func (h *Handlers) DeleteActLine(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	lineID := chi.URLParam(r, "lineID")
+	if id == "" || lineID == "" {
+		respondWithError(w, http.StatusBadRequest, "Act ID and line ID are required")
+		return
+	}
+
+	if err := h.db.DeleteActLine(ctx, id, lineID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, http.StatusNotFound, "Act line not found")
+			return
+		}
+		if err.Error() == "act is archived" {
+			respondWithError(w, http.StatusBadRequest, "Archived act cannot be modified")
+			return
+		}
+		respondWithError(w, http.StatusBadRequest, "Failed to delete act line")
 		return
 	}
 

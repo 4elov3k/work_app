@@ -26,6 +26,7 @@ export interface Customer {
   fullname: string
   address: string
   inn: string
+  kpp: string
   created_at: string
   updated_at: string
 }
@@ -74,7 +75,10 @@ export interface Act {
 export interface Service {
   id: string
   name: string
+  unit?: string
   price: number
+  qty?: number
+  amount?: number
   created_at: string
   updated_at: string
 }

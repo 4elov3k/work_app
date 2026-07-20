@@ -2,13 +2,15 @@ import * as rubles from "rubles"
 import { Customer, InvoiceWithServices } from "@/lib/api"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table"
 import { Card, CardContent } from "@/components/ui/card"
+import EditableServiceLine from "./EditableServiceLine"
 
 interface InvoiceTemplateProps {
   invoice: InvoiceWithServices
   customer: Customer
+  docId: string
 }
 
-export default function InvoiceTemplate({ invoice, customer }: InvoiceTemplateProps) {
+export default function InvoiceTemplate({ invoice, customer, docId }: InvoiceTemplateProps) {
   const services = invoice.services
   const num = invoice.number
   const date = invoice.date
@@ -16,7 +18,7 @@ export default function InvoiceTemplate({ invoice, customer }: InvoiceTemplatePr
   // Вычисляем сумму
   let sum = 0
   services.forEach(service => {
-    sum += service.price
+    sum += service.amount ?? service.price * (service.qty || 1)
   });
   
   function convertToCost(price: number | string): string {
@@ -46,12 +48,12 @@ export default function InvoiceTemplate({ invoice, customer }: InvoiceTemplatePr
       <CardContent data-document-content="true" className="p-6 print:p-8 text-black text-xs relative">
         {/* Шапка с реквизитами ИП */}
         <div className="text-center mb-3 space-y-0">
-          <p className="text-[11px] font-semibold">ИП Мыльникова Любовь Валерьевна</p>
+          <p className="text-[11px] font-semibold">ИП Мыленкова Любовь Валерьевна</p>
           <p className="text-[10px]">
-            Адрес: 603146, Нижегородская обл., Нижний Новгород, ул. Головнина, д. 39, кв. 7
+            Адрес: 603136, г. Нижний Новгород ул, Маршала Рокоссовского, д. 2к1, кв 135
           </p>
           <p className="text-[10px]">тел: 8-905-864445</p>
-          <p className="text-[10px]">ИНН: 526220116209 КПП:</p>
+          <p className="text-[10px]">ИНН: 526220116209</p>
         </div>
 
         <div className="border-t border-black my-3"></div>
@@ -63,7 +65,7 @@ export default function InvoiceTemplate({ invoice, customer }: InvoiceTemplatePr
 
         {/* Реквизиты получателя */}
         <div className="mb-3 space-y-0 text-[11px]">
-          <p><strong>Получатель:</strong> ИП Мыльникова Любовь Валерьевна</p>
+          <p><strong>Получатель:</strong> ИП Мыленкова Любовь Валерьевна</p>
           <p><strong>Банк получателя:</strong> ООО &quot;Банк Точка&quot;</p>
           <p>Р/с: 40802810164270001108 БИК: 044525104</p>
           <p>К/с: 30101810445745251004</p>
@@ -89,22 +91,18 @@ export default function InvoiceTemplate({ invoice, customer }: InvoiceTemplatePr
                 <TableHead className="text-center w-[70px] text-[10px] p-1 print:border print:border-black print:bg-white">Кол-во</TableHead>
                 <TableHead className="text-center w-[90px] text-[10px] p-1 print:border print:border-black print:bg-white">Цена</TableHead>
                 <TableHead className="text-center w-[90px] text-[10px] p-1 print:border print:border-black print:bg-white">Сумма</TableHead>
+                <TableHead className="not-print w-[76px] p-1"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {services.map((service, index) => (
-                <TableRow key={service.id} className="print:border-black h-7">
-                  <TableCell className="text-[10px] p-1 text-center print:border print:border-black">{index + 1}</TableCell>
-                  <TableCell className="text-[10px] p-1 print:border print:border-black">{service.name}</TableCell>
-                  <TableCell className="text-[10px] p-1 text-center print:border print:border-black">шт</TableCell>
-                  <TableCell className="text-[10px] p-1 text-center print:border print:border-black">1</TableCell>
-                  <TableCell className="text-[10px] p-1 text-right tabular-nums print:border print:border-black">
-                    {convertToCost(service.price)}
-                  </TableCell>
-                  <TableCell className="text-[10px] p-1 text-right tabular-nums print:border print:border-black">
-                    {convertToCost(service.price)}
-                  </TableCell>
-                </TableRow>
+                <EditableServiceLine
+                  key={service.id}
+                  docId={docId}
+                  docType="invoice"
+                  service={service}
+                  index={index}
+                />
               ))}
             </TableBody>
             <TableFooter>
@@ -115,6 +113,7 @@ export default function InvoiceTemplate({ invoice, customer }: InvoiceTemplatePr
                 <TableCell className="text-[10px] p-1 text-right tabular-nums print:border print:border-black">
                   {convertToCost(sum)}
                 </TableCell>
+                <TableCell className="not-print p-1"></TableCell>
               </TableRow>
               <TableRow className="print:border-black h-7">
                 <TableCell colSpan={5} className="text-[10px] p-1 text-right print:border print:border-black">
@@ -123,6 +122,7 @@ export default function InvoiceTemplate({ invoice, customer }: InvoiceTemplatePr
                 <TableCell className="text-[10px] p-1 text-right print:border print:border-black">
                   -
                 </TableCell>
+                <TableCell className="not-print p-1"></TableCell>
               </TableRow>
               <TableRow className="print:border-black h-7">
                 <TableCell colSpan={5} className="text-[10px] p-1 text-right font-semibold print:border print:border-black">
@@ -131,6 +131,7 @@ export default function InvoiceTemplate({ invoice, customer }: InvoiceTemplatePr
                 <TableCell className="text-[10px] p-1 text-right font-semibold tabular-nums print:border print:border-black">
                   {convertToCost(sum)}
                 </TableCell>
+                <TableCell className="not-print p-1"></TableCell>
               </TableRow>
             </TableFooter>
           </Table>
@@ -152,7 +153,7 @@ export default function InvoiceTemplate({ invoice, customer }: InvoiceTemplatePr
               <p className="text-[9px] text-gray-500 mt-1">(подпись)</p>
             </div>
             <div className="text-[11px] mt-8">
-              Л.В. Мыльникова
+              Л.В. Мыленкова
             </div>
           </div>
           <p className="text-[11px] mt-6">М.П.</p>

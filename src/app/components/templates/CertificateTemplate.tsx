@@ -2,13 +2,15 @@ import * as rubles from "rubles"
 import { Customer, ActWithServices } from "@/lib/api"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table"
 import { Card, CardContent } from "@/components/ui/card"
+import EditableServiceLine from "./EditableServiceLine"
 
 interface CertificateTemplateProps {
   invoice: ActWithServices
   customer: Customer
+  docId: string
 }
 
-export default function CertificateTemplate({ invoice, customer }: CertificateTemplateProps) {
+export default function CertificateTemplate({ invoice, customer, docId }: CertificateTemplateProps) {
   const services = invoice.services
   const num = invoice.number
   const date = invoice.date
@@ -16,7 +18,7 @@ export default function CertificateTemplate({ invoice, customer }: CertificateTe
   // Вычисляем сумму
   let sum = 0
   services.forEach(service => {
-    sum += service.price
+    sum += service.amount ?? service.price * (service.qty || 1)
   });
   
   function convertToCost(price: number | string): string {
@@ -46,9 +48,9 @@ export default function CertificateTemplate({ invoice, customer }: CertificateTe
       <CardContent data-document-content="true" className="p-6 print:p-8 text-black text-xs relative">
         {/* Шапка с реквизитами ИП */}
         <div className="text-left mb-3 space-y-0">
-          <p className="text-[10px] font-semibold">ИП Мыльникова Любовь Валерьевна, ИНН 526220116209</p>
+          <p className="text-[10px] font-semibold">ИП Мыленкова Любовь Валерьевна, ИНН 526220116209</p>
           <p className="text-[10px]">
-            Адрес: 603146, Нижегородская обл, г. Нижний Новгород, ул. Головнина, д.39, кв. 7
+            Адрес: 603136, г. Нижний Новгород ул, Маршала Рокоссовского, д. 2к1, кв 135
           </p>
         </div>
 
@@ -86,22 +88,18 @@ export default function CertificateTemplate({ invoice, customer }: CertificateTe
                 <TableHead className="text-center w-[70px] text-[10px] p-1 print:border print:border-black print:bg-white">Количество</TableHead>
                 <TableHead className="text-center w-[90px] text-[10px] p-1 print:border print:border-black print:bg-white">Цена</TableHead>
                 <TableHead className="text-center w-[90px] text-[10px] p-1 print:border print:border-black print:bg-white">Сумма</TableHead>
+                <TableHead className="not-print w-[76px] p-1"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {services.map((service, index) => (
-                <TableRow key={service.id} className="print:border-black h-7">
-                  <TableCell className="text-[10px] p-1 text-center print:border print:border-black">{index + 1}</TableCell>
-                  <TableCell className="text-[10px] p-1 print:border print:border-black">{service.name}</TableCell>
-                  <TableCell className="text-[10px] p-1 text-center print:border print:border-black">шт</TableCell>
-                  <TableCell className="text-[10px] p-1 text-center print:border print:border-black">1</TableCell>
-                  <TableCell className="text-[10px] p-1 text-right tabular-nums print:border print:border-black">
-                    {convertToCost(service.price)}
-                  </TableCell>
-                  <TableCell className="text-[10px] p-1 text-right tabular-nums print:border print:border-black">
-                    {convertToCost(service.price)}
-                  </TableCell>
-                </TableRow>
+                <EditableServiceLine
+                  key={service.id}
+                  docId={docId}
+                  docType="act"
+                  service={service}
+                  index={index}
+                />
               ))}
             </TableBody>
             <TableFooter>
@@ -112,6 +110,7 @@ export default function CertificateTemplate({ invoice, customer }: CertificateTe
                 <TableCell className="text-[10px] p-1 text-right tabular-nums print:border print:border-black">
                   {convertToCost(sum)}
                 </TableCell>
+                <TableCell className="not-print p-1"></TableCell>
               </TableRow>
               <TableRow className="print:border-black h-7">
                 <TableCell colSpan={5} className="text-[10px] p-1 text-right print:border print:border-black">
@@ -120,6 +119,7 @@ export default function CertificateTemplate({ invoice, customer }: CertificateTe
                 <TableCell className="text-[10px] p-1 text-right print:border print:border-black">
                   -
                 </TableCell>
+                <TableCell className="not-print p-1"></TableCell>
               </TableRow>
               <TableRow className="print:border-black h-7">
                 <TableCell colSpan={5} className="text-[10px] p-1 text-right font-semibold print:border print:border-black">
@@ -128,6 +128,7 @@ export default function CertificateTemplate({ invoice, customer }: CertificateTe
                 <TableCell className="text-[10px] p-1 text-right font-semibold tabular-nums print:border print:border-black">
                   {convertToCost(sum)}
                 </TableCell>
+                <TableCell className="not-print p-1"></TableCell>
               </TableRow>
             </TableFooter>
           </Table>
@@ -147,7 +148,7 @@ export default function CertificateTemplate({ invoice, customer }: CertificateTe
           <div>
             <div className="flex items-start justify-between mb-1">
               <div className="text-[11px] flex-shrink-0">Исполнитель:</div>
-              <div className="text-[11px] text-right">Л. В. Мыльникова</div>
+              <div className="text-[11px] text-right">Л. В. Мыленкова</div>
             </div>
             <div className="flex items-center gap-2 mt-2">
               <div className="border-b border-black flex-1 h-6"></div>

@@ -107,8 +107,15 @@ func (h *Handlers) CreateCustomer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.INN = digitsOnly(req.INN)
+	req.KPP = digitsOnly(req.KPP)
 	if len(req.INN) != 10 && len(req.INN) != 12 {
 		respondWithError(w, http.StatusBadRequest, "Customer INN must be 10 or 12 digits")
+		return
+	}
+
+	if len(req.INN) == 10 && len(req.KPP) != 9 {
+		respondWithError(w, http.StatusBadRequest, "Customer KPP must be 9 digits for organizations")
 		return
 	}
 

@@ -31,7 +31,7 @@ func (db *DB) GetCustomers(ctx context.Context, search string, page, perPage int
 
 	// Получение данных с пагинацией
 	query := `
-		SELECT id, name, fullname, address, inn, created_at, updated_at 
+		SELECT id, name, fullname, address, inn, COALESCE(kpp, ''), created_at, updated_at 
 		FROM customers
 	`
 
@@ -66,6 +66,7 @@ func (db *DB) GetCustomers(ctx context.Context, search string, page, perPage int
 			&customer.Fullname,
 			&customer.Address,
 			&customer.INN,
+			&customer.KPP,
 			&customer.CreatedAt,
 			&customer.UpdatedAt,
 		)
@@ -85,7 +86,7 @@ func (db *DB) GetCustomers(ctx context.Context, search string, page, perPage int
 // GetCustomerByID возвращает контрагента по ID
 func (db *DB) GetCustomerByID(ctx context.Context, id string) (*models.Customer, error) {
 	query := `
-		SELECT id, name, fullname, address, inn, created_at, updated_at 
+		SELECT id, name, fullname, address, inn, COALESCE(kpp, ''), created_at, updated_at 
 		FROM customers 
 		WHERE id = $1
 	`
@@ -97,6 +98,7 @@ func (db *DB) GetCustomerByID(ctx context.Context, id string) (*models.Customer,
 		&customer.Fullname,
 		&customer.Address,
 		&customer.INN,
+		&customer.KPP,
 		&customer.CreatedAt,
 		&customer.UpdatedAt,
 	)
@@ -120,18 +122,19 @@ func (db *DB) CreateCustomer(ctx context.Context, req models.CreateCustomerReque
 	defer tx.Rollback()
 
 	query := `
-		INSERT INTO customers (name, fullname, address, inn)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, name, fullname, address, inn, created_at, updated_at
+		INSERT INTO customers (name, fullname, address, inn, kpp)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, name, fullname, address, inn, COALESCE(kpp, ''), created_at, updated_at
 	`
 
 	var customer models.Customer
-	err = tx.QueryRowContext(ctx, query, req.Name, req.Fullname, req.Address, req.INN).Scan(
+	err = tx.QueryRowContext(ctx, query, req.Name, req.Fullname, req.Address, req.INN, req.KPP).Scan(
 		&customer.ID,
 		&customer.Name,
 		&customer.Fullname,
 		&customer.Address,
 		&customer.INN,
+		&customer.KPP,
 		&customer.CreatedAt,
 		&customer.UpdatedAt,
 	)

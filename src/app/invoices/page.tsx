@@ -44,10 +44,21 @@ export default function AllInvoicesPage() {
     }
   }
 
+  const documentTime = (date: string) => {
+    const [day, month, year] = date.split(".").map(Number)
+    return new Date(year, month - 1, day).getTime()
+  }
+
+  const sortDocumentsByDate = (documents: Array<Invoice | Act>) => {
+    return [...documents].sort((left, right) => {
+      const dateDiff = documentTime(right.date) - documentTime(left.date)
+      if (dateDiff !== 0) return dateDiff
+      return right.number.localeCompare(left.number, "ru", { numeric: true })
+    })
+  }
+
   const filterDocuments = (documents: Array<Invoice | Act>) => {
-    if (!searchQuery) return documents
-    
-    return documents.filter(doc => {
+    const filtered = searchQuery ? documents.filter(doc => {
       const customer = customers[doc.customer_id]
       const customerName = customer?.name?.toLowerCase() || ""
       const number = doc.number.toLowerCase()
@@ -57,7 +68,9 @@ export default function AllInvoicesPage() {
       return customerName.includes(query) || 
              number.includes(query) || 
              date.includes(query)
-    })
+    }) : documents
+
+    return sortDocumentsByDate(filtered)
   }
 
   const renderDocumentCard = (doc: Invoice | Act, type: "invoice" | "act") => {

@@ -30,6 +30,7 @@ psql -d invoices_db -f migrations/006_repair_contract_number.sql
 psql -d invoices_db -f migrations/007_contracts_acts_lines.sql
 psql -d invoices_db -f migrations/008_contract_topics.sql
 psql -d invoices_db -f migrations/009_archive_flags.sql
+psql -d invoices_db -f migrations/010_add_customer_kpp.sql
 ```
 
 Если база была создана через `docker-compose` до этого изменения, существующий volume нужно либо пересоздать, либо применить миграции вручную: init-скрипты Postgres выполняются только при первом создании пустой БД.
@@ -42,6 +43,7 @@ psql -d invoices_db -f migrations/009_archive_flags.sql
 DATABASE_URL=postgres://username:password@localhost:5432/invoices_db
 PORT=8080
 CORS_ORIGIN=http://localhost:3000
+DADATA_API_KEY=your_dadata_api_key
 ```
 
 ### 3. Установка зависимостей

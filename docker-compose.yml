@@ -20,6 +20,7 @@ services:
       - ./backend/migrations/007_contracts_acts_lines.sql:/docker-entrypoint-initdb.d/007_contracts_acts_lines.sql
       - ./backend/migrations/008_contract_topics.sql:/docker-entrypoint-initdb.d/008_contract_topics.sql
       - ./backend/migrations/009_archive_flags.sql:/docker-entrypoint-initdb.d/009_archive_flags.sql
+      - ./backend/migrations/010_add_customer_kpp.sql:/docker-entrypoint-initdb.d/010_add_customer_kpp.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U invoices_user -d invoices_db"]
       interval: 10s
@@ -36,7 +37,8 @@ services:
     environment:
       DATABASE_URL: postgres://invoices_user:invoices_password@postgres:5432/invoices_db?sslmode=disable
       PORT: 8080
-      CORS_ORIGIN: http://localhost:3000
+      CORS_ORIGIN: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://127.0.0.1:3000,http://127.0.0.1:3001,http://127.0.0.1:3002
+      DADATA_API_KEY: ${DADATA_API_KEY:-}
     ports:
       - "8080:8080"
     depends_on:
