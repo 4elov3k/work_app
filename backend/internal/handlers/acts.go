@@ -147,7 +147,13 @@ func (h *Handlers) ExportActUPDXML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, filename, err := updxml.BuildActUPDXMLWithSellerEDOID(*act, *customer, *contract, sellerEDOID)
+	org, err := h.db.GetActiveOrganization(ctx)
+	if err != nil {
+		respondNotFoundOrInternal(w, err, "Organization is not configured")
+		return
+	}
+
+	data, filename, err := updxml.BuildActUPDXMLWithSellerEDOID(*act, *customer, *contract, updxml.SellerFromOrganization(*org), sellerEDOID)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, err.Error())
 		return

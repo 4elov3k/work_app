@@ -61,6 +61,9 @@ func main() {
 
 	// API маршруты
 	r.Route("/api", func(r chi.Router) {
+		// Organization
+		r.Get("/organization", h.GetOrganization)
+
 		// Customers
 		r.Get("/customers", h.GetCustomers)
 		r.Post("/customers", h.CreateCustomer)

@@ -113,6 +113,44 @@ type Organization struct {
 	Active            bool           `json:"active"`
 }
 
+// sellerFromOrganization adapts the fetched Organization (whose Signer is a
+// raw JSONB map) into the updxml.Seller shape used for document generation.
+func sellerFromOrganization(org *Organization) updxml.Seller {
+	signerString := func(key string) string {
+		if org.Signer == nil {
+			return ""
+		}
+		if value, ok := org.Signer[key].(string); ok {
+			return value
+		}
+		return ""
+	}
+	return updxml.Seller{
+		FullName:        org.FullName,
+		Address:         firstNonEmptyString(org.LegalAddress, org.PostalAddress),
+		INN:             org.INN,
+		OGRNIP:          org.OGRN,
+		Phone:           org.Phone,
+		BankAccount:     org.BankAccount,
+		BankName:        org.BankName,
+		BankBIK:         org.BankBIK,
+		BankCorrAccount: org.BankCorrAccount,
+		Position:        signerString("position"),
+		LastName:        signerString("last_name"),
+		FirstName:       signerString("first_name"),
+		MiddleName:      signerString("middle_name"),
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 type MoneyLineInput struct {
 	ServiceID string `json:"service_id,omitempty" jsonschema:"existing service id; omit for ad-hoc line"`
 	Title     string `json:"title,omitempty" jsonschema:"service title"`
@@ -374,9 +412,6 @@ func (s *Service) CommitCreateCounterparty(ctx context.Context, input CommitInpu
 			payload.Input.Phone, payload.Input.Email, payload.Input.ContactPerson, payload.Input.ContactPosition, payload.Input.Comment).
 			Scan(&c.ID, &c.Name, &c.Fullname, &c.Address, &c.INN, &c.KPP, &c.EDOIDTensor, &c.EDOIDKontur, &c.OKPO, &c.Phone, &c.Email, &c.ContactPerson, &c.ContactPosition, &c.Comment, &c.Status, &c.CreatedAt, &c.UpdatedAt)
 		if err != nil {
-			return nil, err
-		}
-		if err := database.CreateDefaultContractTx(ctx, tx, c.ID); err != nil {
 			return nil, err
 		}
 		return map[string]any{"status": "created", "data": c}, nil
@@ -1122,7 +1157,7 @@ func (s *Service) ExportActUPDXML(ctx context.Context, input IDInput) (*FileResu
 	if err != nil {
 		return nil, err
 	}
-	data, filename, err := updxml.BuildActUPDXML(*act, *customer, *contract)
+	data, filename, err := updxml.BuildActUPDXML(*act, *customer, *contract, sellerFromOrganization(org))
 	if err != nil {
 		return nil, appError("XML_VALIDATION_FAILED", err.Error(), true, "Исправьте реквизиты или строки акта")
 	}
@@ -1145,6 +1180,10 @@ func (s *Service) ExportActUPDXML(ctx context.Context, input IDInput) (*FileResu
 }
 
 func (s *Service) ValidateActUPDXML(ctx context.Context, input IDInput) (*ValidationResult, error) {
+	org, err := s.CurrentOrganization(ctx)
+	if err != nil {
+		return nil, err
+	}
 	act, err := s.db.GetActWithServices(ctx, input.ID)
 	if err != nil {
 		return nil, appError("DOCUMENT_NOT_FOUND", "Акт не найден", true, "Уточните ID")
@@ -1157,7 +1196,7 @@ func (s *Service) ValidateActUPDXML(ctx context.Context, input IDInput) (*Valida
 	if err != nil {
 		return nil, err
 	}
-	data, _, err := updxml.BuildActUPDXML(*act, *customer, *contract)
+	data, _, err := updxml.BuildActUPDXML(*act, *customer, *contract, sellerFromOrganization(org))
 	if err != nil {
 		return nil, appError("XML_VALIDATION_FAILED", err.Error(), true, "Исправьте реквизиты или строки акта")
 	}

@@ -175,19 +175,6 @@ func (db *DB) CreateContract(ctx context.Context, req models.CreateContractReque
 	return &c, nil
 }
 
-// CreateDefaultContractTx создает договор по умолчанию в рамках транзакции
-func CreateDefaultContractTx(ctx context.Context, tx *sql.Tx, customerID string) error {
-	query := `
-		INSERT INTO contracts (customer_id, number, currency, status, topic, start_date)
-		VALUES ($1, 'Основной', 'RUB', 'active', 'Продвижение сео', CURRENT_DATE)
-		ON CONFLICT (customer_id, number) DO NOTHING
-	`
-	if _, err := tx.ExecContext(ctx, query, customerID); err != nil {
-		return fmt.Errorf("failed to create default contract: %w", err)
-	}
-	return nil
-}
-
 // DeleteContract удаляет договор по ID
 func (db *DB) DeleteContract(ctx context.Context, id string) error {
 	res, err := db.ExecContext(ctx, `DELETE FROM contracts WHERE id = $1`, id)

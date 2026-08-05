@@ -100,6 +100,31 @@ export interface ActWithServices extends Act {
   services: Service[]
 }
 
+export interface OrganizationSigner {
+  position: string
+  last_name: string
+  first_name: string
+  middle_name: string
+}
+
+export interface Organization {
+  id: string
+  type: string
+  full_name: string
+  short_name: string
+  inn: string
+  kpp?: string
+  ogrn?: string
+  legal_address?: string
+  postal_address?: string
+  phone?: string
+  bank_account?: string
+  bank_name?: string
+  bank_bik?: string
+  bank_corr_account?: string
+  signer: OrganizationSigner
+}
+
 export interface PaginatedResponse<T> {
   data: T[]
   total: number
@@ -132,6 +157,12 @@ export const actsAPI = {
   },
   getWithServices: async (id: string): Promise<SingleResponse<ActWithServices>> => {
     return apiFetch<SingleResponse<ActWithServices>>(`/acts/${id}/services`)
+  },
+}
+
+export const organizationAPI = {
+  get: async (): Promise<SingleResponse<Organization>> => {
+    return apiFetch<SingleResponse<Organization>>(`/organization`)
   },
 }
 

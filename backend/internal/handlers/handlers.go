@@ -93,4 +93,3 @@ func respondNotFoundOrInternal(w http.ResponseWriter, err error, notFoundMessage
 	log.Printf("internal error: %v", err)
 	respondWithError(w, http.StatusInternalServerError, "Internal server error")
 }
-

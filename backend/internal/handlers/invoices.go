@@ -152,7 +152,13 @@ func (h *Handlers) ExportInvoiceXML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, filename, err := updxml.BuildInvoiceXML(*invoice, *customer, *contract)
+	org, err := h.db.GetActiveOrganization(ctx)
+	if err != nil {
+		respondNotFoundOrInternal(w, err, "Organization is not configured")
+		return
+	}
+
+	data, filename, err := updxml.BuildInvoiceXML(*invoice, *customer, *contract, updxml.SellerFromOrganization(*org))
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, err.Error())
 		return

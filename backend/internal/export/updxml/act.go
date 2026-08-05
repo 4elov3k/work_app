@@ -16,21 +16,57 @@ import (
 const (
 	actFilePrefix        = "ON_NSCHFDOPPR"
 	defaultSellerEDOID   = "2BEb25cae8e664f11e38742005056917125"
-	sellerFullName       = "Индивидуальный предприниматель Мыленкова Любовь Валерьевна"
-	sellerINN            = "526220116209"
-	sellerOGRNIP         = "312526227100047"
-	sellerAddress        = "603136, г. Нижний Новгород ул, Маршала Рокоссовского, д. 2к1, кв 135"
-	sellerPhone          = "8-905-864445"
-	sellerBankName       = `ООО "Банк Точка"`
-	sellerBIK            = "044525104"
-	sellerAccount        = "40802810164270001108"
-	sellerCorrAcct       = "30101810445745251004"
-	sellerPosition       = "Индивидуальный предприниматель"
-	sellerLastName       = "Мыленкова"
-	sellerFirstName      = "Любовь"
-	sellerMiddleName     = "Валерьевна"
 	actTransferOperation = "Оказание услуг"
 )
+
+// Seller carries the seller organization's requisites and signer identity —
+// sourced from the organizations table (see database.GetActiveOrganization /
+// accounting.Service.CurrentOrganization) instead of being hardcoded here.
+type Seller struct {
+	FullName        string
+	Address         string
+	INN             string
+	OGRNIP          string
+	Phone           string
+	BankAccount     string
+	BankName        string
+	BankBIK         string
+	BankCorrAccount string
+	Position        string
+	LastName        string
+	FirstName       string
+	MiddleName      string
+}
+
+// SellerFromOrganization adapts a models.Organization (as returned by the
+// REST /api/organization endpoint) into the Seller shape used for document
+// generation.
+func SellerFromOrganization(org models.Organization) Seller {
+	return Seller{
+		FullName:        org.FullName,
+		Address:         firstNonEmpty(org.LegalAddress, org.PostalAddress),
+		INN:             org.INN,
+		OGRNIP:          org.OGRN,
+		Phone:           org.Phone,
+		BankAccount:     org.BankAccount,
+		BankName:        org.BankName,
+		BankBIK:         org.BankBIK,
+		BankCorrAccount: org.BankCorrAccount,
+		Position:        org.Signer.Position,
+		LastName:        org.Signer.LastName,
+		FirstName:       org.Signer.FirstName,
+		MiddleName:      org.Signer.MiddleName,
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
 
 type DocumentType string
 type VATMode string
@@ -55,21 +91,21 @@ var sellerActUPDOptions = ActUPDOptions{
 }
 
 // BuildActUPDXML builds a formalized UPD XML title for Saby/Tensor import.
-func BuildActUPDXML(act models.ActWithServices, customer models.Customer, contract models.Contract) ([]byte, string, error) {
-	return BuildActUPDXMLWithOptions(act, customer, contract, sellerActUPDOptions)
+func BuildActUPDXML(act models.ActWithServices, customer models.Customer, contract models.Contract, seller Seller) ([]byte, string, error) {
+	return BuildActUPDXMLWithOptions(act, customer, contract, seller, sellerActUPDOptions)
 }
 
-func BuildActUPDXMLWithSellerEDOID(act models.ActWithServices, customer models.Customer, contract models.Contract, sellerEDOID string) ([]byte, string, error) {
+func BuildActUPDXMLWithSellerEDOID(act models.ActWithServices, customer models.Customer, contract models.Contract, seller Seller, sellerEDOID string) ([]byte, string, error) {
 	options := sellerActUPDOptions
 	options.SellerEDOID = sellerEDOID
-	return BuildActUPDXMLWithOptions(act, customer, contract, options)
+	return BuildActUPDXMLWithOptions(act, customer, contract, seller, options)
 }
 
-func BuildActUPDXMLWithOptions(act models.ActWithServices, customer models.Customer, contract models.Contract, options ActUPDOptions) ([]byte, string, error) {
-	return buildActUPDXMLAt(act, customer, contract, options, moscowNow())
+func BuildActUPDXMLWithOptions(act models.ActWithServices, customer models.Customer, contract models.Contract, seller Seller, options ActUPDOptions) ([]byte, string, error) {
+	return buildActUPDXMLAt(act, customer, contract, seller, options, moscowNow())
 }
 
-func buildActUPDXMLAt(act models.ActWithServices, customer models.Customer, contract models.Contract, options ActUPDOptions, formedAt time.Time) ([]byte, string, error) {
+func buildActUPDXMLAt(act models.ActWithServices, customer models.Customer, contract models.Contract, seller Seller, options ActUPDOptions, formedAt time.Time) ([]byte, string, error) {
 	if strings.TrimSpace(act.Number) == "" {
 		return nil, "", fmt.Errorf("не указан номер акта")
 	}
@@ -79,7 +115,7 @@ func buildActUPDXMLAt(act models.ActWithServices, customer models.Customer, cont
 	if err := validateCustomer(customer); err != nil {
 		return nil, "", err
 	}
-	if err := validateSeller(); err != nil {
+	if err := validateSeller(seller); err != nil {
 		return nil, "", err
 	}
 	if err := validateActUPDOptions(options); err != nil {
@@ -125,7 +161,7 @@ func buildActUPDXMLAt(act models.ActWithServices, customer models.Customer, cont
 	if err := enc.EncodeToken(root); err != nil {
 		return nil, "", err
 	}
-	if err := writeDocument(enc, act, customer, contract, options, docDate, formedAt); err != nil {
+	if err := writeDocument(enc, act, customer, contract, seller, options, docDate, formedAt); err != nil {
 		return nil, "", err
 	}
 	if err := enc.EncodeToken(root.End()); err != nil {
@@ -141,7 +177,7 @@ func xmlFilename(fileID string) string {
 	return fileID + ".xml"
 }
 
-func writeDocument(enc *xml.Encoder, act models.ActWithServices, customer models.Customer, contract models.Contract, options ActUPDOptions, docDate, formedAt time.Time) error {
+func writeDocument(enc *xml.Encoder, act models.ActWithServices, customer models.Customer, contract models.Contract, seller Seller, options ActUPDOptions, docDate, formedAt time.Time) error {
 	doc := xml.StartElement{
 		Name: xml.Name{Local: "Документ"},
 		Attr: []xml.Attr{
@@ -149,7 +185,7 @@ func writeDocument(enc *xml.Encoder, act models.ActWithServices, customer models
 			{Name: xml.Name{Local: "Функция"}, Value: documentFunction(options)},
 			{Name: xml.Name{Local: "ДатаИнфПр"}, Value: formedAt.Format("02.01.2006")},
 			{Name: xml.Name{Local: "ВремИнфПр"}, Value: formedAt.Format("15.04.05")},
-			{Name: xml.Name{Local: "НаимЭконСубСост"}, Value: sellerFullName},
+			{Name: xml.Name{Local: "НаимЭконСубСост"}, Value: seller.FullName},
 			{Name: xml.Name{Local: "ПоФактХЖ"}, Value: "Документ об отгрузке товаров (выполнении работ), передаче имущественных прав (документ об оказании услуг)"},
 			{Name: xml.Name{Local: "НаимДокОпр"}, Value: "Универсальный передаточный документ"},
 		},
@@ -157,7 +193,7 @@ func writeDocument(enc *xml.Encoder, act models.ActWithServices, customer models
 	if err := enc.EncodeToken(doc); err != nil {
 		return err
 	}
-	if err := writeInvoiceInfo(enc, act, customer, docDate); err != nil {
+	if err := writeInvoiceInfo(enc, act, customer, seller, docDate); err != nil {
 		return err
 	}
 	if err := writeTable(enc, act.Services, options); err != nil {
@@ -166,13 +202,13 @@ func writeDocument(enc *xml.Encoder, act models.ActWithServices, customer models
 	if err := writeTransferInfo(enc, contract, docDate); err != nil {
 		return err
 	}
-	if err := writeSigner(enc); err != nil {
+	if err := writeSigner(enc, seller); err != nil {
 		return err
 	}
 	return enc.EncodeToken(doc.End())
 }
 
-func writeInvoiceInfo(enc *xml.Encoder, act models.ActWithServices, customer models.Customer, docDate time.Time) error {
+func writeInvoiceInfo(enc *xml.Encoder, act models.ActWithServices, customer models.Customer, seller Seller, docDate time.Time) error {
 	start := xml.StartElement{
 		Name: xml.Name{Local: "СвСчФакт"},
 		Attr: []xml.Attr{
@@ -183,7 +219,7 @@ func writeInvoiceInfo(enc *xml.Encoder, act models.ActWithServices, customer mod
 	if err := enc.EncodeToken(start); err != nil {
 		return err
 	}
-	if err := writeSeller(enc); err != nil {
+	if err := writeSeller(enc, seller); err != nil {
 		return err
 	}
 	if err := writeShipmentDocumentInfo(enc, act, docDate); err != nil {
@@ -213,21 +249,21 @@ func writeCurrency(enc *xml.Encoder) error {
 	})
 }
 
-func writeSeller(enc *xml.Encoder) error {
+func writeSeller(enc *xml.Encoder, seller Seller) error {
 	start := xml.StartElement{Name: xml.Name{Local: "СвПрод"}}
 	if err := enc.EncodeToken(start); err != nil {
 		return err
 	}
-	if err := writePersonID(enc, "ИдСв", sellerINN, sellerOGRNIP, sellerLastName, sellerFirstName, sellerMiddleName); err != nil {
+	if err := writePersonID(enc, "ИдСв", seller.INN, seller.OGRNIP, seller.LastName, seller.FirstName, seller.MiddleName); err != nil {
 		return err
 	}
-	if err := writeAddress(enc, sellerAddress); err != nil {
+	if err := writeAddress(enc, seller.Address); err != nil {
 		return err
 	}
-	if err := writeBankDetails(enc); err != nil {
+	if err := writeBankDetails(enc, seller); err != nil {
 		return err
 	}
-	if err := writeContact(enc, sellerPhone); err != nil {
+	if err := writeContact(enc, seller.Phone); err != nil {
 		return err
 	}
 	return enc.EncodeToken(start.End())
@@ -250,18 +286,18 @@ func writeBuyer(enc *xml.Encoder, customer models.Customer) error {
 	return enc.EncodeToken(start.End())
 }
 
-func writeBankDetails(enc *xml.Encoder) error {
+func writeBankDetails(enc *xml.Encoder, seller Seller) error {
 	start := xml.StartElement{
 		Name: xml.Name{Local: "БанкРекв"},
-		Attr: []xml.Attr{{Name: xml.Name{Local: "НомерСчета"}, Value: sellerAccount}},
+		Attr: []xml.Attr{{Name: xml.Name{Local: "НомерСчета"}, Value: seller.BankAccount}},
 	}
 	if err := enc.EncodeToken(start); err != nil {
 		return err
 	}
 	if err := writeSimpleElement(enc, "СвБанк", map[string]string{
-		"НаимБанк": sellerBankName,
-		"БИК":      sellerBIK,
-		"КорСчет":  sellerCorrAcct,
+		"НаимБанк": seller.BankName,
+		"БИК":      seller.BankBIK,
+		"КорСчет":  seller.BankCorrAccount,
 	}); err != nil {
 		return err
 	}
@@ -476,18 +512,18 @@ func writeTransferInfo(enc *xml.Encoder, contract models.Contract, docDate time.
 	return enc.EncodeToken(start.End())
 }
 
-func writeSigner(enc *xml.Encoder) error {
+func writeSigner(enc *xml.Encoder, seller Seller) error {
 	start := xml.StartElement{
 		Name: xml.Name{Local: "Подписант"},
 		Attr: []xml.Attr{
 			{Name: xml.Name{Local: "СпосПодтПолном"}, Value: "1"},
-			{Name: xml.Name{Local: "Должн"}, Value: sellerPosition},
+			{Name: xml.Name{Local: "Должн"}, Value: seller.Position},
 		},
 	}
 	if err := enc.EncodeToken(start); err != nil {
 		return err
 	}
-	if err := writeFIO(enc, sellerLastName, sellerFirstName, sellerMiddleName); err != nil {
+	if err := writeFIO(enc, seller.LastName, seller.FirstName, seller.MiddleName); err != nil {
 		return err
 	}
 	return enc.EncodeToken(start.End())
@@ -581,15 +617,18 @@ func validateActUPDOptions(options ActUPDOptions) error {
 	return nil
 }
 
-func validateSeller() error {
-	if len(digitsOnly(sellerINN)) != 12 {
-		return fmt.Errorf("ИНН продавца должен содержать 12 цифр для индивидуального предпринимателя")
+func validateSeller(seller Seller) error {
+	if strings.TrimSpace(seller.FullName) == "" {
+		return fmt.Errorf("не указано наименование продавца")
 	}
-	if len(digitsOnly(sellerOGRNIP)) != 15 {
-		return fmt.Errorf("ОГРНИП продавца должен содержать 15 цифр")
+	if len(digitsOnly(seller.INN)) != 10 && len(digitsOnly(seller.INN)) != 12 {
+		return fmt.Errorf("ИНН продавца должен содержать 10 или 12 цифр")
 	}
-	phoneDigits := len(digitsOnly(sellerPhone))
-	if phoneDigits < 7 || phoneDigits > 15 {
+	if strings.TrimSpace(seller.OGRNIP) != "" && len(digitsOnly(seller.OGRNIP)) != 13 && len(digitsOnly(seller.OGRNIP)) != 15 {
+		return fmt.Errorf("ОГРН(ИП) продавца должен содержать 13 или 15 цифр")
+	}
+	phoneDigits := len(digitsOnly(seller.Phone))
+	if phoneDigits != 0 && (phoneDigits < 7 || phoneDigits > 15) {
 		return fmt.Errorf("телефон продавца должен содержать от 7 до 15 цифр")
 	}
 	return nil
@@ -819,9 +858,9 @@ func actFileID(customer models.Customer, options ActUPDOptions, formedAt time.Ti
 	)), nil
 }
 
-func invoiceFileID(invoice models.InvoiceWithServices, customer models.Customer, docDate time.Time) string {
+func invoiceFileID(invoice models.InvoiceWithServices, customer models.Customer, seller Seller, docDate time.Time) string {
 	raw := fmt.Sprintf("WORKAPP_INVOICE_%s_%s_%s_%s",
-		sellerINN,
+		digitsOnly(seller.INN),
 		digitsOnly(customer.INN),
 		strings.TrimSpace(invoice.Number),
 		docDate.Format("20060102"),
