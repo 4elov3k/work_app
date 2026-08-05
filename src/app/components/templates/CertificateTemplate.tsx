@@ -10,10 +10,27 @@ interface CertificateTemplateProps {
   docId: string
 }
 
+function formatSignerName(value?: string): string {
+  const parts = (value || "").trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return ""
+  if (parts.length === 1) return parts[0]
+
+  const [lastName, ...names] = parts
+  const initials = names
+    .map((part) => part[0])
+    .filter(Boolean)
+    .map((letter) => `${letter.toUpperCase()}.`)
+    .join(" ")
+
+  return initials ? `${lastName} ${initials}` : lastName
+}
+
 export default function CertificateTemplate({ invoice, customer, docId }: CertificateTemplateProps) {
   const services = invoice.services
   const num = invoice.number
   const date = invoice.date
+  const customerSignerPosition = customer.contact_position?.trim() || "Директор"
+  const customerSignerName = formatSignerName(customer.contact_person)
   
   // Вычисляем сумму
   let sum = 0
@@ -160,12 +177,15 @@ export default function CertificateTemplate({ invoice, customer, docId }: Certif
           <div>
             <div className="flex items-start justify-between mb-1">
               <div className="text-[11px] flex-shrink-0">Заказчик:</div>
-              <div className="text-[11px] text-right">{customer.name}</div>
+              <div className="text-[11px] text-right">{customerSignerPosition}</div>
             </div>
             <div className="flex items-center gap-2 mt-2">
               <div className="border-b border-black flex-1 h-6"></div>
             </div>
-            <p className="text-[9px] text-gray-500 mt-1">(подпись)</p>
+            <div className="flex items-start justify-between gap-3 text-[9px] text-gray-500 mt-1">
+              <span>(подпись)</span>
+              {customerSignerName && <span className="text-right text-black">{customerSignerName}</span>}
+            </div>
           </div>
         </div>
 

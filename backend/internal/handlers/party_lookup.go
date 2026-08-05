@@ -43,6 +43,10 @@ type dadataPartySuggestion struct {
 		State struct {
 			Status string `json:"status"`
 		} `json:"state"`
+		Management struct {
+			Name string `json:"name"`
+			Post string `json:"post"`
+		} `json:"management"`
 	} `json:"data"`
 }
 
@@ -134,13 +138,15 @@ func (h *Handlers) LookupCustomerByINN(w http.ResponseWriter, r *http.Request) {
 
 	respondWithJSON(w, http.StatusOK, models.CustomerLookupResponse{
 		Data: models.CustomerLookup{
-			Name:     name,
-			Fullname: fullname,
-			Address:  address,
-			INN:      found.Data.INN,
-			KPP:      found.Data.KPP,
-			Type:     found.Data.Type,
-			Status:   found.Data.State.Status,
+			Name:            name,
+			Fullname:        fullname,
+			Address:         address,
+			INN:             found.Data.INN,
+			KPP:             found.Data.KPP,
+			Type:            found.Data.Type,
+			Status:          found.Data.State.Status,
+			ContactPerson:   found.Data.Management.Name,
+			ContactPosition: found.Data.Management.Post,
 		},
 	})
 }

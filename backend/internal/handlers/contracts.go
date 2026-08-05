@@ -95,6 +95,7 @@ func (h *Handlers) CreateContract(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, "Contract topic is required")
 		return
 	}
+	req.Topic = normalizeContractTopic(req.Topic)
 
 	if req.Currency == "" {
 		req.Currency = "RUB"
@@ -197,6 +198,29 @@ func swapDateFormat(ddmmyyyy string) string {
 		return ddmmyyyy
 	}
 	return parts[2] + "-" + parts[1] + "-" + parts[0]
+}
+
+func normalizeContractTopic(topic string) string {
+	value := strings.TrimSpace(topic)
+	normalized := strings.ToLower(value)
+	normalized = strings.ReplaceAll(normalized, "ё", "е")
+	normalized = strings.Join(strings.Fields(normalized), " ")
+	switch normalized {
+	case "разработка сайта", "создание сайта", "сайт":
+		return "Разработка"
+	case "seo", "сео", "продвижение seo":
+		return "Продвижение сео"
+	case "контекст":
+		return "Продвижение контекст"
+	case "техническая поддержка":
+		return "Техподдержка"
+	case "юридические услуги":
+		return "Юр услуги"
+	case "социальные сети":
+		return "Соц сети"
+	default:
+		return value
+	}
 }
 
 // GetNextContractNumber обрабатывает GET /api/contracts/next?customer_id=...

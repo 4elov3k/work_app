@@ -26,7 +26,14 @@ func BuildInvoiceXML(invoice models.InvoiceWithServices, customer models.Custome
 	if len(invoice.Services) == 0 {
 		return nil, "", fmt.Errorf("invoice has no service lines")
 	}
-	if err := validateServicesForEDO(invoice.Services); err != nil {
+	tableOptions := sellerActUPDOptions
+	for _, service := range invoice.Services {
+		if service.VAT > 0 {
+			tableOptions.VATMode = VATModeIncluded
+			break
+		}
+	}
+	if err := validateServicesForEDO(invoice.Services, tableOptions); err != nil {
 		return nil, "", err
 	}
 
@@ -52,7 +59,7 @@ func BuildInvoiceXML(invoice models.InvoiceWithServices, customer models.Custome
 	if err := enc.EncodeToken(root); err != nil {
 		return nil, "", err
 	}
-	if err := writeInvoiceDocument(enc, invoice, customer, contract, docDate); err != nil {
+	if err := writeInvoiceDocument(enc, invoice, customer, contract, tableOptions, docDate); err != nil {
 		return nil, "", err
 	}
 	if err := enc.EncodeToken(root.End()); err != nil {
@@ -64,7 +71,7 @@ func BuildInvoiceXML(invoice models.InvoiceWithServices, customer models.Custome
 	return b.Bytes(), invoiceXMLFilename(invoice), nil
 }
 
-func writeInvoiceDocument(enc *xml.Encoder, invoice models.InvoiceWithServices, customer models.Customer, contract models.Contract, docDate time.Time) error {
+func writeInvoiceDocument(enc *xml.Encoder, invoice models.InvoiceWithServices, customer models.Customer, contract models.Contract, tableOptions ActUPDOptions, docDate time.Time) error {
 	now := time.Now()
 	doc := xml.StartElement{
 		Name: xml.Name{Local: "Документ"},
@@ -81,7 +88,7 @@ func writeInvoiceDocument(enc *xml.Encoder, invoice models.InvoiceWithServices, 
 	if err := writePaymentInvoiceInfo(enc, invoice, customer, contract, docDate); err != nil {
 		return err
 	}
-	if err := writeTable(enc, invoice.Services); err != nil {
+	if err := writeTable(enc, invoice.Services, tableOptions); err != nil {
 		return err
 	}
 	if err := writeSigner(enc); err != nil {

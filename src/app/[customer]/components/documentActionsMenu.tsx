@@ -14,14 +14,18 @@ export default function DocumentActionsMenu({ children }: DocumentActionsMenuPro
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!open) return
+	useEffect(() => {
+		if (!open) return
 
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
+		const handlePointerDown = (event: PointerEvent) => {
+			const target = event.target as Element | null
+			if (target?.closest('[role="dialog"]')) {
+				return
+			}
+			if (!menuRef.current?.contains(event.target as Node)) {
+				setOpen(false)
+			}
+		}
 
     document.addEventListener("pointerdown", handlePointerDown)
     return () => document.removeEventListener("pointerdown", handlePointerDown)

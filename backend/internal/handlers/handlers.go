@@ -4,21 +4,31 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/lib/pq"
 
 	"invoices-backend/internal/database"
 	"invoices-backend/internal/models"
+	"invoices-backend/internal/redmine"
+	"invoices-backend/internal/saby"
 )
 
 // Handlers содержит все HTTP обработчики
 type Handlers struct {
-	db *database.DB
+	db      *database.DB
+	redmine *redmine.Client
+	saby    *saby.Client
 }
 
 // NewHandlers создает новый экземпляр handlers
 func NewHandlers(db *database.DB) *Handlers {
-	return &Handlers{db: db}
+	return &Handlers{
+		db:      db,
+		redmine: redmine.NewFromEnv(),
+		saby:    saby.NewFromEnv(),
+	}
 }
 
 // respondWithJSON отправляет JSON ответ
@@ -57,4 +67,23 @@ func isUniqueViolation(err error) bool {
 		return string(pqErr.Code) == "23505"
 	}
 	return false
+}
+
+func (h *Handlers) RequireAgentToken(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		expected := os.Getenv("AGENT_API_TOKEN")
+		if expected == "" {
+			respondWithError(w, http.StatusServiceUnavailable, "Agent API token is not configured")
+			return
+		}
+
+		auth := r.Header.Get("Authorization")
+		token := strings.TrimPrefix(auth, "Bearer ")
+		if token == "" || token != expected {
+			respondWithError(w, http.StatusUnauthorized, "Invalid agent API token")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }

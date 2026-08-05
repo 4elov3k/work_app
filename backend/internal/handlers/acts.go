@@ -1,19 +1,24 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"invoices-backend/internal/export/updxml"
 	"invoices-backend/internal/models"
+	"invoices-backend/internal/saby"
 )
 
 // GetActs обрабатывает GET /api/acts
@@ -125,7 +130,14 @@ func (h *Handlers) ExportActUPDXML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, filename, err := updxml.BuildActUPDXML(*act, *customer, *contract)
+	sellerEDOID, err := h.resolveActEDOParticipants(ctx, customer)
+	if err != nil {
+		log.Printf("Error resolving act EDO participants (act ID: %s, customer ID: %s): %v", id, customer.ID, err)
+		respondWithError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	data, filename, err := updxml.BuildActUPDXMLWithSellerEDOID(*act, *customer, *contract, sellerEDOID)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, err.Error())
 		return
@@ -135,6 +147,65 @@ func (h *Handlers) ExportActUPDXML(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="act.xml"; filename*=UTF-8''`+url.PathEscape(filename))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+func (h *Handlers) resolveActEDOParticipants(ctx context.Context, customer *models.Customer) (string, error) {
+	sellerEDOID := strings.TrimSpace(os.Getenv("SABY_SELLER_EDO_ID"))
+	if h.saby == nil || !h.saby.Enabled() {
+		return sellerEDOID, nil
+	}
+
+	cachedCustomerEDOID := strings.TrimSpace(customer.EDOIDTensor)
+	edoID, err := h.saby.LookupParticipantID(ctx, saby.Party{
+		INN:  customer.INN,
+		KPP:  customer.KPP,
+		Name: customerNameForLookup(*customer),
+	})
+	if err != nil {
+		if cachedCustomerEDOID == "" {
+			return "", fmt.Errorf("failed to lookup customer EDO participant ID in Saby: %w", err)
+		}
+		log.Printf("Failed to refresh customer Saby EDO ID, using cached value (customer ID: %s): %v", customer.ID, err)
+	} else {
+		customer.EDOIDTensor = edoID
+		if edoID != cachedCustomerEDOID {
+			if err := h.db.UpdateCustomerTensorEDOID(ctx, customer.ID, edoID); err != nil {
+				log.Printf("Failed to cache customer Saby EDO ID (customer ID: %s): %v", customer.ID, err)
+			}
+		}
+	}
+
+	if sellerEDOID == "" {
+		edoID, err = h.saby.LookupParticipantID(ctx, saby.Party{
+			INN:  getenvDefault("SABY_SELLER_INN", "526220116209"),
+			KPP:  os.Getenv("SABY_SELLER_KPP"),
+			Name: os.Getenv("SABY_SELLER_NAME"),
+		})
+		if err != nil {
+			if cached := strings.TrimSpace(os.Getenv("SABY_SELLER_EDO_ID")); cached != "" {
+				return cached, nil
+			}
+			return "", fmt.Errorf("failed to lookup seller EDO participant ID in Saby: %w", err)
+		}
+		sellerEDOID = edoID
+	}
+
+	return sellerEDOID, nil
+}
+
+func customerNameForLookup(customer models.Customer) string {
+	if strings.TrimSpace(customer.Fullname) != "" {
+		return customer.Fullname
+	}
+	return customer.Name
+}
+
+func getenvDefault(key, fallback string) string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value != "" {
+		return value
+	}
+	return fallback
 }
 
 // CreateAct обрабатывает POST /api/acts

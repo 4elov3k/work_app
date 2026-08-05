@@ -3,7 +3,18 @@ import React, { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import { Plus, FileText, FileCheck, Calendar, Loader2, Trash2 } from "lucide-react"
 
-import { Invoice, Act, Contract, Service, invoicesAPI, actsAPI, contractsAPI, servicesAPI } from "@/lib/api"
+import {
+  Invoice,
+  Act,
+  Contract,
+  Service,
+  RedmineDocumentStatus,
+  invoicesAPI,
+  actsAPI,
+  contractsAPI,
+  servicesAPI,
+  customersAPI,
+} from "@/lib/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -58,6 +69,7 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
   const [fetchItems, setFetchItems] = useState<(Invoice | Act)[]>([])
   const [contracts, setContracts] = useState<Contract[]>([])
   const [services, setServices] = useState<Service[]>([])
+  const [redmineStatuses, setRedmineStatuses] = useState<Record<string, RedmineDocumentStatus>>({})
   const [loading, setLoading] = useState(true)
   const [isOpen, setIsOpen] = useState<boolean>(false)
   const [submitting, setSubmitting] = useState(false)
@@ -87,6 +99,24 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
       })
       .finally(() => setLoading(false))
   }, [archiveFilter, documentType, fixedContractId, slug])
+
+  const loadRedmineStatuses = useCallback(() => {
+    customersAPI
+      .getRedmineDocumentStatuses(slug)
+      .then((response) => {
+        const next: Record<string, RedmineDocumentStatus> = {}
+        for (const status of response.data || []) {
+          if (status.document_type === documentType) {
+            next[status.document_id] = status
+          }
+        }
+        setRedmineStatuses(next)
+      })
+      .catch((err) => {
+        console.error("Failed to load Redmine document statuses:", err)
+        setRedmineStatuses({})
+      })
+  }, [documentType, slug])
 
   const loadContracts = useCallback(() => {
     if (fixedContractId) {
@@ -135,9 +165,10 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
 
   useEffect(() => {
     loadDocuments()
+    loadRedmineStatuses()
     loadContracts()
     loadServices()
-  }, [loadDocuments, loadContracts, loadServices])
+  }, [loadDocuments, loadRedmineStatuses, loadContracts, loadServices])
 
   useEffect(() => {
     if (!manualNumber && selectedContractId) {
@@ -195,6 +226,7 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
       setServiceName("")
       setServicePrice("")
       setSelectedServiceId("")
+      loadRedmineStatuses()
       setIsOpen(false)
     } catch (err: unknown) {
       console.error(`Failed to create ${documentType}:`, err)
@@ -431,6 +463,9 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
                       <cfg.Icon className="h-5 w-5 text-muted-foreground" />
                       <Badge variant={cfg.badgeVariant}>{cfg.badgeLabel}</Badge>
                       {item.archived && <Badge variant="secondary">Архив</Badge>}
+                      {redmineStatuses[item.id]?.status === "uploaded" && <Badge variant="secondary">В Redmine</Badge>}
+                      {redmineStatuses[item.id]?.status === "pending" && <Badge variant="outline">Отправляется</Badge>}
+                      {redmineStatuses[item.id]?.status === "failed" && <Badge variant="destructive">Ошибка Redmine</Badge>}
                     </div>
                     <Button
                       variant="ghost"

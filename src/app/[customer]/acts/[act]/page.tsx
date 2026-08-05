@@ -2,6 +2,7 @@ import FormCus from "@/app/components/components/form"
 import Link from "next/link"
 import Print from "../../[invoice]/components/print"
 import DownloadPdf from "../../[invoice]/components/downloadPdf"
+import UploadPdfToRedmine from "../../[invoice]/components/uploadPdfToRedmine"
 import DownloadXml from "./components/downloadXml"
 import { ArrowLeft, Home } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -53,6 +54,7 @@ export default async function Page({
             {!act.archived && <AddLine docId={actId} docType="act" />}
             <DownloadXml actId={actId} />
             <DownloadPdf fileName={fileName} />
+            <UploadPdfToRedmine customerId={customerId} documentType="act" documentId={actId} fileName={fileName} />
             <Print />
           </DocumentActionsMenu>
         </div>

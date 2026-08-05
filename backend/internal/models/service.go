@@ -7,6 +7,7 @@ type Service struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	Unit      string    `json:"unit"`
+	VAT       float64   `json:"vat"`
 	Price     float64   `json:"price"`
 	Qty       float64   `json:"qty"`
 	Amount    float64   `json:"amount"`

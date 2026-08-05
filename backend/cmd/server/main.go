@@ -66,6 +66,28 @@ func main() {
 		r.Post("/customers", h.CreateCustomer)
 		r.Get("/customers/lookup", h.LookupCustomerByINN)
 		r.Get("/customers/{id}", h.GetCustomerByID)
+		r.Get("/customers/{id}/redmine-project", h.GetCustomerRedmineProject)
+		r.Put("/customers/{id}/redmine-project", h.LinkCustomerRedmineProject)
+		r.Get("/customers/{id}/redmine-document-statuses", h.GetCustomerRedmineDocumentStatuses)
+
+		// Redmine
+		r.Get("/redmine/projects", h.GetRedmineProjects)
+		r.Get("/redmine/dashboard", h.GetRedmineProjectDashboard)
+		r.Post("/redmine/dashboard/sync", h.SyncRedmineProjectDashboard)
+		r.Get("/redmine/project-groups", h.GetRedmineProjectGroups)
+		r.Post("/redmine/project-groups", h.CreateRedmineProjectGroup)
+		r.Patch("/redmine/project-groups/{id}", h.UpdateRedmineProjectGroup)
+		r.Patch("/redmine/dashboard/projects/{projectID}", h.UpdateRedmineProjectOperations)
+		r.Put("/redmine/dashboard/projects/{projectID}/group", h.AssignRedmineProjectGroup)
+		r.Put("/redmine/dashboard/projects/{projectID}/manager", h.AssignRedmineProjectManager)
+		r.Get("/redmine/dashboard/projects/{projectID}/control-events", h.GetRedmineProjectControlEvents)
+		r.Post("/redmine/dashboard/projects/{projectID}/control-events/generate", h.GenerateRedmineProjectCycle)
+		r.Post("/redmine/dashboard/projects/{projectID}/control-events/{eventID}/send", h.MarkRedmineProjectControlEventSent)
+		r.Delete("/redmine/dashboard/projects/{projectID}/control-events/{eventID}", h.DeleteRedmineProjectControlEvent)
+		r.Get("/redmine/dashboard/projects/{projectID}/issues", h.GetRedmineProjectIssues)
+		r.Get("/redmine/dashboard/projects/{projectID}/documents", h.GetRedmineProjectDocuments)
+		r.Post("/redmine/files/upload-pdf", h.UploadRedmineDocumentPDF)
+		r.Post("/redmine/documents/upload-pdf", h.UploadRedmineDocumentPDF)
 
 		// Contracts
 		r.Get("/contracts", h.GetContracts)

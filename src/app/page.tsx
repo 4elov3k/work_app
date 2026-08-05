@@ -1,7 +1,7 @@
 "use client"
 import { ChangeEvent, useEffect, useState } from "react";
 import Link from "next/link";
-import { Search, Building2, FileText } from "lucide-react";
+import { LayoutDashboard, Search, Building2, FileText } from "lucide-react";
 
 import { customersAPI, Customer } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -66,6 +66,12 @@ export default function Home() {
           <p className="text-muted-foreground">Управление клиентами и контрагентами</p>
         </div>
         <div className="flex gap-2">
+          <Link href="/redmine">
+            <Button variant="outline">
+              <LayoutDashboard className="mr-2 h-4 w-4" />
+              Проекты Redmine
+            </Button>
+          </Link>
           <Link href="/invoices">
             <Button variant="outline">
               <FileText className="mr-2 h-4 w-4" />

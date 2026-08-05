@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { customersAPI } from "@/lib/api"
+import RedmineProjectLinkPanel from "./components/redmineProjectLink"
 
 export interface IData {
   collectionId?: string
@@ -85,6 +86,7 @@ export default async function Page({
                     </div>
                   )}
                 </div>
+                <RedmineProjectLinkPanel customerId={slug} />
               </CardContent>
             </Card>
           )}

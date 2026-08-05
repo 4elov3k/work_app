@@ -20,6 +20,8 @@ export default function CreateCustomerDialog({ onCreated }: CreateCustomerDialog
   const [address, setAddress] = useState("")
   const [inn, setInn] = useState("")
   const [kpp, setKpp] = useState("")
+  const [contactPerson, setContactPerson] = useState("")
+  const [contactPosition, setContactPosition] = useState("")
 
   const resetForm = () => {
     setName("")
@@ -27,6 +29,8 @@ export default function CreateCustomerDialog({ onCreated }: CreateCustomerDialog
     setAddress("")
     setInn("")
     setKpp("")
+    setContactPerson("")
+    setContactPosition("")
     setLookupMessage("")
   }
 
@@ -52,6 +56,8 @@ export default function CreateCustomerDialog({ onCreated }: CreateCustomerDialog
       setAddress(found.address)
       setInn(found.inn)
       setKpp(found.kpp)
+      setContactPerson(found.contact_person || "")
+      setContactPosition(found.contact_position || "")
       setLookupMessage(found.status === "ACTIVE" ? "Реквизиты найдены" : `Найдено, статус: ${found.status || "не указан"}`)
     } catch (err) {
       console.error("Failed to lookup customer:", err)
@@ -72,7 +78,9 @@ export default function CreateCustomerDialog({ onCreated }: CreateCustomerDialog
         fullname,
         address,
         inn: inn.replace(/\D/g, ""),
-        kpp: kpp.replace(/\D/g, "")
+        kpp: kpp.replace(/\D/g, ""),
+        contact_person: contactPerson,
+        contact_position: contactPosition,
       })
       onCreated?.(response.data)
 
@@ -213,6 +221,31 @@ export default function CreateCustomerDialog({ onCreated }: CreateCustomerDialog
               <p className="text-xs text-muted-foreground">
                 Юридический адрес организации
               </p>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <label htmlFor="contactPerson" className="text-sm font-medium">
+                  Контактное лицо
+                </label>
+                <Input
+                  id="contactPerson"
+                  placeholder="ФИО директора"
+                  value={contactPerson}
+                  onChange={(e) => setContactPerson(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="contactPosition" className="text-sm font-medium">
+                  Должность
+                </label>
+                <Input
+                  id="contactPosition"
+                  placeholder="Директор"
+                  value={contactPosition}
+                  onChange={(e) => setContactPosition(e.target.value)}
+                />
+              </div>
             </div>
           </div>
           <DialogFooter>

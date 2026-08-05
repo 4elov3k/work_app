@@ -31,6 +31,13 @@ psql -d invoices_db -f migrations/007_contracts_acts_lines.sql
 psql -d invoices_db -f migrations/008_contract_topics.sql
 psql -d invoices_db -f migrations/009_archive_flags.sql
 psql -d invoices_db -f migrations/010_add_customer_kpp.sql
+psql -d invoices_db -f migrations/011_redmine_agent_integration.sql
+psql -d invoices_db -f migrations/012_redmine_project_dashboard.sql
+psql -d invoices_db -f migrations/013_redmine_dashboard_manager_status.sql
+psql -d invoices_db -f migrations/014_redmine_project_operations.sql
+psql -d invoices_db -f migrations/015_customer_edo_requisites.sql
+psql -d invoices_db -f migrations/016_accounting_mcp.sql
+psql -d invoices_db -f migrations/017_dzerzhinskie_vedomosti_kpp.sql
 ```
 
 Если база была создана через `docker-compose` до этого изменения, существующий volume нужно либо пересоздать, либо применить миграции вручную: init-скрипты Postgres выполняются только при первом создании пустой БД.
@@ -44,7 +51,25 @@ DATABASE_URL=postgres://username:password@localhost:5432/invoices_db
 PORT=8080
 CORS_ORIGIN=http://localhost:3000
 DADATA_API_KEY=your_dadata_api_key
+MCP_AUTH_TOKEN=change-me
 ```
+
+Для автоподстановки реальных идентификаторов участников ЭДО в XML УПД настройте Saby:
+
+```bash
+SABY_BASE_URL=https://online.sbis.ru
+SABY_ACCESS_TOKEN=...
+# или вместо access token:
+SABY_LOGIN=...
+SABY_PASSWORD=...
+SABY_ACCOUNT_NUMBER=
+
+SABY_SELLER_INN=526220116209
+SABY_SELLER_KPP=
+SABY_SELLER_NAME=Индивидуальный предприниматель Мыленкова Любовь Валерьевна
+```
+
+При скачивании XML акта backend вызовет `СБИС.ИнформацияОКонтрагенте` по ИНН/КПП покупателя и продавца. Найденный ID покупателя кешируется в `customers.edo_id_tensor`; для продавца можно задать `SABY_SELLER_EDO_ID`, чтобы не дергать Saby каждый раз.
 
 ### 3. Установка зависимостей
 
@@ -59,6 +84,14 @@ go run cmd/server/main.go
 ```
 
 Сервер запустится на http://localhost:8080
+
+MCP-сервер бухгалтерских документов:
+
+```bash
+MCP_TRANSPORT=http MCP_AUTH_TOKEN=change-me go run cmd/accounting-mcp/main.go
+```
+
+По умолчанию MCP endpoint доступен на http://localhost:3000/mcp, healthcheck - на http://localhost:3000/healthz.
 
 ## API Endpoints
 

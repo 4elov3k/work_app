@@ -143,7 +143,7 @@ func (db *DB) GetActWithServices(ctx context.Context, id string) (*models.ActWit
 	}
 
 	linesQuery := `
-		SELECT id, title_snapshot, unit_snapshot, price_snapshot, qty, amount
+		SELECT id, title_snapshot, unit_snapshot, COALESCE(vat_snapshot, 0), price_snapshot, qty, amount
 		FROM act_lines
 		WHERE act_id = $1
 		ORDER BY id
@@ -162,16 +162,18 @@ func (db *DB) GetActWithServices(ctx context.Context, id string) (*models.ActWit
 		var lineID string
 		var title string
 		var unit string
+		var vat float64
 		var price float64
 		var qty float64
 		var amount float64
-		if err := rows.Scan(&lineID, &title, &unit, &price, &qty, &amount); err != nil {
+		if err := rows.Scan(&lineID, &title, &unit, &vat, &price, &qty, &amount); err != nil {
 			return nil, fmt.Errorf("failed to scan act line: %w", err)
 		}
 		services = append(services, models.Service{
 			ID:     lineID,
 			Name:   title,
 			Unit:   unit,
+			VAT:    vat,
 			Price:  price,
 			Qty:    qty,
 			Amount: amount,

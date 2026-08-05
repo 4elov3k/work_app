@@ -3,6 +3,7 @@ import Link from "next/link"
 import Print from "./components/print"
 import Duplicate from "./components/duplicate"
 import DownloadPdf from "./components/downloadPdf"
+import UploadPdfToRedmine from "./components/uploadPdfToRedmine"
 import { ArrowLeft, Home } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -57,6 +58,7 @@ export default async function Page({
                       <CreateActFromInvoice invoiceId={invoiceId} customerId={customerId} contractId={invoice.contract_id} />
                     )}
                     <DownloadPdf fileName={fileName} />
+	                    <UploadPdfToRedmine customerId={customerId} documentType="invoice" documentId={invoiceId} fileName={fileName} />
                     <Duplicate invoiceId={invoiceId} customerId={customerId} />
                     <Print/>
                   </DocumentActionsMenu>

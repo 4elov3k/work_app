@@ -177,7 +177,7 @@ func (db *DB) GetInvoiceWithServices(ctx context.Context, id string) (*models.In
 
 	// Получаем строки счета и восстанавливаем услуги из snapshot
 	linesQuery := `
-		SELECT id, title_snapshot, unit_snapshot, price_snapshot, qty, amount
+		SELECT id, title_snapshot, unit_snapshot, COALESCE(vat_snapshot, 0), price_snapshot, qty, amount
 		FROM invoice_lines
 		WHERE invoice_id = $1
 		ORDER BY id
@@ -197,10 +197,11 @@ func (db *DB) GetInvoiceWithServices(ctx context.Context, id string) (*models.In
 		var lineID string
 		var title string
 		var unit string
+		var vat float64
 		var price float64
 		var qty float64
 		var amount float64
-		if err := rows.Scan(&lineID, &title, &unit, &price, &qty, &amount); err != nil {
+		if err := rows.Scan(&lineID, &title, &unit, &vat, &price, &qty, &amount); err != nil {
 			if debug {
 				log.Printf("[DEBUG] Scan invoice line failed: %v", err)
 			}
@@ -210,6 +211,7 @@ func (db *DB) GetInvoiceWithServices(ctx context.Context, id string) (*models.In
 			ID:     lineID,
 			Name:   title,
 			Unit:   unit,
+			VAT:    vat,
 			Price:  price,
 			Qty:    qty,
 			Amount: amount,
