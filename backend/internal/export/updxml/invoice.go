@@ -15,16 +15,16 @@ import (
 // the same counterparty and table structure used by the act XML export.
 func BuildInvoiceXML(invoice models.InvoiceWithServices, customer models.Customer, contract models.Contract) ([]byte, string, error) {
 	if strings.TrimSpace(invoice.Number) == "" {
-		return nil, "", fmt.Errorf("invoice number is required")
+		return nil, "", fmt.Errorf("не указан номер счёта")
 	}
 	if strings.TrimSpace(invoice.Date) == "" {
-		return nil, "", fmt.Errorf("invoice date is required")
+		return nil, "", fmt.Errorf("не указана дата счёта")
 	}
 	if err := validateCustomer(customer); err != nil {
 		return nil, "", err
 	}
 	if len(invoice.Services) == 0 {
-		return nil, "", fmt.Errorf("invoice has no service lines")
+		return nil, "", fmt.Errorf("в счёте нет строк услуг")
 	}
 	tableOptions := sellerActUPDOptions
 	for _, service := range invoice.Services {

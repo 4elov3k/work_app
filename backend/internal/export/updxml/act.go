@@ -71,10 +71,10 @@ func BuildActUPDXMLWithOptions(act models.ActWithServices, customer models.Custo
 
 func buildActUPDXMLAt(act models.ActWithServices, customer models.Customer, contract models.Contract, options ActUPDOptions, formedAt time.Time) ([]byte, string, error) {
 	if strings.TrimSpace(act.Number) == "" {
-		return nil, "", fmt.Errorf("act number is required")
+		return nil, "", fmt.Errorf("не указан номер акта")
 	}
 	if strings.TrimSpace(act.Date) == "" {
-		return nil, "", fmt.Errorf("act date is required")
+		return nil, "", fmt.Errorf("не указана дата акта")
 	}
 	if err := validateCustomer(customer); err != nil {
 		return nil, "", err
@@ -89,7 +89,7 @@ func buildActUPDXMLAt(act models.ActWithServices, customer models.Customer, cont
 		return nil, "", err
 	}
 	if len(act.Services) == 0 {
-		return nil, "", fmt.Errorf("act has no service lines")
+		return nil, "", fmt.Errorf("в акте нет строк услуг")
 	}
 	if err := validateServicesForEDO(act.Services, options); err != nil {
 		return nil, "", err
@@ -539,7 +539,7 @@ func writeTextOnlyElement(enc *xml.Encoder, name, value string) error {
 func parseRuDate(value string) (time.Time, error) {
 	parsed, err := time.Parse("02.01.2006", value)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("invalid act date %q: expected DD.MM.YYYY", value)
+		return time.Time{}, fmt.Errorf("некорректная дата документа %q: ожидается формат ДД.ММ.ГГГГ", value)
 	}
 	return parsed, nil
 }
@@ -551,7 +551,7 @@ func parseContractDate(value string) (time.Time, error) {
 			return parsed, nil
 		}
 	}
-	return time.Time{}, fmt.Errorf("invalid contract date %q: expected YYYY-MM-DD or DD.MM.YYYY", value)
+	return time.Time{}, fmt.Errorf("некорректная дата договора %q: ожидается формат ГГГГ-ММ-ДД или ДД.ММ.ГГГГ", value)
 }
 
 func documentFunction(options ActUPDOptions) string {
@@ -570,10 +570,10 @@ func effectiveVATRate(service models.Service, options ActUPDOptions) float64 {
 
 func validateActUPDOptions(options ActUPDOptions) error {
 	if options.DocumentType != DocumentTypeAct {
-		return fmt.Errorf("unsupported UPD document type %q", options.DocumentType)
+		return fmt.Errorf("неподдерживаемый тип документа УПД %q", options.DocumentType)
 	}
 	if options.VATMode != VATModeNone && options.VATMode != VATModeIncluded {
-		return fmt.Errorf("unsupported VAT mode %q", options.VATMode)
+		return fmt.Errorf("неподдерживаемый режим НДС %q", options.VATMode)
 	}
 	if options.VATMode == VATModeNone && options.IssueInvoice {
 		return fmt.Errorf("Невозможно сформировать акт: для режима без НДС признак выставления счета-фактуры должен быть выключен")
@@ -583,14 +583,14 @@ func validateActUPDOptions(options ActUPDOptions) error {
 
 func validateSeller() error {
 	if len(digitsOnly(sellerINN)) != 12 {
-		return fmt.Errorf("seller INN must contain 12 digits for an individual entrepreneur")
+		return fmt.Errorf("ИНН продавца должен содержать 12 цифр для индивидуального предпринимателя")
 	}
 	if len(digitsOnly(sellerOGRNIP)) != 15 {
-		return fmt.Errorf("seller OGRNIP must contain 15 digits")
+		return fmt.Errorf("ОГРНИП продавца должен содержать 15 цифр")
 	}
 	phoneDigits := len(digitsOnly(sellerPhone))
 	if phoneDigits < 7 || phoneDigits > 15 {
-		return fmt.Errorf("seller phone must contain 7 to 15 digits")
+		return fmt.Errorf("телефон продавца должен содержать от 7 до 15 цифр")
 	}
 	return nil
 }
@@ -603,7 +603,7 @@ func validateContract(contract models.Contract) error {
 	hasNumber := strings.TrimSpace(contract.Number) != ""
 	hasDate := strings.TrimSpace(contract.StartDate) != ""
 	if hasNumber != hasDate {
-		return fmt.Errorf("contract number and date must be provided together")
+		return fmt.Errorf("номер и дата договора должны быть указаны вместе")
 	}
 	if !hasNumber {
 		return nil
@@ -612,7 +612,7 @@ func validateContract(contract models.Contract) error {
 		return err
 	}
 	if contractDocumentNumber(contract.Number) == "" {
-		return fmt.Errorf("contract document number is required")
+		return fmt.Errorf("не удалось определить номер документа договора")
 	}
 	return nil
 }
@@ -629,36 +629,36 @@ func contractDocumentNumber(value string) string {
 func validateCustomer(customer models.Customer) error {
 	inn := digitsOnly(customer.INN)
 	if inn == "" {
-		return fmt.Errorf("customer INN is required")
+		return fmt.Errorf("не указан ИНН покупателя")
 	}
 	switch len(inn) {
 	case 10:
 		kpp := digitsOnly(customer.KPP)
 		if kpp == "" {
-			return fmt.Errorf("customer KPP is required for organizations")
+			return fmt.Errorf("не указан КПП покупателя (обязателен для организаций)")
 		}
 		if len(kpp) != 9 {
-			return fmt.Errorf("customer KPP must contain 9 digits")
+			return fmt.Errorf("КПП покупателя должен содержать 9 цифр")
 		}
 	case 12:
 	default:
-		return fmt.Errorf("customer INN must contain 10 or 12 digits")
+		return fmt.Errorf("ИНН покупателя должен содержать 10 или 12 цифр")
 	}
 	if strings.TrimSpace(customer.Fullname) == "" && strings.TrimSpace(customer.Name) == "" {
-		return fmt.Errorf("customer name is required")
+		return fmt.Errorf("не указано наименование покупателя")
 	}
 	if strings.TrimSpace(customer.Address) == "" {
-		return fmt.Errorf("customer address is required")
+		return fmt.Errorf("не указан адрес покупателя")
 	}
 	return nil
 }
 
 func validateActEDOParticipants(customer models.Customer, options ActUPDOptions) error {
 	if !validEDOID(sellerParticipantID(options)) {
-		return fmt.Errorf("seller EDO participant ID is required")
+		return fmt.Errorf("не указан идентификатор ЭДО продавца")
 	}
 	if !validEDOID(buyerEDOID(customer)) {
-		return fmt.Errorf("customer Tensor EDO participant ID is required")
+		return fmt.Errorf("не указан идентификатор ЭДО покупателя (Tensor)")
 	}
 	return nil
 }
@@ -667,29 +667,29 @@ func validateServicesForEDO(services []models.Service, options ActUPDOptions) er
 	for index, service := range services {
 		lineNumber := index + 1
 		if strings.TrimSpace(service.Name) == "" {
-			return fmt.Errorf("service line %d name is required", lineNumber)
+			return fmt.Errorf("строка услуг %d: не указано наименование", lineNumber)
 		}
 		if len([]rune(strings.TrimSpace(service.Name))) > 1000 {
-			return fmt.Errorf("service line %d name is too long", lineNumber)
+			return fmt.Errorf("строка услуг %d: наименование слишком длинное", lineNumber)
 		}
 		qty, unitPrice, amount := serviceLineNumbers(service)
 		if qty <= 0 {
-			return fmt.Errorf("service line %d quantity must be positive", lineNumber)
+			return fmt.Errorf("строка услуг %d: количество должно быть положительным", lineNumber)
 		}
 		if unitPrice <= 0 {
-			return fmt.Errorf("service line %d price must be positive", lineNumber)
+			return fmt.Errorf("строка услуг %d: цена должна быть положительной", lineNumber)
 		}
 		if amount <= 0 {
-			return fmt.Errorf("service line %d amount must be positive", lineNumber)
+			return fmt.Errorf("строка услуг %d: сумма должна быть положительной", lineNumber)
 		}
 		if service.VAT < 0 {
-			return fmt.Errorf("service line %d VAT rate must not be negative", lineNumber)
+			return fmt.Errorf("строка услуг %d: ставка НДС не может быть отрицательной", lineNumber)
 		}
 		if options.VATMode == VATModeNone && service.VAT != 0 {
-			return fmt.Errorf("service line %d VAT rate must be zero in no-VAT mode", lineNumber)
+			return fmt.Errorf("строка услуг %d: ставка НДС должна быть нулевой в режиме без НДС", lineNumber)
 		}
 		if money(unitPrice*qty) != amount {
-			return fmt.Errorf("service line %d amount must equal price multiplied by quantity", lineNumber)
+			return fmt.Errorf("строка услуг %d: сумма должна равняться цене, умноженной на количество", lineNumber)
 		}
 	}
 	return nil
@@ -703,10 +703,10 @@ func validateActTotal(act models.ActWithServices) error {
 	}
 	linesTotal = money(linesTotal)
 	if act.TotalAmount < 0 {
-		return fmt.Errorf("act total amount must not be negative")
+		return fmt.Errorf("итоговая сумма акта не может быть отрицательной")
 	}
 	if act.TotalAmount > 0 && money(act.TotalAmount) != linesTotal {
-		return fmt.Errorf("act total amount must equal the sum of service lines")
+		return fmt.Errorf("итоговая сумма акта должна равняться сумме строк услуг")
 	}
 	return nil
 }

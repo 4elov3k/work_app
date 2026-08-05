@@ -6,12 +6,14 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"invoices-backend/internal/export/updxml"
 	"invoices-backend/internal/models"
 )
 
@@ -77,7 +79,7 @@ func (h *Handlers) GetInvoiceByID(w http.ResponseWriter, r *http.Request) {
 
 	invoice, err := h.db.GetInvoiceByID(ctx, id)
 	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Invoice not found")
+		respondNotFoundOrInternal(w, err, "Invoice not found")
 		return
 	}
 
@@ -102,7 +104,7 @@ func (h *Handlers) GetInvoiceWithServices(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		// Логируем реальную ошибку для отладки
 		log.Printf("Error getting invoice with services (ID: %s): %v", id, err)
-		respondWithError(w, http.StatusNotFound, "Invoice not found")
+		respondNotFoundOrInternal(w, err, "Invoice not found")
 		return
 	}
 
@@ -115,7 +117,51 @@ func (h *Handlers) GetInvoiceWithServices(w http.ResponseWriter, r *http.Request
 
 // ExportInvoiceXML обрабатывает GET /api/invoices/{id}/export/upd-xml
 func (h *Handlers) ExportInvoiceXML(w http.ResponseWriter, r *http.Request) {
-	respondWithError(w, http.StatusBadRequest, "Счет на оплату не является формализованным XML-документом для СБИС. Отправьте счет PDF или создайте акт и выгрузите XML акта.")
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respondWithError(w, http.StatusBadRequest, "Invoice ID is required")
+		return
+	}
+
+	invoice, err := h.db.GetInvoiceWithServices(ctx, id)
+	if err != nil {
+		respondNotFoundOrInternal(w, err, "Invoice not found")
+		return
+	}
+
+	customer, err := h.db.GetCustomerByID(ctx, invoice.CustomerID)
+	if err != nil {
+		if isRecordNotFoundError(err) {
+			respondWithError(w, http.StatusBadRequest, "Customer not found for invoice")
+			return
+		}
+		log.Printf("Error loading customer for invoice export (invoice ID: %s): %v", id, err)
+		respondWithError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	contract, err := h.db.GetContractByID(ctx, invoice.ContractID)
+	if err != nil {
+		if isRecordNotFoundError(err) {
+			respondWithError(w, http.StatusBadRequest, "Contract not found for invoice")
+			return
+		}
+		log.Printf("Error loading contract for invoice export (invoice ID: %s): %v", id, err)
+		respondWithError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	data, filename, err := updxml.BuildInvoiceXML(*invoice, *customer, *contract)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="invoice.xml"; filename*=UTF-8''`+url.PathEscape(filename))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 // CreateInvoice обрабатывает POST /api/invoices
@@ -319,7 +365,7 @@ func (h *Handlers) UpdateInvoice(w http.ResponseWriter, r *http.Request) {
 
 	current, err := h.db.GetInvoiceByID(ctx, id)
 	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Invoice not found")
+		respondNotFoundOrInternal(w, err, "Invoice not found")
 		return
 	}
 
@@ -511,7 +557,7 @@ func (h *Handlers) CreateActFromInvoice(w http.ResponseWriter, r *http.Request) 
 
 	invoice, err := h.db.GetInvoiceByID(ctx, id)
 	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Invoice not found")
+		respondNotFoundOrInternal(w, err, "Invoice not found")
 		return
 	}
 	if invoice.Archived {

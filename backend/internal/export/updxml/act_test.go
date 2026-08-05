@@ -265,14 +265,14 @@ func TestBuildActUPDXMLRejectsInvoiceFlagInNoVATMode(t *testing.T) {
 
 func TestBuildActUPDXMLRejectsPartialContract(t *testing.T) {
 	_, _, err := BuildActUPDXML(testAct(false), testCustomer(), models.Contract{Number: "380"})
-	if err == nil || !strings.Contains(err.Error(), "contract number and date must be provided together") {
+	if err == nil || !strings.Contains(err.Error(), "номер и дата договора должны быть указаны вместе") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestBuildActUPDXMLRejectsVATInNoVATMode(t *testing.T) {
 	_, _, err := BuildActUPDXML(testAct(true), testCustomer(), models.Contract{})
-	if err == nil || !strings.Contains(err.Error(), "VAT rate must be zero") {
+	if err == nil || !strings.Contains(err.Error(), "ставка НДС должна быть нулевой") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -295,7 +295,7 @@ func TestBuildActUPDXMLRejectsTotalMismatch(t *testing.T) {
 	act := testAct(false)
 	act.TotalAmount = 99
 	_, _, err := BuildActUPDXML(act, testCustomer(), models.Contract{})
-	if err == nil || !strings.Contains(err.Error(), "total amount must equal") {
+	if err == nil || !strings.Contains(err.Error(), "итоговая сумма акта должна равняться") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -431,7 +431,7 @@ func TestBuildActUPDXMLRejectsLineAmountMismatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected amount mismatch error")
 	}
-	if !strings.Contains(err.Error(), "amount must equal price multiplied by quantity") {
+	if !strings.Contains(err.Error(), "сумма должна равняться цене, умноженной на количество") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

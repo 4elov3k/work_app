@@ -409,14 +409,14 @@ func (c *Client) UploadProjectFile(ctx context.Context, projectID, filename, des
 	if created.File.ID == 0 {
 		files, err := c.ListProjectFiles(ctx, projectID)
 		if err != nil {
-			return "", nil
+			return "", fmt.Errorf("redmine file create response had no id and confirmation lookup failed: %w", err)
 		}
 		for _, file := range files {
 			if file.Filename == filename {
 				return strconv.Itoa(file.ID), nil
 			}
 		}
-		return "", nil
+		return "", fmt.Errorf("redmine file create response had no id and no matching file %q was found in project %s afterwards", filename, projectID)
 	}
 	return strconv.Itoa(created.File.ID), nil
 }

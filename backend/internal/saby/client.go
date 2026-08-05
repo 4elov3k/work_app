@@ -225,17 +225,27 @@ func chooseParticipantID(identifier participantIdentifier) string {
 	return first
 }
 
+// credentials returns a consistent snapshot of the current access token and
+// session ID under the client's mutex, so callers never read one field mid-write.
+func (c *Client) credentials() (accessToken, sessionID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.accessToken, c.sessionID
+}
+
 func (c *Client) call(ctx context.Context, endpoint, method string, params interface{}, target interface{}) error {
 	if c == nil {
 		return errNotConfigured
 	}
-	if c.accessToken == "" && c.sessionID == "" {
+	accessToken, sessionID := c.credentials()
+	if accessToken == "" && sessionID == "" {
 		if err := c.authenticate(ctx); err != nil {
 			return err
 		}
+		accessToken, sessionID = c.credentials()
 	}
-	if err := c.callOnce(ctx, endpoint, method, params, target); err != nil {
-		if !isUnauthorized(err) || c.accessToken != "" || (c.login == "" || c.password == "") {
+	if err := c.callOnce(ctx, endpoint, method, params, target, accessToken, sessionID); err != nil {
+		if !isUnauthorized(err) || accessToken != "" || (c.login == "" || c.password == "") {
 			return err
 		}
 		c.mu.Lock()
@@ -244,7 +254,8 @@ func (c *Client) call(ctx context.Context, endpoint, method string, params inter
 		if authErr := c.authenticate(ctx); authErr != nil {
 			return authErr
 		}
-		return c.callOnce(ctx, endpoint, method, params, target)
+		accessToken, sessionID = c.credentials()
+		return c.callOnce(ctx, endpoint, method, params, target, accessToken, sessionID)
 	}
 	return nil
 }
@@ -265,7 +276,7 @@ func (c *Client) authenticate(ctx context.Context) error {
 	}
 
 	var sessionID string
-	if err := c.callOnce(ctx, c.authURL, "СБИС.Аутентифицировать", map[string]interface{}{"Параметр": param}, &sessionID); err != nil {
+	if err := c.callOnce(ctx, c.authURL, "СБИС.Аутентифицировать", map[string]interface{}{"Параметр": param}, &sessionID, "", ""); err != nil {
 		return err
 	}
 	if strings.TrimSpace(sessionID) == "" {
@@ -275,7 +286,7 @@ func (c *Client) authenticate(ctx context.Context) error {
 	return nil
 }
 
-func (c *Client) callOnce(ctx context.Context, endpoint, method string, params interface{}, target interface{}) error {
+func (c *Client) callOnce(ctx context.Context, endpoint, method string, params interface{}, target interface{}, accessToken, sessionID string) error {
 	body, err := json.Marshal(rpcRequest{
 		JSONRPC: "2.0",
 		Method:  method,
@@ -292,10 +303,10 @@ func (c *Client) callOnce(ctx context.Context, endpoint, method string, params i
 	}
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	req.Header.Set("Accept", "application/json")
-	if c.accessToken != "" {
-		req.Header.Set("X-SBISAccessToken", c.accessToken)
-	} else if c.sessionID != "" {
-		req.Header.Set("X-SBISSessionID", c.sessionID)
+	if accessToken != "" {
+		req.Header.Set("X-SBISAccessToken", accessToken)
+	} else if sessionID != "" {
+		req.Header.Set("X-SBISSessionID", sessionID)
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -338,7 +349,10 @@ type sabyHTTPError struct {
 }
 
 func (e sabyHTTPError) Error() string {
-	return fmt.Sprintf("saby HTTP %d", e.statusCode)
+	if e.statusCode == http.StatusUnauthorized {
+		return "Saby (СБИС) отклонил авторизацию (HTTP 401): проверьте SABY_ACCESS_TOKEN или SABY_LOGIN/SABY_PASSWORD"
+	}
+	return fmt.Sprintf("Saby (СБИС) вернул ошибку HTTP %d", e.statusCode)
 }
 
 func isUnauthorized(err error) bool {

@@ -22,6 +22,7 @@ import (
 
 	"github.com/lib/pq"
 
+	"invoices-backend/internal/contracttopics"
 	"invoices-backend/internal/database"
 	"invoices-backend/internal/export/updxml"
 	"invoices-backend/internal/models"
@@ -267,6 +268,9 @@ func (s *Service) CurrentOrganization(ctx context.Context) (*Organization, error
 		&org.LegalAddress, &org.PostalAddress, &org.Phone, &org.BankAccount, &org.BankName, &org.BankBIK,
 		&org.BankCorrAccount, &org.TaxRegime, &org.VATMode, &org.Timezone, &org.EDOParticipantID,
 		&signerRaw, &numberingRaw, &org.Active); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, appError("ORGANIZATION_NOT_CONFIGURED", "В системе не настроена активная организация-продавец", false, "Обратитесь к администратору для настройки организации")
+		}
 		return nil, fmt.Errorf("failed to get organization: %w", err)
 	}
 	_ = json.Unmarshal(signerRaw, &org.Signer)
@@ -560,6 +564,9 @@ func (s *Service) CommitCreateContract(ctx context.Context, input CommitInput) (
 			if isUniqueViolation(err) {
 				return nil, appError("DOCUMENT_DUPLICATE", "Договор с таким номером уже существует", true, "Выберите существующий договор или другой номер")
 			}
+			if isForeignKeyViolation(err) {
+				return nil, appError("COUNTERPARTY_NOT_FOUND", "Контрагент для договора не найден", true, "Проверьте counterparty_id")
+			}
 			return nil, err
 		}
 		return map[string]any{"status": "created", "data": c}, nil
@@ -688,6 +695,9 @@ func (s *Service) CommitCreateInvoice(ctx context.Context, input CommitInput) (m
 		`, payload.Input.ContractID, payload.Input.CounterpartyID, strconv.FormatInt(number, 10), payload.Input.Date, payload.Input.Status, decimalFromCents(totalCents), payload.Input.ContractNumber).
 			Scan(&invoice.ID, &invoice.ContractID, &invoice.CustomerID, &invoice.Number, &invoice.Date, &invoice.Status, &invoice.TotalAmount, &invoice.Archived, &invoice.ContractNumber, &invoice.CreatedAt, &invoice.UpdatedAt)
 		if err != nil {
+			if isForeignKeyViolation(err) {
+				return nil, appError("CONTRACT_NOT_FOUND", "Договор или контрагент для счёта не найден", true, "Проверьте contract_id и counterparty_id")
+			}
 			return nil, err
 		}
 		for _, line := range lines {
@@ -881,6 +891,9 @@ func (s *Service) CommitCreateAct(ctx context.Context, input CommitInput) (map[s
 		`, payload.Input.ContractID, strconv.FormatInt(number, 10), payload.Input.Date, payload.Input.Status, decimalFromCents(totalCents)).
 			Scan(&act.ID, &act.ContractID, &act.Number, &act.Date, &act.Status, &act.TotalAmount, &act.Archived, &act.CreatedAt, &act.UpdatedAt)
 		if err != nil {
+			if isForeignKeyViolation(err) {
+				return nil, appError("CONTRACT_NOT_FOUND", "Договор для акта не найден", true, "Проверьте contract_id")
+			}
 			return nil, err
 		}
 		for _, line := range lines {
@@ -1084,7 +1097,12 @@ func (s *Service) RenderPDF(ctx context.Context, input RenderFileInput) (*FileRe
 	if err := os.WriteFile(path, data, 0o640); err != nil {
 		return nil, err
 	}
-	return s.upsertDocumentFile(ctx, org.ID, docType, input.DocumentID, "pdf", "application/pdf", path, filename, int64(len(data)))
+	result, err := s.upsertDocumentFile(ctx, org.ID, docType, input.DocumentID, "pdf", "application/pdf", path, filename, int64(len(data)))
+	if err != nil {
+		_ = os.Remove(path)
+		return nil, appError("STORAGE_ERROR", "Файл сформирован, но не удалось сохранить запись о нём — повторите запрос", true, "Повторите render_pdf")
+	}
+	return result, nil
 }
 
 func (s *Service) ExportActUPDXML(ctx context.Context, input IDInput) (*FileResult, error) {
@@ -1118,18 +1136,33 @@ func (s *Service) ExportActUPDXML(ctx context.Context, input IDInput) (*FileResu
 	if err := os.WriteFile(path, data, 0o640); err != nil {
 		return nil, err
 	}
-	return s.upsertDocumentFile(ctx, org.ID, "act", input.ID, "upd_xml", "application/xml", path, safeName, int64(len(data)))
+	result, err := s.upsertDocumentFile(ctx, org.ID, "act", input.ID, "upd_xml", "application/xml", path, safeName, int64(len(data)))
+	if err != nil {
+		_ = os.Remove(path)
+		return nil, appError("STORAGE_ERROR", "Файл УПД сформирован, но не удалось сохранить запись о нём — повторите запрос", true, "Повторите acts.export_upd_xml")
+	}
+	return result, nil
 }
 
 func (s *Service) ValidateActUPDXML(ctx context.Context, input IDInput) (*ValidationResult, error) {
-	file, err := s.ExportActUPDXML(ctx, input)
+	act, err := s.db.GetActWithServices(ctx, input.ID)
+	if err != nil {
+		return nil, appError("DOCUMENT_NOT_FOUND", "Акт не найден", true, "Уточните ID")
+	}
+	customer, err := s.db.GetCustomerByID(ctx, act.CustomerID)
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(file.StoragePath)
+	contract, err := s.db.GetContractByID(ctx, act.ContractID)
 	if err != nil {
 		return nil, err
 	}
+	data, _, err := updxml.BuildActUPDXML(*act, *customer, *contract)
+	if err != nil {
+		return nil, appError("XML_VALIDATION_FAILED", err.Error(), true, "Исправьте реквизиты или строки акта")
+	}
+	// Best-effort reference to a previously stored file, if any — validation never writes.
+	file, _ := s.GetFile(ctx, RenderFileInput{DocumentType: "act", DocumentID: input.ID})
 	if err := xml.Unmarshal(data, new(any)); err != nil {
 		return &ValidationResult{Status: "failed", XMLParse: err.Error(), XSDValidation: "not_run"}, nil
 	}
@@ -1435,6 +1468,18 @@ func (s *Service) commitWithConfirmation(ctx context.Context, action string, inp
 		INSERT INTO accounting_idempotency_keys (action, idempotency_key, payload_hash, result)
 		VALUES ($1, $2, $3, $4::jsonb)
 	`, action, input.IdempotencyKey, payloadHash, string(resultBytes)); err != nil {
+		if isUniqueViolation(err) {
+			// A concurrent commit under a different confirmation_token raced us to the
+			// same idempotency_key and won — our writes above are rolled back with this
+			// transaction, so nothing is duplicated. Fetch the winner's result instead
+			// of surfacing a raw Postgres constraint error.
+			_ = tx.Rollback()
+			existing, lookupErr := s.getIdempotentResultDB(ctx, action, input.IdempotencyKey, payloadHash)
+			if lookupErr == nil && existing != nil {
+				return existing, nil
+			}
+			return nil, appError("IDEMPOTENCY_CONFLICT", "Операция с этим idempotency_key уже обрабатывается или обработана параллельным запросом", true, "Повторите запрос с тем же idempotency_key через несколько секунд")
+		}
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE accounting_confirmation_tokens SET used_at=CURRENT_TIMESTAMP WHERE token=$1`, input.ConfirmationToken); err != nil {
@@ -1444,6 +1489,34 @@ func (s *Service) commitWithConfirmation(ctx context.Context, action string, inp
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	return result, nil
+}
+
+// getIdempotentResultDB is the getIdempotentResultTx equivalent for use after the
+// calling transaction has already been rolled back (e.g. lost the idempotency-key
+// race), when a *sql.Tx can no longer be queried.
+func (s *Service) getIdempotentResultDB(ctx context.Context, action, key, payloadHash string) (map[string]any, error) {
+	var storedHash string
+	var raw []byte
+	err := s.db.QueryRowContext(ctx, `
+		SELECT payload_hash, result
+		FROM accounting_idempotency_keys
+		WHERE action=$1 AND idempotency_key=$2
+	`, action, key).Scan(&storedHash, &raw)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if storedHash != payloadHash {
+		return nil, appError("CONFIRMATION_MISMATCH", "idempotency_key уже использован с другими данными", true, "Передайте новый idempotency_key")
+	}
+	var result map[string]any
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	result["idempotent_replay"] = true
 	return result, nil
 }
 
@@ -1476,6 +1549,9 @@ func (s *Service) currentOrganizationTx(ctx context.Context, tx *sql.Tx) (*Organ
 	row := tx.QueryRowContext(ctx, `SELECT id, full_name, short_name, inn, vat_mode, timezone FROM organizations WHERE active=true ORDER BY created_at LIMIT 1`)
 	var org Organization
 	if err := row.Scan(&org.ID, &org.FullName, &org.ShortName, &org.INN, &org.VATMode, &org.Timezone); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, appError("ORGANIZATION_NOT_CONFIGURED", "В системе не настроена активная организация-продавец", false, "Обратитесь к администратору для настройки организации")
+		}
 		return nil, err
 	}
 	return &org, nil
@@ -1526,61 +1602,19 @@ func startNumber(docType string) int64 {
 	return 2999
 }
 
+// normalizeContractTopic delegates to the shared contracttopics package (also
+// used by the REST handlers) so both channels validate and map contract
+// topics identically.
 func normalizeContractTopic(topic string) (string, error) {
-	value := strings.TrimSpace(topic)
-	if value == "" {
-		return "", appError("VALIDATION_ERROR", "Тема договора обязательна", true, "Укажите одну из валидных тем договора")
+	normalized, err := contracttopics.Normalize(topic)
+	if err != nil {
+		return "", appError("VALIDATION_ERROR", err.Error(), true, "Используйте одну из валидных тем: "+strings.Join(allowedContractTopics(), ", "))
 	}
-	normalized := strings.ToLower(value)
-	normalized = strings.ReplaceAll(normalized, "ё", "е")
-	normalized = strings.Join(strings.Fields(normalized), " ")
-
-	aliases := map[string]string{
-		"seo":             "Продвижение сео",
-		"сео":             "Продвижение сео",
-		"продвижение seo": "Продвижение сео",
-		"продвижение сео": "Продвижение сео",
-		"контекст":        "Продвижение контекст",
-		"продвижение контекст":  "Продвижение контекст",
-		"сео + контекст":        "Сео + контекст",
-		"seo + контекст":        "Сео + контекст",
-		"техподдержка":          "Техподдержка",
-		"техническая поддержка": "Техподдержка",
-		"юр услуги":             "Юр услуги",
-		"юридические услуги":    "Юр услуги",
-		"разработка":            "Разработка",
-		"разработка сайта":      "Разработка",
-		"создание сайта":        "Разработка",
-		"сайт":                  "Разработка",
-		"соц сети":              "Соц сети",
-		"социальные сети":       "Соц сети",
-		"дизайн":                "Дизайн",
-		"отзывы":                "Отзывы",
-	}
-	if mapped, ok := aliases[normalized]; ok {
-		return mapped, nil
-	}
-
-	for _, allowed := range allowedContractTopics() {
-		if value == allowed {
-			return value, nil
-		}
-	}
-	return "", appError("VALIDATION_ERROR", "Некорректная тема договора: "+value, true, "Используйте одну из валидных тем: "+strings.Join(allowedContractTopics(), ", "))
+	return normalized, nil
 }
 
 func allowedContractTopics() []string {
-	return []string{
-		"Продвижение сео",
-		"Продвижение контекст",
-		"Сео + контекст",
-		"Техподдержка",
-		"Юр услуги",
-		"Разработка",
-		"Соц сети",
-		"Дизайн",
-		"Отзывы",
-	}
+	return contracttopics.Allowed()
 }
 
 func (s *Service) findCounterpartyDuplicates(ctx context.Context, inn, kpp string) ([]models.Customer, error) {
@@ -2057,6 +2091,11 @@ func pdfEscape(text string) string {
 func isUniqueViolation(err error) bool {
 	var pqErr *pq.Error
 	return errors.As(err, &pqErr) && pqErr.Code == "23505"
+}
+
+func isForeignKeyViolation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23503"
 }
 
 func numericString(value string) bool {
