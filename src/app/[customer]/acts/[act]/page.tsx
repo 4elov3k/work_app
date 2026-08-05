@@ -1,5 +1,6 @@
 import FormCus from "@/app/components/components/form"
 import Link from "next/link"
+import { notFound } from "next/navigation"
 import Print from "../../[invoice]/components/print"
 import DownloadPdf from "../../[invoice]/components/downloadPdf"
 import UploadPdfToRedmine from "../../[invoice]/components/uploadPdfToRedmine"
@@ -8,7 +9,7 @@ import { ArrowLeft, Home } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { actsAPI } from "@/lib/api.server"
+import { actsAPI, ApiError } from "@/lib/api.server"
 import AddLine from "../../components/addLine"
 import EditDocument from "../../components/editDocument"
 import DocumentActionsMenu from "../../components/documentActionsMenu"
@@ -20,7 +21,15 @@ export default async function Page({
 }) {
   const { act: actId, customer: customerId } = await params
 
-  const actData = await actsAPI.getById(actId)
+  let actData
+  try {
+    actData = await actsAPI.getById(actId)
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      notFound()
+    }
+    throw err
+  }
   const act = actData.data
   const fileName = `Акт_${act.number}_${act.date.replace(/\./g, "-")}`
 

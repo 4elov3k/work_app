@@ -262,6 +262,17 @@ export interface ErrorResponse {
   code: number;
 }
 
+// Ошибка API-запроса с сохранённым HTTP-статусом, чтобы вызывающий код мог
+// различать «не найдено» (404) и настоящие сбои сервера/сети.
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 // Утилита для обработки ответов
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -279,7 +290,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
     } catch {
       if (rawText) message = rawText;
     }
-    throw new Error(`${message} (HTTP ${response.status})`);
+    throw new ApiError(`${message} (HTTP ${response.status})`, response.status);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -299,26 +310,16 @@ async function handleResponse<T>(response: Response): Promise<T> {
 export const customersAPI = {
   // Получить список всех контрагентов
   getAll: async (page = 1, perPage = 100): Promise<PaginatedResponse<Customer>> => {
-    try {
-      const response = await fetch(`${API_BASE}/customers?page=${page}&per_page=${perPage}`);
-      return handleResponse<PaginatedResponse<Customer>>(response);
-    } catch (err) {
-      console.warn("customersAPI.getAll failed, returning empty list:", err);
-      return { data: [], total: 0, page, per_page: perPage };
-    }
+    const response = await fetch(`${API_BASE}/customers?page=${page}&per_page=${perPage}`);
+    return handleResponse<PaginatedResponse<Customer>>(response);
   },
 
   // Поиск контрагентов
   search: async (query: string, page = 1, perPage = 100): Promise<PaginatedResponse<Customer>> => {
-    try {
-      const response = await fetch(
-        `${API_BASE}/customers?search=${encodeURIComponent(query)}&page=${page}&per_page=${perPage}`
-      );
-      return handleResponse<PaginatedResponse<Customer>>(response);
-    } catch (err) {
-      console.warn("customersAPI.search failed, returning empty list:", err);
-      return { data: [], total: 0, page, per_page: perPage };
-    }
+    const response = await fetch(
+      `${API_BASE}/customers?search=${encodeURIComponent(query)}&page=${page}&per_page=${perPage}`
+    );
+    return handleResponse<PaginatedResponse<Customer>>(response);
   },
 
   // Получить контрагента по ID

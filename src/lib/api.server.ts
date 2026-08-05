@@ -3,10 +3,19 @@ const API_BASE = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || "http
 
 type FetchOptions = RequestInit & { cache?: RequestCache; next?: { revalidate?: number } }
 
+export class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = "ApiError"
+    this.status = status
+  }
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: "Network error", code: response.status }))
-    throw new Error(error.error)
+    throw new ApiError(error.error, response.status)
   }
   return response.json()
 }

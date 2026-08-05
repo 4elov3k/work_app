@@ -1,5 +1,6 @@
 import FormCus from "@/app/components/components/form"
 import Link from "next/link"
+import { notFound } from "next/navigation"
 import Print from "./components/print"
 import Duplicate from "./components/duplicate"
 import DownloadPdf from "./components/downloadPdf"
@@ -8,7 +9,7 @@ import { ArrowLeft, Home } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { invoicesAPI } from "@/lib/api.server"
+import { invoicesAPI, ApiError } from "@/lib/api.server"
 import AddLine from "../components/addLine"
 import EditDocument from "../components/editDocument"
 import CreateActFromInvoice from "./components/createActFromInvoice"
@@ -20,9 +21,17 @@ export default async function Page({
     params: Promise<{ invoice: string; customer: string }>
   }) {
     const { invoice: invoiceId, customer: customerId } = await params
-    
+
     // Получаем данные для формирования имени файла
-    const invoiceData = await invoicesAPI.getById(invoiceId)
+    let invoiceData
+    try {
+      invoiceData = await invoicesAPI.getById(invoiceId)
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        notFound()
+      }
+      throw err
+    }
     const invoice = invoiceData.data
     const fileName = `Счет_${invoice.number}_${invoice.date.replace(/\./g, '-')}`
     

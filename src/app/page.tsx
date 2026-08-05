@@ -15,13 +15,16 @@ export default function Home() {
   const [items, setItems] = useState<Customer[]>([]);
   const [value, setValue] = useState('')
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(()=>{
     customersAPI.getAll().then(response => {
       setItems(response.data || [])
+      setError('')
     }).catch(err => {
       console.error('Failed to load customers:', err)
       setItems([])
+      setError('Не удалось загрузить список контрагентов. Проверьте соединение с сервером и попробуйте ещё раз.')
     }).finally(() => {
       setLoading(false)
     })
@@ -30,22 +33,26 @@ export default function Home() {
   const handleSearchChange = (event: ChangeEvent<HTMLInputElement>): void => {
     setValue(event.target.value)
   };
-  
+
   useEffect(() => {
     const timer = setTimeout(() => {
       if (value.trim() === '') {
         customersAPI.getAll().then(response => {
           setItems(response.data || [])
+          setError('')
         }).catch(err => {
           console.error('Failed to load customers:', err)
           setItems([])
+          setError('Не удалось загрузить список контрагентов. Проверьте соединение с сервером и попробуйте ещё раз.')
         })
       } else {
         customersAPI.search(value).then(response => {
           setItems(response.data || [])
+          setError('')
         }).catch(err => {
           console.error('Failed to search customers:', err)
           setItems([])
+          setError('Не удалось выполнить поиск контрагентов. Проверьте соединение с сервером и попробуйте ещё раз.')
         })
       }
     }, 300)
@@ -93,6 +100,12 @@ export default function Home() {
         />
       </div>
 
+      {error && (
+        <div className="mb-6 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {error}
+        </div>
+      )}
+
       {loading ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {[1, 2, 3].map((i) => (
@@ -104,7 +117,7 @@ export default function Home() {
             </Card>
           ))}
         </div>
-      ) : items.length === 0 ? (
+      ) : items.length === 0 && !error ? (
         <Card>
           <CardContent className="py-10 text-center">
             <Building2 className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
