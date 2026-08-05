@@ -21,6 +21,13 @@ services:
       - ./backend/migrations/008_contract_topics.sql:/docker-entrypoint-initdb.d/008_contract_topics.sql
       - ./backend/migrations/009_archive_flags.sql:/docker-entrypoint-initdb.d/009_archive_flags.sql
       - ./backend/migrations/010_add_customer_kpp.sql:/docker-entrypoint-initdb.d/010_add_customer_kpp.sql
+      - ./backend/migrations/011_redmine_agent_integration.sql:/docker-entrypoint-initdb.d/011_redmine_agent_integration.sql
+      - ./backend/migrations/012_redmine_project_dashboard.sql:/docker-entrypoint-initdb.d/012_redmine_project_dashboard.sql
+      - ./backend/migrations/013_redmine_dashboard_manager_status.sql:/docker-entrypoint-initdb.d/013_redmine_dashboard_manager_status.sql
+      - ./backend/migrations/014_redmine_project_operations.sql:/docker-entrypoint-initdb.d/014_redmine_project_operations.sql
+      - ./backend/migrations/015_customer_edo_requisites.sql:/docker-entrypoint-initdb.d/015_customer_edo_requisites.sql
+      - ./backend/migrations/016_accounting_mcp.sql:/docker-entrypoint-initdb.d/016_accounting_mcp.sql
+      - ./backend/migrations/017_dzerzhinskie_vedomosti_kpp.sql:/docker-entrypoint-initdb.d/017_dzerzhinskie_vedomosti_kpp.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U invoices_user -d invoices_db"]
       interval: 10s
@@ -33,17 +40,69 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        APP: server
     container_name: invoices_backend
     environment:
       DATABASE_URL: postgres://invoices_user:invoices_password@postgres:5432/invoices_db?sslmode=disable
       PORT: 8080
       CORS_ORIGIN: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://127.0.0.1:3000,http://127.0.0.1:3001,http://127.0.0.1:3002
       DADATA_API_KEY: ${DADATA_API_KEY:-}
+      REDMINE_URL: ${REDMINE_URL:-}
+      REDMINE_API: ${REDMINE_API:-}
+      AGENT_API_TOKEN: ${AGENT_API_TOKEN:-}
+      SABY_BASE_URL: ${SABY_BASE_URL:-https://online.sbis.ru}
+      SABY_ACCESS_TOKEN: ${SABY_ACCESS_TOKEN:-}
+      SABY_SESSION_ID: ${SABY_SESSION_ID:-}
+      SABY_LOGIN: ${SABY_LOGIN:-}
+      SABY_PASSWORD: ${SABY_PASSWORD:-}
+      SABY_ACCOUNT_NUMBER: ${SABY_ACCOUNT_NUMBER:-}
+      SABY_TIMEOUT: ${SABY_TIMEOUT:-10s}
+      SABY_SELLER_EDO_ID: ${SABY_SELLER_EDO_ID:-}
+      SABY_SELLER_INN: ${SABY_SELLER_INN:-526220116209}
+      SABY_SELLER_KPP: ${SABY_SELLER_KPP:-}
+      SABY_SELLER_NAME: ${SABY_SELLER_NAME:-Индивидуальный предприниматель Мыленкова Любовь Валерьевна}
     ports:
       - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - app-network
+
+  accounting-mcp:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        APP: accounting-mcp
+    container_name: accounting_mcp
+    environment:
+      DATABASE_URL: postgres://invoices_user:invoices_password@postgres:5432/invoices_db?sslmode=disable
+      MCP_TRANSPORT: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 3000
+      MCP_PATH: /mcp
+      MCP_AUTH_ENABLED: ${MCP_AUTH_ENABLED:-true}
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
+      DOCUMENT_STORAGE_PATH: /data/documents
+      ORGANIZATION_TIMEZONE: Europe/Moscow
+      COUNTERPARTY_LOOKUP_PROVIDER: none
+      EDI_PROVIDER: none
+      ALLOW_DOCUMENT_FINALIZATION: ${ALLOW_DOCUMENT_FINALIZATION:-true}
+      ALLOW_DOCUMENT_SENDING: ${ALLOW_DOCUMENT_SENDING:-false}
+      ALLOW_COUNTERPARTY_DELETION: ${ALLOW_COUNTERPARTY_DELETION:-false}
+    volumes:
+      - accounting_documents:/data/documents
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/healthz >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - app-network
 
@@ -53,4 +112,6 @@ networks:
 
 volumes:
   postgres_data:
+    driver: local
+  accounting_documents:
     driver: local

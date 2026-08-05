@@ -1,0 +1,5 @@
+.gocache
+*.test
+accounting-mcp
+invoices-api
+.DS_Store
