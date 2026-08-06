@@ -4,13 +4,23 @@ import "time"
 
 // Customer представляет контрагента (клиента)
 type Customer struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Fullname  string    `json:"fullname"`
-	Address   string    `json:"address"`
-	INN       string    `json:"inn"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	Fullname        string    `json:"fullname"`
+	Address         string    `json:"address"`
+	INN             string    `json:"inn"`
+	KPP             string    `json:"kpp"`
+	EDOIDTensor     string    `json:"edo_id_tensor"`
+	EDOIDKontur     string    `json:"edo_id_kontur"`
+	OKPO            string    `json:"okpo"`
+	Phone           string    `json:"phone,omitempty"`
+	Email           string    `json:"email,omitempty"`
+	ContactPerson   string    `json:"contact_person,omitempty"`
+	ContactPosition string    `json:"contact_position,omitempty"`
+	Comment         string    `json:"comment,omitempty"`
+	Status          string    `json:"status,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // CustomerListResponse представляет ответ со списком контрагентов
@@ -26,10 +36,37 @@ type CustomerResponse struct {
 	Data Customer `json:"data"`
 }
 
+// CustomerLookup представляет найденные по ИНН реквизиты контрагента.
+type CustomerLookup struct {
+	Name            string `json:"name"`
+	Fullname        string `json:"fullname"`
+	Address         string `json:"address"`
+	INN             string `json:"inn"`
+	KPP             string `json:"kpp"`
+	Type            string `json:"type"`
+	Status          string `json:"status"`
+	ContactPerson   string `json:"contact_person,omitempty"`
+	ContactPosition string `json:"contact_position,omitempty"`
+}
+
+// CustomerLookupResponse представляет ответ проверки контрагента по ИНН.
+type CustomerLookupResponse struct {
+	Data CustomerLookup `json:"data"`
+}
+
 // CreateCustomerRequest представляет запрос на создание контрагента
 type CreateCustomerRequest struct {
-	Name     string `json:"name"`
-	Fullname string `json:"fullname"`
-	Address  string `json:"address"`
-	INN      string `json:"inn"`
+	Name            string `json:"name"`
+	Fullname        string `json:"fullname"`
+	Address         string `json:"address"`
+	INN             string `json:"inn"`
+	KPP             string `json:"kpp"`
+	EDOIDTensor     string `json:"edo_id_tensor"`
+	EDOIDKontur     string `json:"edo_id_kontur"`
+	OKPO            string `json:"okpo"`
+	Phone           string `json:"phone,omitempty"`
+	Email           string `json:"email,omitempty"`
+	ContactPerson   string `json:"contact_person,omitempty"`
+	ContactPosition string `json:"contact_position,omitempty"`
+	Comment         string `json:"comment,omitempty"`
 }

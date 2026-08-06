@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -64,7 +67,7 @@ func (h *Handlers) GetCustomerByID(w http.ResponseWriter, r *http.Request) {
 
 	customer, err := h.db.GetCustomerByID(ctx, id)
 	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Customer not found")
+		respondNotFoundOrInternal(w, err, "Customer not found")
 		return
 	}
 
@@ -106,14 +109,22 @@ func (h *Handlers) CreateCustomer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.INN = digitsOnly(req.INN)
+	req.KPP = digitsOnly(req.KPP)
 	if len(req.INN) != 10 && len(req.INN) != 12 {
 		respondWithError(w, http.StatusBadRequest, "Customer INN must be 10 or 12 digits")
+		return
+	}
+
+	if len(req.INN) == 10 && len(req.KPP) != 9 {
+		respondWithError(w, http.StatusBadRequest, "Customer KPP must be 9 digits for organizations")
 		return
 	}
 
 	// Создаем контрагента
 	customer, err := h.db.CreateCustomer(ctx, req)
 	if err != nil {
+		log.Printf("CreateCustomer failed: %v", err)
 		respondWithError(w, http.StatusInternalServerError, "Failed to create customer")
 		return
 	}
@@ -123,4 +134,30 @@ func (h *Handlers) CreateCustomer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondWithJSON(w, http.StatusCreated, response)
+}
+
+// DeleteCustomer обрабатывает DELETE /api/customers/{id}
+func (h *Handlers) DeleteCustomer(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respondWithError(w, http.StatusBadRequest, "Customer ID is required")
+		return
+	}
+
+	if err := h.db.DeleteCustomer(ctx, id); err != nil {
+		if isForeignKeyViolation(err) {
+			respondWithError(w, http.StatusConflict, "У контрагента есть договоры или счета — сначала удалите их")
+			return
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, http.StatusNotFound, "Customer not found")
+			return
+		}
+		log.Printf("DeleteCustomer failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to delete customer")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

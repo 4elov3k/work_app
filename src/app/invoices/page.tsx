@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react"
 import { Invoice, Act, invoicesAPI, actsAPI, customersAPI, Customer } from "@/lib/api"
 import Link from "next/link"
-import { ArrowLeft, FileText, FileCheck, Calendar, User, Loader2 } from "lucide-react"
+import { ArrowLeft, FileText, FileCheck, Calendar, User, Loader2, Phone } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -44,10 +44,21 @@ export default function AllInvoicesPage() {
     }
   }
 
+  const documentTime = (date: string) => {
+    const [day, month, year] = date.split(".").map(Number)
+    return new Date(year, month - 1, day).getTime()
+  }
+
+  const sortDocumentsByDate = (documents: Array<Invoice | Act>) => {
+    return [...documents].sort((left, right) => {
+      const dateDiff = documentTime(right.date) - documentTime(left.date)
+      if (dateDiff !== 0) return dateDiff
+      return right.number.localeCompare(left.number, "ru", { numeric: true })
+    })
+  }
+
   const filterDocuments = (documents: Array<Invoice | Act>) => {
-    if (!searchQuery) return documents
-    
-    return documents.filter(doc => {
+    const filtered = searchQuery ? documents.filter(doc => {
       const customer = customers[doc.customer_id]
       const customerName = customer?.name?.toLowerCase() || ""
       const number = doc.number.toLowerCase()
@@ -57,7 +68,9 @@ export default function AllInvoicesPage() {
       return customerName.includes(query) || 
              number.includes(query) || 
              date.includes(query)
-    })
+    }) : documents
+
+    return sortDocumentsByDate(filtered)
   }
 
   const renderDocumentCard = (doc: Invoice | Act, type: "invoice" | "act") => {
@@ -107,6 +120,12 @@ export default function AllInvoicesPage() {
             <Button variant="outline">
               <ArrowLeft className="mr-2 h-4 w-4" />
               Главная
+            </Button>
+          </Link>
+          <Link href="/zvonari">
+            <Button variant="outline">
+              <Phone className="mr-2 h-4 w-4" />
+              Звонари
             </Button>
           </Link>
           <h1 className="text-3xl font-bold">Все документы</h1>

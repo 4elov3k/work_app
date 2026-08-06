@@ -21,6 +21,7 @@ type Act struct {
 type ActWithServices struct {
 	Act
 	Services []Service `json:"services"`
+	Invoices []Invoice `json:"invoices"`
 }
 
 // ActListResponse представляет ответ со списком актов

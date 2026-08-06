@@ -1,10 +1,13 @@
-import { ArrowLeft, Building2, MapPin, Hash } from "lucide-react"
+import { ArrowLeft, Building2, MapPin, Hash, AlertTriangle } from "lucide-react"
 import Link from "next/link"
+import { notFound } from "next/navigation"
 import Lists from "./components/lists"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
-import { customersAPI } from "@/lib/api"
+import { customersAPI, ApiError } from "@/lib/api"
+import RedmineProjectLinkPanel from "./components/redmineProjectLink"
+import DeleteCustomerButton from "./components/deleteCustomerButton"
 
 export interface IData {
   collectionId?: string
@@ -37,16 +40,21 @@ export default async function Page({
     params: Promise<{ customer: string }>
   }) {
     const slug = (await params).customer
-    
+
     // Получаем данные контрагента
     let customer
+    let loadError = ''
     try {
       const response = await customersAPI.getById(slug)
       customer = response.data
     } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        notFound()
+      }
       console.error('Failed to load customer:', error)
+      loadError = 'Не удалось загрузить контрагента. Проверьте соединение с сервером и попробуйте обновить страницу.'
     }
-    
+
     return (
       <div className="container mx-auto py-8 px-4 max-w-7xl">
         <div className="mb-6">
@@ -57,6 +65,13 @@ export default async function Page({
             </Button>
           </Link>
           
+          {loadError && (
+            <div className="mb-4 flex items-center gap-2 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              {loadError}
+            </div>
+          )}
+
           {customer && (
             <Card>
               <CardHeader>
@@ -68,6 +83,7 @@ export default async function Page({
                     <CardTitle className="text-2xl mb-1">{customer.name}</CardTitle>
                     <CardDescription className="text-base">{customer.fullname}</CardDescription>
                   </div>
+                  <DeleteCustomerButton customerId={slug} customerName={customer.name} />
                 </div>
               </CardHeader>
               <CardContent>
@@ -85,14 +101,18 @@ export default async function Page({
                     </div>
                   )}
                 </div>
+                <RedmineProjectLinkPanel customerId={slug} />
               </CardContent>
             </Card>
           )}
         </div>
 
-        <Separator className="my-6" />
-        
-        <Lists slug={slug}/>
+        {customer && (
+          <>
+            <Separator className="my-6" />
+            <Lists slug={slug}/>
+          </>
+        )}
       </div>
     )
   }

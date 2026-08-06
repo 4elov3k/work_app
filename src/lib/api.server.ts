@@ -3,10 +3,19 @@ const API_BASE = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || "http
 
 type FetchOptions = RequestInit & { cache?: RequestCache; next?: { revalidate?: number } }
 
+export class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = "ApiError"
+    this.status = status
+  }
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: "Network error", code: response.status }))
-    throw new Error(error.error)
+    throw new ApiError(error.error, response.status)
   }
   return response.json()
 }
@@ -26,6 +35,7 @@ export interface Customer {
   fullname: string
   address: string
   inn: string
+  kpp: string
   created_at: string
   updated_at: string
 }
@@ -41,6 +51,35 @@ export interface Contract {
   end_date: string
   created_at: string
   updated_at: string
+}
+
+export interface ContractAppendixLine {
+  id: string
+  appendix_id: string
+  service_id?: string
+  section: string
+  position: number
+  title: string
+  unit: string
+  price: number
+  qty: number
+  amount: number
+}
+
+export interface ContractAppendix {
+  id: string
+  contract_id: string
+  number: string
+  date: string
+  status: string
+  total_amount: number
+  archived: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface ContractAppendixWithLines extends ContractAppendix {
+  lines: ContractAppendixLine[]
 }
 
 export interface Invoice {
@@ -74,7 +113,10 @@ export interface Act {
 export interface Service {
   id: string
   name: string
+  unit?: string
   price: number
+  qty?: number
+  amount?: number
   created_at: string
   updated_at: string
 }
@@ -85,6 +127,31 @@ export interface InvoiceWithServices extends Invoice {
 
 export interface ActWithServices extends Act {
   services: Service[]
+}
+
+export interface OrganizationSigner {
+  position: string
+  last_name: string
+  first_name: string
+  middle_name: string
+}
+
+export interface Organization {
+  id: string
+  type: string
+  full_name: string
+  short_name: string
+  inn: string
+  kpp?: string
+  ogrn?: string
+  legal_address?: string
+  postal_address?: string
+  phone?: string
+  bank_account?: string
+  bank_name?: string
+  bank_bik?: string
+  bank_corr_account?: string
+  signer: OrganizationSigner
 }
 
 export interface PaginatedResponse<T> {
@@ -119,6 +186,18 @@ export const actsAPI = {
   },
   getWithServices: async (id: string): Promise<SingleResponse<ActWithServices>> => {
     return apiFetch<SingleResponse<ActWithServices>>(`/acts/${id}/services`)
+  },
+}
+
+export const contractAppendicesAPI = {
+  getById: async (id: string): Promise<SingleResponse<ContractAppendixWithLines>> => {
+    return apiFetch<SingleResponse<ContractAppendixWithLines>>(`/contract-appendices/${id}`)
+  },
+}
+
+export const organizationAPI = {
+  get: async (): Promise<SingleResponse<Organization>> => {
+    return apiFetch<SingleResponse<Organization>>(`/organization`)
   },
 }
 

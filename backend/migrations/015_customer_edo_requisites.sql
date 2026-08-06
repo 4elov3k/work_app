@@ -1,0 +1,10 @@
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS edo_id_tensor TEXT DEFAULT '';
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS edo_id_kontur TEXT DEFAULT '';
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS okpo TEXT DEFAULT '';
+
+UPDATE customers
+SET
+    edo_id_tensor = '2BE812d49a2f4764a9e8155d95b0ba14708',
+    edo_id_kontur = '2BM-5257120323-525701001-201609070707163473371'
+WHERE inn = '5257120323'
+  AND COALESCE(edo_id_tensor, '') = '';

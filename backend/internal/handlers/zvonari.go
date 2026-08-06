@@ -1,0 +1,115 @@
+package handlers
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+
+	"invoices-backend/internal/models"
+)
+
+// parseRangeParams reads required `from`/`to` YYYY-MM-DD query params and
+// returns a half-open [from, to) range with `to` inclusive of its whole day.
+func parseRangeParams(r *http.Request) (time.Time, time.Time, error) {
+	from, err := time.Parse("2006-01-02", r.URL.Query().Get("from"))
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("параметр from обязателен и должен быть в формате YYYY-MM-DD")
+	}
+	to, err := time.Parse("2006-01-02", r.URL.Query().Get("to"))
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("параметр to обязателен и должен быть в формате YYYY-MM-DD")
+	}
+	to = to.Add(24 * time.Hour)
+	return from, to, nil
+}
+
+// GetCallers обрабатывает GET /api/zvonari/callers
+func (h *Handlers) GetCallers(w http.ResponseWriter, r *http.Request) {
+	callers, err := h.db.ListCallers(r.Context())
+	if err != nil {
+		log.Printf("GetCallers failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to get callers")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, models.CallerListResponse{Data: callers})
+}
+
+// SyncZvonariCalls обрабатывает POST /api/zvonari/sync?from=YYYY-MM-DD&to=YYYY-MM-DD
+func (h *Handlers) SyncZvonariCalls(w http.ResponseWriter, r *http.Request) {
+	if !h.zvonari.Configured() {
+		respondWithError(w, http.StatusServiceUnavailable, "PBX не настроен (нет PBX_API_TOKEN/PBX_DOMAIN)")
+		return
+	}
+	from, to, err := parseRangeParams(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	result, err := h.zvonari.SyncCalls(r.Context(), from, to)
+	if err != nil {
+		log.Printf("SyncZvonariCalls failed: %v", err)
+		respondWithError(w, http.StatusBadGateway, "Не удалось синхронизировать звонки: "+err.Error())
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, models.SyncCallsResponse{Data: models.SyncCallsResult{
+		CallersSynced:    result.CallersSynced,
+		CallsFound:       result.CallsFound,
+		CallsNew:         result.CallsNew,
+		CallsSkipped:     result.CallsSkipped,
+		TranscribeErrors: result.TranscribeErrors,
+	}})
+}
+
+// GetCallerCallDistribution обрабатывает GET /api/zvonari/callers/{id}/distribution?from=&to=
+func (h *Handlers) GetCallerCallDistribution(w http.ResponseWriter, r *http.Request) {
+	callerID := chi.URLParam(r, "id")
+	from, to, err := parseRangeParams(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	dist, err := h.zvonari.CallDistribution(r.Context(), callerID, from, to)
+	if err != nil {
+		log.Printf("GetCallerCallDistribution failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to get distribution")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, models.CallDistributionResponse{Data: dist})
+}
+
+// RequestCallerReport обрабатывает POST /api/zvonari/callers/{id}/report
+func (h *Handlers) RequestCallerReport(w http.ResponseWriter, r *http.Request) {
+	callerID := chi.URLParam(r, "id")
+
+	var req models.RequestCallerReportRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	from, err := time.Parse("2006-01-02", req.From)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Некорректный from")
+		return
+	}
+	to, err := time.Parse("2006-01-02", req.To)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Некорректный to")
+		return
+	}
+	to = to.Add(24 * time.Hour)
+
+	report, err := h.zvonari.RequestCallerReport(r.Context(), callerID, req.Period, from, to)
+	if err != nil {
+		log.Printf("RequestCallerReport failed: %v", err)
+		respondWithError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	respondWithJSON(w, http.StatusOK, models.CallerReportResponse{Data: *report})
+}

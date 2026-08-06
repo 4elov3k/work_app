@@ -1,17 +1,24 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"net/url"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"invoices-backend/internal/export/updxml"
 	"invoices-backend/internal/models"
+	"invoices-backend/internal/saby"
 )
 
 // GetActs обрабатывает GET /api/acts
@@ -69,7 +76,7 @@ func (h *Handlers) GetActByID(w http.ResponseWriter, r *http.Request) {
 
 	act, err := h.db.GetActByID(ctx, id)
 	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Act not found")
+		respondNotFoundOrInternal(w, err, "Act not found")
 		return
 	}
 
@@ -88,11 +95,133 @@ func (h *Handlers) GetActWithServices(w http.ResponseWriter, r *http.Request) {
 	act, err := h.db.GetActWithServices(ctx, id)
 	if err != nil {
 		log.Printf("Error getting act with services (ID: %s): %v", id, err)
-		respondWithError(w, http.StatusNotFound, "Act not found")
+		respondNotFoundOrInternal(w, err, "Act not found")
 		return
 	}
 
 	respondWithJSON(w, http.StatusOK, models.ActWithServicesResponse{Data: *act})
+}
+
+// ExportActUPDXML обрабатывает GET /api/acts/{id}/export/upd-xml
+func (h *Handlers) ExportActUPDXML(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respondWithError(w, http.StatusBadRequest, "Act ID is required")
+		return
+	}
+
+	act, err := h.db.GetActWithServices(ctx, id)
+	if err != nil {
+		log.Printf("Error exporting act XML (ID: %s): %v", id, err)
+		respondNotFoundOrInternal(w, err, "Act not found")
+		return
+	}
+
+	customer, err := h.db.GetCustomerByID(ctx, act.CustomerID)
+	if err != nil {
+		if isRecordNotFoundError(err) {
+			respondWithError(w, http.StatusBadRequest, "Customer not found for act")
+			return
+		}
+		log.Printf("Error loading customer for act export (act ID: %s): %v", id, err)
+		respondWithError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	contract, err := h.db.GetContractByID(ctx, act.ContractID)
+	if err != nil {
+		if isRecordNotFoundError(err) {
+			respondWithError(w, http.StatusBadRequest, "Contract not found for act")
+			return
+		}
+		log.Printf("Error loading contract for act export (act ID: %s): %v", id, err)
+		respondWithError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	sellerEDOID, err := h.resolveActEDOParticipants(ctx, customer)
+	if err != nil {
+		log.Printf("Error resolving act EDO participants (act ID: %s, customer ID: %s): %v", id, customer.ID, err)
+		respondWithError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	org, err := h.db.GetActiveOrganization(ctx)
+	if err != nil {
+		respondNotFoundOrInternal(w, err, "Organization is not configured")
+		return
+	}
+
+	data, filename, err := updxml.BuildActUPDXMLWithSellerEDOID(*act, *customer, *contract, updxml.SellerFromOrganization(*org), sellerEDOID)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="act.xml"; filename*=UTF-8''`+url.PathEscape(filename))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+func (h *Handlers) resolveActEDOParticipants(ctx context.Context, customer *models.Customer) (string, error) {
+	sellerEDOID := strings.TrimSpace(os.Getenv("SABY_SELLER_EDO_ID"))
+	if h.saby == nil || !h.saby.Enabled() {
+		return sellerEDOID, nil
+	}
+
+	cachedCustomerEDOID := strings.TrimSpace(customer.EDOIDTensor)
+	edoID, err := h.saby.LookupParticipantID(ctx, saby.Party{
+		INN:  customer.INN,
+		KPP:  customer.KPP,
+		Name: customerNameForLookup(*customer),
+	})
+	if err != nil {
+		if cachedCustomerEDOID == "" {
+			return "", fmt.Errorf("не удалось получить идентификатор ЭДО покупателя через Saby (СБИС) и нет сохранённого значения: %w", err)
+		}
+		log.Printf("Failed to refresh customer Saby EDO ID, using cached value (customer ID: %s): %v", customer.ID, err)
+	} else {
+		customer.EDOIDTensor = edoID
+		if edoID != cachedCustomerEDOID {
+			if err := h.db.UpdateCustomerTensorEDOID(ctx, customer.ID, edoID); err != nil {
+				log.Printf("Failed to cache customer Saby EDO ID (customer ID: %s): %v", customer.ID, err)
+			}
+		}
+	}
+
+	if sellerEDOID == "" {
+		edoID, err = h.saby.LookupParticipantID(ctx, saby.Party{
+			INN:  getenvDefault("SABY_SELLER_INN", "526220116209"),
+			KPP:  os.Getenv("SABY_SELLER_KPP"),
+			Name: os.Getenv("SABY_SELLER_NAME"),
+		})
+		if err != nil {
+			if cached := strings.TrimSpace(os.Getenv("SABY_SELLER_EDO_ID")); cached != "" {
+				return cached, nil
+			}
+			return "", fmt.Errorf("не удалось получить идентификатор ЭДО продавца через Saby (СБИС), и SABY_SELLER_EDO_ID не задан вручную: %w", err)
+		}
+		sellerEDOID = edoID
+	}
+
+	return sellerEDOID, nil
+}
+
+func customerNameForLookup(customer models.Customer) string {
+	if strings.TrimSpace(customer.Fullname) != "" {
+		return customer.Fullname
+	}
+	return customer.Name
+}
+
+func getenvDefault(key, fallback string) string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value != "" {
+		return value
+	}
+	return fallback
 }
 
 // CreateAct обрабатывает POST /api/acts
@@ -215,7 +344,7 @@ func (h *Handlers) DeleteAct(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.db.DeleteAct(ctx, id); err != nil {
 		if isForeignKeyViolation(err) {
-			respondWithError(w, http.StatusConflict, "Act is linked to invoices and cannot be deleted")
+			respondWithError(w, http.StatusConflict, "Не удалось удалить акт: он используется в других данных")
 			return
 		}
 		if errors.Is(err, sql.ErrNoRows) {
@@ -246,7 +375,7 @@ func (h *Handlers) UpdateAct(w http.ResponseWriter, r *http.Request) {
 
 	current, err := h.db.GetActByID(ctx, id)
 	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Act not found")
+		respondNotFoundOrInternal(w, err, "Act not found")
 		return
 	}
 
@@ -333,6 +462,69 @@ func (h *Handlers) AddActLine(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respondWithError(w, http.StatusBadRequest, "Failed to add act line")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// UpdateActLine обрабатывает PATCH /api/acts/{id}/lines/{lineID}
+func (h *Handlers) UpdateActLine(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	lineID := chi.URLParam(r, "lineID")
+	if id == "" || lineID == "" {
+		respondWithError(w, http.StatusBadRequest, "Act ID and line ID are required")
+		return
+	}
+
+	var req models.AddActLineRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	line := normalizeLineInput(req.Line)
+	if !validLineInput(line) {
+		respondWithError(w, http.StatusBadRequest, "Invalid act line")
+		return
+	}
+
+	if err := h.db.UpdateActLine(ctx, id, lineID, line); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, http.StatusNotFound, "Act line not found")
+			return
+		}
+		if err.Error() == "act is archived" {
+			respondWithError(w, http.StatusBadRequest, "Archived act cannot be modified")
+			return
+		}
+		respondWithError(w, http.StatusBadRequest, "Failed to update act line")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// DeleteActLine обрабатывает DELETE /api/acts/{id}/lines/{lineID}
+func (h *Handlers) DeleteActLine(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	lineID := chi.URLParam(r, "lineID")
+	if id == "" || lineID == "" {
+		respondWithError(w, http.StatusBadRequest, "Act ID and line ID are required")
+		return
+	}
+
+	if err := h.db.DeleteActLine(ctx, id, lineID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, http.StatusNotFound, "Act line not found")
+			return
+		}
+		if err.Error() == "act is archived" {
+			respondWithError(w, http.StatusBadRequest, "Archived act cannot be modified")
+			return
+		}
+		respondWithError(w, http.StatusBadRequest, "Failed to delete act line")
 		return
 	}
 

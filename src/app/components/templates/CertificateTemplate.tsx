@@ -1,22 +1,47 @@
 import * as rubles from "rubles"
 import { Customer, ActWithServices } from "@/lib/api"
+import type { Organization } from "@/lib/api.server"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table"
 import { Card, CardContent } from "@/components/ui/card"
+import EditableServiceLine from "./EditableServiceLine"
 
 interface CertificateTemplateProps {
   invoice: ActWithServices
   customer: Customer
+  docId: string
+  organization: Organization
 }
 
-export default function CertificateTemplate({ invoice, customer }: CertificateTemplateProps) {
+function formatSignerName(value?: string): string {
+  const parts = (value || "").trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return ""
+  if (parts.length === 1) return parts[0]
+
+  const [lastName, ...names] = parts
+  const initials = names
+    .map((part) => part[0])
+    .filter(Boolean)
+    .map((letter) => `${letter.toUpperCase()}.`)
+    .join(" ")
+
+  return initials ? `${lastName} ${initials}` : lastName
+}
+
+export default function CertificateTemplate({ invoice, customer, docId, organization }: CertificateTemplateProps) {
   const services = invoice.services
   const num = invoice.number
   const date = invoice.date
+  const customerSignerPosition = customer.contact_position?.trim() || "Директор"
+  const customerSignerName = formatSignerName(customer.contact_person)
+  const sellerSignerName = formatSignerName(
+    [organization.signer.last_name, organization.signer.first_name, organization.signer.middle_name].join(" ")
+  )
+  const sellerAddress = organization.legal_address || organization.postal_address || ""
   
   // Вычисляем сумму
   let sum = 0
   services.forEach(service => {
-    sum += service.price
+    sum += service.amount ?? service.price * (service.qty || 1)
   });
   
   function convertToCost(price: number | string): string {
@@ -44,12 +69,10 @@ export default function CertificateTemplate({ invoice, customer }: CertificateTe
   return (
     <Card className="mx-auto bg-white print:shadow-none print:border-none max-w-[210mm] min-h-[297mm] print:min-h-[297mm]">
       <CardContent data-document-content="true" className="p-6 print:p-8 text-black text-xs relative">
-        {/* Шапка с реквизитами ИП */}
+        {/* Шапка с реквизитами продавца */}
         <div className="text-left mb-3 space-y-0">
-          <p className="text-[10px] font-semibold">ИП Мыльникова Любовь Валерьевна, ИНН 526220116209</p>
-          <p className="text-[10px]">
-            Адрес: 603146, Нижегородская обл, г. Нижний Новгород, ул. Головнина, д.39, кв. 7
-          </p>
+          <p className="text-[10px] font-semibold">{organization.full_name}, ИНН {organization.inn}</p>
+          {sellerAddress && <p className="text-[10px]">Адрес: {sellerAddress}</p>}
         </div>
 
         {/* Заголовок акта */}
@@ -71,9 +94,11 @@ export default function CertificateTemplate({ invoice, customer }: CertificateTe
           </div>
         </div>
 
-        <div className="text-[11px] mb-2">
-          <p>Договор: {invoice.contract_number || 'Основной'}</p>
-        </div>
+        {invoice.contract_number && (
+          <div className="text-[11px] mb-2">
+            <p>Договор: № {invoice.contract_number}</p>
+          </div>
+        )}
 
         {/* Таблица работ/услуг */}
         <div className="mb-2">
@@ -86,22 +111,18 @@ export default function CertificateTemplate({ invoice, customer }: CertificateTe
                 <TableHead className="text-center w-[70px] text-[10px] p-1 print:border print:border-black print:bg-white">Количество</TableHead>
                 <TableHead className="text-center w-[90px] text-[10px] p-1 print:border print:border-black print:bg-white">Цена</TableHead>
                 <TableHead className="text-center w-[90px] text-[10px] p-1 print:border print:border-black print:bg-white">Сумма</TableHead>
+                <TableHead className="not-print w-[76px] p-1"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {services.map((service, index) => (
-                <TableRow key={service.id} className="print:border-black h-7">
-                  <TableCell className="text-[10px] p-1 text-center print:border print:border-black">{index + 1}</TableCell>
-                  <TableCell className="text-[10px] p-1 print:border print:border-black">{service.name}</TableCell>
-                  <TableCell className="text-[10px] p-1 text-center print:border print:border-black">шт</TableCell>
-                  <TableCell className="text-[10px] p-1 text-center print:border print:border-black">1</TableCell>
-                  <TableCell className="text-[10px] p-1 text-right tabular-nums print:border print:border-black">
-                    {convertToCost(service.price)}
-                  </TableCell>
-                  <TableCell className="text-[10px] p-1 text-right tabular-nums print:border print:border-black">
-                    {convertToCost(service.price)}
-                  </TableCell>
-                </TableRow>
+                <EditableServiceLine
+                  key={service.id}
+                  docId={docId}
+                  docType="act"
+                  service={service}
+                  index={index}
+                />
               ))}
             </TableBody>
             <TableFooter>
@@ -112,6 +133,7 @@ export default function CertificateTemplate({ invoice, customer }: CertificateTe
                 <TableCell className="text-[10px] p-1 text-right tabular-nums print:border print:border-black">
                   {convertToCost(sum)}
                 </TableCell>
+                <TableCell className="not-print p-1"></TableCell>
               </TableRow>
               <TableRow className="print:border-black h-7">
                 <TableCell colSpan={5} className="text-[10px] p-1 text-right print:border print:border-black">
@@ -120,6 +142,7 @@ export default function CertificateTemplate({ invoice, customer }: CertificateTe
                 <TableCell className="text-[10px] p-1 text-right print:border print:border-black">
                   -
                 </TableCell>
+                <TableCell className="not-print p-1"></TableCell>
               </TableRow>
               <TableRow className="print:border-black h-7">
                 <TableCell colSpan={5} className="text-[10px] p-1 text-right font-semibold print:border print:border-black">
@@ -128,6 +151,7 @@ export default function CertificateTemplate({ invoice, customer }: CertificateTe
                 <TableCell className="text-[10px] p-1 text-right font-semibold tabular-nums print:border print:border-black">
                   {convertToCost(sum)}
                 </TableCell>
+                <TableCell className="not-print p-1"></TableCell>
               </TableRow>
             </TableFooter>
           </Table>
@@ -147,7 +171,7 @@ export default function CertificateTemplate({ invoice, customer }: CertificateTe
           <div>
             <div className="flex items-start justify-between mb-1">
               <div className="text-[11px] flex-shrink-0">Исполнитель:</div>
-              <div className="text-[11px] text-right">Л. В. Мыльникова</div>
+              <div className="text-[11px] text-right">{sellerSignerName}</div>
             </div>
             <div className="flex items-center gap-2 mt-2">
               <div className="border-b border-black flex-1 h-6"></div>
@@ -159,7 +183,7 @@ export default function CertificateTemplate({ invoice, customer }: CertificateTe
           <div>
             <div className="flex items-start justify-between mb-1">
               <div className="text-[11px] flex-shrink-0">Заказчик:</div>
-              <div className="text-[11px] text-right">{customer.name}</div>
+              <div className="text-[11px] text-right">{customerSignerName || customerSignerPosition}</div>
             </div>
             <div className="flex items-center gap-2 mt-2">
               <div className="border-b border-black flex-1 h-6"></div>

@@ -1,0 +1,52 @@
+-- Retroactively digitizes Договор №602 от 02.12.2025 (МАУ «ИЦ «Дзержинские
+-- ведомости», разработка сайта) and its Приложение №1 (смета), used as the
+-- first real test case for the contract-appendix feature. Line item wording
+-- is reconstructed from a rotated-table PDF scan; amounts/prices/quantities
+-- are taken directly from the printed totals and verified to sum correctly
+-- (82500 + 179400 + 85900 = 347800).
+
+WITH target_customer AS (
+    SELECT id FROM customers WHERE inn = '5249091492' LIMIT 1
+),
+new_contract AS (
+    INSERT INTO contracts (customer_id, number, currency, status, topic, start_date, end_date)
+    SELECT id, '602', 'RUB', 'active', 'Разработка', '2025-12-02', '2026-12-31'
+    FROM target_customer
+    WHERE NOT EXISTS (
+        SELECT 1 FROM contracts c JOIN target_customer t ON c.customer_id = t.id WHERE c.number = '602'
+    )
+    RETURNING id
+),
+new_appendix AS (
+    INSERT INTO contract_appendices (contract_id, number, date, status, total_amount)
+    SELECT id, '1', '02.12.2025', 'signed', 347800.00
+    FROM new_contract
+    RETURNING id
+)
+INSERT INTO contract_appendix_lines
+    (appendix_id, section, position, title_snapshot, unit_snapshot, price_snapshot, qty, amount)
+SELECT a.id, v.section, v.position, v.title, v.unit, v.price, v.qty, v.amount
+FROM new_appendix a,
+(VALUES
+    ('Дизайн сайта', 1,
+     'Разработка дизайна макета сайта: проработка структуры сайта и функционала на основе пожеланий заказчика, разработка оригинального дизайна главной страницы и 3-4 типовых страниц, элементов дизайна (шрифты, цвета, баннеры, иконки); в объём входит 3 (три) согласования, количество правок внутри каждого согласования не ограничено.',
+     'н/ч', 2750.00, 30.00, 82500.00),
+    ('Изготовление сайта', 2,
+     'Адаптивная кросс-браузерная верстка сайта (включая мобильную версию и версию под планшеты): преобразование утвержденного макета в программный код, адаптация под все виды современных браузеров и мобильных устройств.',
+     'н/ч', 3120.00, 40.00, 124800.00),
+    ('Изготовление сайта', 3,
+     'Совмещение сайта с CMS Joomla: настройка системы администрирования, наполнение до 10 информационных страниц, перенесение новостей со старого сайта с сохранением адресов страниц, настройка части backend.',
+     'н/ч', 3640.00, 15.00, 54600.00),
+    ('Компоненты/модули сайта', 4,
+     'Настройка функции непрерывной трансляции видео с сайта в режиме онлайн.',
+     'н/ч', 4900.00, 10.00, 49000.00),
+    ('Компоненты/модули сайта', 5,
+     'Внедрение функции обратной связи: настройка отправки сообщений с сайта на электронную почту заказчика.',
+     'н/ч', 3750.00, 1.00, 3750.00),
+    ('Компоненты/модули сайта', 6,
+     'Настройка функции поиска по сайту: поиск информации по степени релевантности запроса с оформлением интерфейса под стилистику сайта.',
+     'н/ч', 2730.00, 5.00, 13650.00),
+    ('Компоненты/модули сайта', 7,
+     'Ховер эффекты: подвижность пунктов меню при наведении, выпадающее меню, выделение цветом активных элементов.',
+     'н/ч', 3250.00, 9.00, 19500.00)
+) AS v(section, position, title, unit, price, qty, amount);

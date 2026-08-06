@@ -6,11 +6,14 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"invoices-backend/internal/export/updxml"
 	"invoices-backend/internal/models"
 )
 
@@ -76,7 +79,7 @@ func (h *Handlers) GetInvoiceByID(w http.ResponseWriter, r *http.Request) {
 
 	invoice, err := h.db.GetInvoiceByID(ctx, id)
 	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Invoice not found")
+		respondNotFoundOrInternal(w, err, "Invoice not found")
 		return
 	}
 
@@ -101,7 +104,7 @@ func (h *Handlers) GetInvoiceWithServices(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		// Логируем реальную ошибку для отладки
 		log.Printf("Error getting invoice with services (ID: %s): %v", id, err)
-		respondWithError(w, http.StatusNotFound, "Invoice not found")
+		respondNotFoundOrInternal(w, err, "Invoice not found")
 		return
 	}
 
@@ -110,6 +113,61 @@ func (h *Handlers) GetInvoiceWithServices(w http.ResponseWriter, r *http.Request
 	}
 
 	respondWithJSON(w, http.StatusOK, response)
+}
+
+// ExportInvoiceXML обрабатывает GET /api/invoices/{id}/export/upd-xml
+func (h *Handlers) ExportInvoiceXML(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respondWithError(w, http.StatusBadRequest, "Invoice ID is required")
+		return
+	}
+
+	invoice, err := h.db.GetInvoiceWithServices(ctx, id)
+	if err != nil {
+		respondNotFoundOrInternal(w, err, "Invoice not found")
+		return
+	}
+
+	customer, err := h.db.GetCustomerByID(ctx, invoice.CustomerID)
+	if err != nil {
+		if isRecordNotFoundError(err) {
+			respondWithError(w, http.StatusBadRequest, "Customer not found for invoice")
+			return
+		}
+		log.Printf("Error loading customer for invoice export (invoice ID: %s): %v", id, err)
+		respondWithError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	contract, err := h.db.GetContractByID(ctx, invoice.ContractID)
+	if err != nil {
+		if isRecordNotFoundError(err) {
+			respondWithError(w, http.StatusBadRequest, "Contract not found for invoice")
+			return
+		}
+		log.Printf("Error loading contract for invoice export (invoice ID: %s): %v", id, err)
+		respondWithError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	org, err := h.db.GetActiveOrganization(ctx)
+	if err != nil {
+		respondNotFoundOrInternal(w, err, "Organization is not configured")
+		return
+	}
+
+	data, filename, err := updxml.BuildInvoiceXML(*invoice, *customer, *contract, updxml.SellerFromOrganization(*org))
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="invoice.xml"; filename*=UTF-8''`+url.PathEscape(filename))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 // CreateInvoice обрабатывает POST /api/invoices
@@ -191,8 +249,28 @@ func (h *Handlers) CreateInvoice(w http.ResponseWriter, r *http.Request) {
 	// Создаем счет
 	invoice, err := h.db.CreateInvoice(ctx, req)
 	if err != nil {
+		log.Printf("CreateInvoice failed: %+v; payload={contract_id:%q customer_id:%q contract_number:%q number:%q date:%q service_ids:%d services:%d lines:%d}",
+			err, req.ContractID, req.CustomerID, req.ContractNumber, req.Number, req.Date, len(req.ServiceIDs), len(req.Services), len(req.Lines))
 		if isUniqueViolation(err) {
 			respondWithError(w, http.StatusConflict, "Invoice with this number already exists for this contract")
+			return
+		}
+		message := err.Error()
+		switch {
+		case strings.Contains(message, "contract not found"):
+			respondWithError(w, http.StatusBadRequest, "Contract not found")
+			return
+		case strings.Contains(message, "contract_id is required"):
+			respondWithError(w, http.StatusBadRequest, "Contract ID is required")
+			return
+		case strings.Contains(message, "at least one line is required"):
+			respondWithError(w, http.StatusBadRequest, "At least one service is required")
+			return
+		case strings.Contains(message, "one or more services not found"), strings.Contains(message, "service not found"):
+			respondWithError(w, http.StatusBadRequest, "One or more services not found")
+			return
+		case strings.Contains(message, "invalid service"), strings.Contains(message, "invalid invoice line"):
+			respondWithError(w, http.StatusBadRequest, "Invalid invoice data")
 			return
 		}
 		respondWithError(w, http.StatusInternalServerError, "Failed to create invoice")
@@ -262,7 +340,7 @@ func (h *Handlers) DeleteInvoice(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.db.DeleteInvoice(ctx, id); err != nil {
 		if isForeignKeyViolation(err) {
-			respondWithError(w, http.StatusConflict, "Invoice is linked to acts and cannot be deleted")
+			respondWithError(w, http.StatusConflict, "Не удалось удалить счёт: он используется в других данных")
 			return
 		}
 		if errors.Is(err, sql.ErrNoRows) {
@@ -293,7 +371,7 @@ func (h *Handlers) UpdateInvoice(w http.ResponseWriter, r *http.Request) {
 
 	current, err := h.db.GetInvoiceByID(ctx, id)
 	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Invoice not found")
+		respondNotFoundOrInternal(w, err, "Invoice not found")
 		return
 	}
 
@@ -389,6 +467,69 @@ func (h *Handlers) AddInvoiceLine(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// UpdateInvoiceLine обрабатывает PATCH /api/invoices/{id}/lines/{lineID}
+func (h *Handlers) UpdateInvoiceLine(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	lineID := chi.URLParam(r, "lineID")
+	if id == "" || lineID == "" {
+		respondWithError(w, http.StatusBadRequest, "Invoice ID and line ID are required")
+		return
+	}
+
+	var req models.AddInvoiceLineRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	line := normalizeLineInput(req.Line)
+	if !validLineInput(line) {
+		respondWithError(w, http.StatusBadRequest, "Invalid invoice line")
+		return
+	}
+
+	if err := h.db.UpdateInvoiceLine(ctx, id, lineID, line); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, http.StatusNotFound, "Invoice line not found")
+			return
+		}
+		if err.Error() == "invoice is archived" {
+			respondWithError(w, http.StatusBadRequest, "Archived invoice cannot be modified")
+			return
+		}
+		respondWithError(w, http.StatusBadRequest, "Failed to update invoice line")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// DeleteInvoiceLine обрабатывает DELETE /api/invoices/{id}/lines/{lineID}
+func (h *Handlers) DeleteInvoiceLine(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	lineID := chi.URLParam(r, "lineID")
+	if id == "" || lineID == "" {
+		respondWithError(w, http.StatusBadRequest, "Invoice ID and line ID are required")
+		return
+	}
+
+	if err := h.db.DeleteInvoiceLine(ctx, id, lineID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, http.StatusNotFound, "Invoice line not found")
+			return
+		}
+		if err.Error() == "invoice is archived" {
+			respondWithError(w, http.StatusBadRequest, "Archived invoice cannot be modified")
+			return
+		}
+		respondWithError(w, http.StatusBadRequest, "Failed to delete invoice line")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // CreateActFromInvoice обрабатывает POST /api/invoices/{id}/act
 func (h *Handlers) CreateActFromInvoice(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -407,8 +548,36 @@ func (h *Handlers) CreateActFromInvoice(w http.ResponseWriter, r *http.Request) 
 		respondWithError(w, http.StatusBadRequest, "Act number and date are required")
 		return
 	}
+	if !isDigitsOnly(req.Number) {
+		respondWithError(w, http.StatusBadRequest, "Act number must be numeric")
+		return
+	}
+	if req.Status != "" && req.Status != "draft" && req.Status != "signed" && req.Status != "canceled" {
+		respondWithError(w, http.StatusBadRequest, "Invalid act status")
+		return
+	}
 	if _, err := time.Parse("02.01.2006", req.Date); err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid act date format")
+		return
+	}
+
+	invoice, err := h.db.GetInvoiceByID(ctx, id)
+	if err != nil {
+		respondNotFoundOrInternal(w, err, "Invoice not found")
+		return
+	}
+	if invoice.Archived {
+		respondWithError(w, http.StatusBadRequest, "Archived invoice cannot be modified")
+		return
+	}
+
+	exists, err := h.db.CheckActNumberExists(ctx, invoice.ContractID, req.Number, "")
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to check act number")
+		return
+	}
+	if exists {
+		respondWithError(w, http.StatusConflict, "Act with this number already exists for this contract")
 		return
 	}
 
@@ -418,6 +587,11 @@ func (h *Handlers) CreateActFromInvoice(w http.ResponseWriter, r *http.Request) 
 			respondWithError(w, http.StatusNotFound, "Invoice not found")
 			return
 		}
+		if isUniqueViolation(err) {
+			respondWithError(w, http.StatusConflict, "Act with this number already exists for this contract")
+			return
+		}
+		log.Printf("CreateActFromInvoice failed: %v", err)
 		respondWithError(w, http.StatusBadRequest, "Failed to create act from invoice")
 		return
 	}

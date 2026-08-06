@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"invoices-backend/internal/contracttopics"
 	"invoices-backend/internal/models"
 )
 
@@ -61,7 +62,7 @@ func (h *Handlers) GetContractByID(w http.ResponseWriter, r *http.Request) {
 
 	contract, err := h.db.GetContractByID(ctx, id)
 	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Contract not found")
+		respondNotFoundOrInternal(w, err, "Contract not found")
 		return
 	}
 
@@ -95,6 +96,12 @@ func (h *Handlers) CreateContract(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, "Contract topic is required")
 		return
 	}
+	normalizedTopic, err := contracttopics.Normalize(req.Topic)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid contract topic")
+		return
+	}
+	req.Topic = normalizedTopic
 
 	if req.Currency == "" {
 		req.Currency = "RUB"
@@ -115,22 +122,6 @@ func (h *Handlers) CreateContract(w http.ResponseWriter, r *http.Request) {
 	}
 	if !allowedStatus[req.Status] {
 		respondWithError(w, http.StatusBadRequest, "Invalid contract status")
-		return
-	}
-
-	allowedTopics := map[string]bool{
-		"Продвижение сео":      true,
-		"Продвижение контекст": true,
-		"Сео + контекст":       true,
-		"Техподдержка":         true,
-		"Юр услуги":            true,
-		"Разработка":           true,
-		"Соц сети":             true,
-		"Дизайн":               true,
-		"Отзывы":               true,
-	}
-	if !allowedTopics[req.Topic] {
-		respondWithError(w, http.StatusBadRequest, "Invalid contract topic")
 		return
 	}
 
@@ -177,7 +168,7 @@ func (h *Handlers) DeleteContract(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.db.DeleteContract(ctx, id); err != nil {
 		if isForeignKeyViolation(err) {
-			respondWithError(w, http.StatusConflict, "Contract has linked documents and cannot be deleted")
+			respondWithError(w, http.StatusConflict, "У договора есть связанные акты, счета или приложения — сначала удалите их")
 			return
 		}
 		if errors.Is(err, sql.ErrNoRows) {
@@ -257,4 +248,14 @@ func isDigitsOnly(value string) bool {
 		}
 	}
 	return true
+}
+
+func digitsOnly(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

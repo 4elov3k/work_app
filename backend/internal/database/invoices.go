@@ -84,7 +84,7 @@ func (db *DB) GetInvoices(ctx context.Context, customerID, contractID string, ar
 		}
 	}
 
-	query += " ORDER BY created_at DESC"
+	query += " ORDER BY to_date(date, 'DD.MM.YYYY') DESC, number DESC"
 
 	if perPage > 0 {
 		offset := (page - 1) * perPage
@@ -177,7 +177,7 @@ func (db *DB) GetInvoiceWithServices(ctx context.Context, id string) (*models.In
 
 	// Получаем строки счета и восстанавливаем услуги из snapshot
 	linesQuery := `
-		SELECT id, title_snapshot, price_snapshot
+		SELECT id, title_snapshot, unit_snapshot, COALESCE(vat_snapshot, 0), price_snapshot, qty, amount
 		FROM invoice_lines
 		WHERE invoice_id = $1
 		ORDER BY id
@@ -196,17 +196,25 @@ func (db *DB) GetInvoiceWithServices(ctx context.Context, id string) (*models.In
 	for rows.Next() {
 		var lineID string
 		var title string
+		var unit string
+		var vat float64
 		var price float64
-		if err := rows.Scan(&lineID, &title, &price); err != nil {
+		var qty float64
+		var amount float64
+		if err := rows.Scan(&lineID, &title, &unit, &vat, &price, &qty, &amount); err != nil {
 			if debug {
 				log.Printf("[DEBUG] Scan invoice line failed: %v", err)
 			}
 			return nil, fmt.Errorf("failed to scan invoice line: %w", err)
 		}
 		services = append(services, models.Service{
-			ID:    lineID,
-			Name:  title,
-			Price: price,
+			ID:     lineID,
+			Name:   title,
+			Unit:   unit,
+			VAT:    vat,
+			Price:  price,
+			Qty:    qty,
+			Amount: amount,
 		})
 	}
 	if debug {
@@ -240,15 +248,19 @@ func (db *DB) DeleteInvoice(ctx context.Context, id string) error {
 }
 
 // GetNextInvoiceNumber возвращает следующий номер счета для договора
+// GetNextInvoiceNumber возвращает следующий номер счёта. Номера счетов
+// уникальны глобально (across всех договоров и клиентов), а не только в
+// рамках одного договора — поэтому MAX считается по всей таблице. contractID
+// сохранён в сигнатуре ради обратной совместимости вызовов, но в запросе не
+// участвует.
 func (db *DB) GetNextInvoiceNumber(ctx context.Context, contractID string) (int64, error) {
 	query := `
 		SELECT COALESCE(MAX(number::bigint), 2999) + 1
 		FROM invoices
-		WHERE contract_id = $1
-		  AND number ~ '^[0-9]+$'
+		WHERE number ~ '^[0-9]+$'
 	`
 	var next int64
-	if err := db.QueryRowContext(ctx, query, contractID).Scan(&next); err != nil {
+	if err := db.QueryRowContext(ctx, query).Scan(&next); err != nil {
 		return 0, fmt.Errorf("failed to get next invoice number: %w", err)
 	}
 	return next, nil
@@ -444,24 +456,27 @@ func (db *DB) DuplicateInvoice(ctx context.Context, req models.DuplicateInvoiceR
 }
 
 // CheckInvoiceNumberExists проверяет существование номера счета у контрагента
+// CheckInvoiceNumberExists проверяет, занят ли номер счёта. Номера счетов
+// уникальны глобально, поэтому contract_id в условие не входит; contractID
+// сохранён в сигнатуре ради обратной совместимости вызовов.
 func (db *DB) CheckInvoiceNumberExists(ctx context.Context, contractID, number string, excludeID string) (bool, error) {
 	var query string
 	var args []interface{}
 
 	if excludeID == "" {
 		query = `
-			SELECT COUNT(*) 
-			FROM invoices 
-			WHERE contract_id = $1 AND number = $2
+			SELECT COUNT(*)
+			FROM invoices
+			WHERE number = $1
 		`
-		args = []interface{}{contractID, number}
+		args = []interface{}{number}
 	} else {
 		query = `
-			SELECT COUNT(*) 
-			FROM invoices 
-			WHERE contract_id = $1 AND number = $2 AND id != $3
+			SELECT COUNT(*)
+			FROM invoices
+			WHERE number = $1 AND id != $2
 		`
-		args = []interface{}{contractID, number, excludeID}
+		args = []interface{}{number, excludeID}
 	}
 
 	var count int
@@ -636,6 +651,105 @@ func (db *DB) AddInvoiceLine(ctx context.Context, invoiceID string, line models.
 	}
 
 	if _, err := tx.ExecContext(ctx, `UPDATE invoices SET total_amount = total_amount + $1 WHERE id = $2`, amount, invoiceID); err != nil {
+		return fmt.Errorf("failed to update invoice total: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	return nil
+}
+
+// UpdateInvoiceLine обновляет строку счета и пересчитывает сумму.
+func (db *DB) UpdateInvoiceLine(ctx context.Context, invoiceID, lineID string, line models.InvoiceLineInput) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var archived bool
+	if err := tx.QueryRowContext(ctx, `SELECT archived FROM invoices WHERE id = $1`, invoiceID).Scan(&archived); err != nil {
+		if err == sql.ErrNoRows {
+			return sql.ErrNoRows
+		}
+		return fmt.Errorf("failed to check invoice: %w", err)
+	}
+	if archived {
+		return fmt.Errorf("invoice is archived")
+	}
+
+	snapshot, _, err := buildSingleInvoiceLine(ctx, tx, line)
+	if err != nil {
+		return err
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE invoice_lines
+		SET service_id = $1,
+		    title_snapshot = $2,
+		    unit_snapshot = $3,
+		    vat_snapshot = $4,
+		    price_snapshot = $5,
+		    qty = $6,
+		    amount = $7
+		WHERE id = $8 AND invoice_id = $9
+	`, snapshot.ServiceID, snapshot.Title, snapshot.Unit, snapshot.VAT, snapshot.Price, snapshot.Qty, snapshot.Amount, lineID, invoiceID)
+	if err != nil {
+		return fmt.Errorf("failed to update invoice line: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE invoices
+		SET total_amount = COALESCE((SELECT SUM(amount) FROM invoice_lines WHERE invoice_id = $1), 0)
+		WHERE id = $1
+	`, invoiceID); err != nil {
+		return fmt.Errorf("failed to update invoice total: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	return nil
+}
+
+// DeleteInvoiceLine удаляет строку счета и пересчитывает сумму.
+func (db *DB) DeleteInvoiceLine(ctx context.Context, invoiceID, lineID string) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var archived bool
+	if err := tx.QueryRowContext(ctx, `SELECT archived FROM invoices WHERE id = $1`, invoiceID).Scan(&archived); err != nil {
+		if err == sql.ErrNoRows {
+			return sql.ErrNoRows
+		}
+		return fmt.Errorf("failed to check invoice: %w", err)
+	}
+	if archived {
+		return fmt.Errorf("invoice is archived")
+	}
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM invoice_lines WHERE id = $1 AND invoice_id = $2`, lineID, invoiceID)
+	if err != nil {
+		return fmt.Errorf("failed to delete invoice line: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE invoices
+		SET total_amount = COALESCE((SELECT SUM(amount) FROM invoice_lines WHERE invoice_id = $1), 0)
+		WHERE id = $1
+	`, invoiceID); err != nil {
 		return fmt.Errorf("failed to update invoice total: %w", err)
 	}
 

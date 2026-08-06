@@ -1,9 +1,9 @@
 "use client"
-import React, { useCallback, useEffect, useState } from "react"
-import { Calendar, FileText, Loader2, Plus, Trash2 } from "lucide-react"
+import React, { useCallback, useEffect, useRef, useState } from "react"
+import { Calendar, FileText, Loader2, Plus, Trash2, Upload } from "lucide-react"
 import Link from "next/link"
 
-import { Contract, contractsAPI } from "@/lib/api"
+import { Contract, contractsAPI, documentsAPI } from "@/lib/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -44,6 +44,9 @@ export default function ContractsList({ slug }: { slug: string }) {
   const [error, setError] = useState("")
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Contract | null>(null)
+  const [parsing, setParsing] = useState(false)
+  const [parseNote, setParseNote] = useState("")
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const loadContracts = useCallback(() => {
     contractsAPI
@@ -82,6 +85,8 @@ export default function ContractsList({ slug }: { slug: string }) {
       setStartDate("")
       setStatus("active")
       setTopic(TOPICS[0])
+      setManualNumber(false)
+      setParseNote("")
       setIsOpen(false)
       loadContracts()
     } catch (err: unknown) {
@@ -109,7 +114,7 @@ export default function ContractsList({ slug }: { slug: string }) {
     } catch (err: unknown) {
       console.error("Failed to delete contract:", err)
       const message = err instanceof Error ? err.message : "Ошибка при удалении договора"
-      setError(message)
+      setError(message.replace(/\s*\(HTTP \d+\)$/, ""))
     } finally {
       setSubmitting(false)
     }
@@ -133,9 +138,55 @@ export default function ContractsList({ slug }: { slug: string }) {
     setIsOpen(value)
     if (value) {
       setError("")
+      setParseNote("")
       if (!manualNumber) {
         loadNextNumber()
       }
+    }
+  }
+
+  const handleFileSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ""
+    if (!file) return
+
+    setParsing(true)
+    setError("")
+    setParseNote("")
+    try {
+      const res = await documentsAPI.parseContract(file)
+      const { fields } = res.data
+      const recognized: string[] = []
+      const notRecognized: string[] = []
+
+      if (fields.number) {
+        setNumber(fields.number)
+        setManualNumber(true)
+        recognized.push(`номер № ${fields.number}`)
+      } else {
+        notRecognized.push("номер")
+      }
+
+      if (fields.date) {
+        setStartDate(fields.date)
+        recognized.push(`дата ${fields.date}`)
+      } else {
+        notRecognized.push("дата")
+      }
+
+      const parts: string[] = []
+      if (recognized.length) parts.push(`Распознано: ${recognized.join(", ")}.`)
+      if (notRecognized.length) parts.push(`Не найдено: ${notRecognized.join(", ")} — заполните вручную.`)
+      if (fields.candidate_inn?.length) {
+        parts.push(`В документе упомянут ИНН ${fields.candidate_inn.join(", ")} — сверьте с текущим клиентом.`)
+      }
+      setParseNote(parts.join(" ") || "Не удалось найти данные в документе.")
+    } catch (err: unknown) {
+      console.error("Failed to parse contract document:", err)
+      const message = err instanceof Error ? err.message : "Не удалось распознать документ"
+      setError(message)
+    } finally {
+      setParsing(false)
     }
   }
 
@@ -158,13 +209,44 @@ export default function ContractsList({ slug }: { slug: string }) {
             <form onSubmit={handleCreate}>
               <DialogHeader>
                 <DialogTitle>Создать договор</DialogTitle>
-                <DialogDescription>Заполните данные договора</DialogDescription>
+                <DialogDescription>Заполните данные договора или загрузите скан для распознавания</DialogDescription>
               </DialogHeader>
               {error && (
                 <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded text-sm">
                   {error}
                 </div>
               )}
+              <div className="pt-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,image/*"
+                  className="hidden"
+                  onChange={handleFileSelected}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={parsing}
+                >
+                  {parsing ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Распознавание...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="mr-2 h-4 w-4" />
+                      Загрузить скан
+                    </>
+                  )}
+                </Button>
+                {parseNote && (
+                  <p className="text-xs text-muted-foreground mt-2">{parseNote}</p>
+                )}
+              </div>
               <div className="grid gap-4 py-4">
                 <div className="space-y-2">
                   <label htmlFor="contractNumber" className="text-sm font-medium">

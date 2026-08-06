@@ -6,7 +6,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Управление счетами и актами",
-  description: "Система управления счетами и актами для ИП Мыльникова Л.В.",
+  description: "Система управления счетами и актами для ИП Мыленкова Л.В.",
 };
 
 export default function RootLayout({

@@ -44,7 +44,7 @@ export function Signature() {
       fontStyle: 'italic',
       transform: 'rotate(-5deg)'
     }}>
-      Л.В. Мыльникова
+      Л.В. Мыленкова
     </div>
   )
 }

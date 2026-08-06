@@ -31,7 +31,11 @@ func (db *DB) GetCustomers(ctx context.Context, search string, page, perPage int
 
 	// Получение данных с пагинацией
 	query := `
-		SELECT id, name, fullname, address, inn, created_at, updated_at 
+		SELECT id, name, fullname, address, inn, COALESCE(kpp, ''),
+		       COALESCE(edo_id_tensor, ''), COALESCE(edo_id_kontur, ''), COALESCE(okpo, ''),
+		       COALESCE(phone, ''), COALESCE(email, ''), COALESCE(contact_person, ''),
+		       COALESCE(contact_position, ''), COALESCE(comment, ''), COALESCE(status, 'active'),
+		       created_at, updated_at
 		FROM customers
 	`
 
@@ -66,6 +70,16 @@ func (db *DB) GetCustomers(ctx context.Context, search string, page, perPage int
 			&customer.Fullname,
 			&customer.Address,
 			&customer.INN,
+			&customer.KPP,
+			&customer.EDOIDTensor,
+			&customer.EDOIDKontur,
+			&customer.OKPO,
+			&customer.Phone,
+			&customer.Email,
+			&customer.ContactPerson,
+			&customer.ContactPosition,
+			&customer.Comment,
+			&customer.Status,
 			&customer.CreatedAt,
 			&customer.UpdatedAt,
 		)
@@ -85,7 +99,11 @@ func (db *DB) GetCustomers(ctx context.Context, search string, page, perPage int
 // GetCustomerByID возвращает контрагента по ID
 func (db *DB) GetCustomerByID(ctx context.Context, id string) (*models.Customer, error) {
 	query := `
-		SELECT id, name, fullname, address, inn, created_at, updated_at 
+		SELECT id, name, fullname, address, inn, COALESCE(kpp, ''),
+		       COALESCE(edo_id_tensor, ''), COALESCE(edo_id_kontur, ''), COALESCE(okpo, ''),
+		       COALESCE(phone, ''), COALESCE(email, ''), COALESCE(contact_person, ''),
+		       COALESCE(contact_position, ''), COALESCE(comment, ''), COALESCE(status, 'active'),
+		       created_at, updated_at
 		FROM customers 
 		WHERE id = $1
 	`
@@ -97,6 +115,16 @@ func (db *DB) GetCustomerByID(ctx context.Context, id string) (*models.Customer,
 		&customer.Fullname,
 		&customer.Address,
 		&customer.INN,
+		&customer.KPP,
+		&customer.EDOIDTensor,
+		&customer.EDOIDKontur,
+		&customer.OKPO,
+		&customer.Phone,
+		&customer.Email,
+		&customer.ContactPerson,
+		&customer.ContactPosition,
+		&customer.Comment,
+		&customer.Status,
 		&customer.CreatedAt,
 		&customer.UpdatedAt,
 	)
@@ -120,18 +148,48 @@ func (db *DB) CreateCustomer(ctx context.Context, req models.CreateCustomerReque
 	defer tx.Rollback()
 
 	query := `
-		INSERT INTO customers (name, fullname, address, inn)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, name, fullname, address, inn, created_at, updated_at
+		INSERT INTO customers (name, fullname, address, inn, kpp, edo_id_tensor, edo_id_kontur, okpo, phone, email, contact_person, contact_position, comment)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		RETURNING id, name, fullname, address, inn, COALESCE(kpp, ''),
+		          COALESCE(edo_id_tensor, ''), COALESCE(edo_id_kontur, ''), COALESCE(okpo, ''),
+		          COALESCE(phone, ''), COALESCE(email, ''), COALESCE(contact_person, ''),
+		          COALESCE(contact_position, ''), COALESCE(comment, ''), COALESCE(status, 'active'),
+		          created_at, updated_at
 	`
 
 	var customer models.Customer
-	err = tx.QueryRowContext(ctx, query, req.Name, req.Fullname, req.Address, req.INN).Scan(
+	err = tx.QueryRowContext(
+		ctx,
+		query,
+		req.Name,
+		req.Fullname,
+		req.Address,
+		req.INN,
+		req.KPP,
+		req.EDOIDTensor,
+		req.EDOIDKontur,
+		req.OKPO,
+		req.Phone,
+		req.Email,
+		req.ContactPerson,
+		req.ContactPosition,
+		req.Comment,
+	).Scan(
 		&customer.ID,
 		&customer.Name,
 		&customer.Fullname,
 		&customer.Address,
 		&customer.INN,
+		&customer.KPP,
+		&customer.EDOIDTensor,
+		&customer.EDOIDKontur,
+		&customer.OKPO,
+		&customer.Phone,
+		&customer.Email,
+		&customer.ContactPerson,
+		&customer.ContactPosition,
+		&customer.Comment,
+		&customer.Status,
 		&customer.CreatedAt,
 		&customer.UpdatedAt,
 	)
@@ -139,13 +197,45 @@ func (db *DB) CreateCustomer(ctx context.Context, req models.CreateCustomerReque
 		return nil, fmt.Errorf("failed to create customer: %w", err)
 	}
 
-	if err := CreateDefaultContractTx(ctx, tx, customer.ID); err != nil {
-		return nil, err
-	}
-
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return &customer, nil
+}
+
+// DeleteCustomer удаляет контрагента. FK-ограничения (ON DELETE RESTRICT на
+// contracts.customer_id / invoices.customer_id) не дадут удалить контрагента
+// со связанными договорами или счетами — вызывающий код должен показать это
+// пользователю как понятную ошибку, а не удалять связанные документы молча.
+func (db *DB) DeleteCustomer(ctx context.Context, id string) error {
+	res, err := db.ExecContext(ctx, `DELETE FROM customers WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete customer: %w", err)
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (db *DB) UpdateCustomerTensorEDOID(ctx context.Context, id, edoID string) error {
+	query := `
+		UPDATE customers
+		SET edo_id_tensor = $2, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1
+	`
+	result, err := db.ExecContext(ctx, query, id, edoID)
+	if err != nil {
+		return fmt.Errorf("failed to update customer Tensor EDO ID: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to inspect updated customer rows: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("customer not found")
+	}
+	return nil
 }
