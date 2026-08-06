@@ -14,23 +14,26 @@ import (
 	"invoices-backend/internal/models"
 	"invoices-backend/internal/redmine"
 	"invoices-backend/internal/saby"
+	"invoices-backend/internal/sheetsync"
 )
 
 // Handlers содержит все HTTP обработчики
 type Handlers struct {
-	db       *database.DB
-	redmine  *redmine.Client
-	saby     *saby.Client
-	docparse *docparse.Client
+	db        *database.DB
+	redmine   *redmine.Client
+	saby      *saby.Client
+	docparse  *docparse.Client
+	sheetsync *sheetsync.Client
 }
 
 // NewHandlers создает новый экземпляр handlers
 func NewHandlers(db *database.DB) *Handlers {
 	return &Handlers{
-		db:       db,
-		redmine:  redmine.NewFromEnv(),
-		saby:     saby.NewFromEnv(),
-		docparse: docparse.NewFromEnv(),
+		db:        db,
+		redmine:   redmine.NewFromEnv(),
+		saby:      saby.NewFromEnv(),
+		docparse:  docparse.NewFromEnv(),
+		sheetsync: sheetsync.NewFromEnv(),
 	}
 }
 
