@@ -52,3 +52,26 @@ func TestNormalizeContractTopic(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeOptionalRuDate(t *testing.T) {
+	// "19.02.2026" is the exact value that crashed contracts.commit_create:
+	// passed straight to Postgres's ::date cast, it gets read as MM.DD.YYYY
+	// (month 19) and errors "date/time field value out of range". Any day
+	// > 12 exposes this; days <= 12 would have silently swapped day/month
+	// instead, which is worse.
+	got, err := normalizeOptionalRuDate("19.02.2026")
+	if err != nil {
+		t.Fatalf("normalizeOptionalRuDate(19.02.2026) returned error: %v", err)
+	}
+	if got != "2026-02-19" {
+		t.Fatalf("normalizeOptionalRuDate(19.02.2026) = %q, want 2026-02-19", got)
+	}
+
+	if got, err := normalizeOptionalRuDate(""); err != nil || got != "" {
+		t.Fatalf("normalizeOptionalRuDate(\"\") = (%q, %v), want (\"\", nil)", got, err)
+	}
+
+	if _, err := normalizeOptionalRuDate("2026-02-19"); err == nil {
+		t.Fatal("normalizeOptionalRuDate(2026-02-19) should reject ISO input (only DD.MM.YYYY is accepted)")
+	}
+}

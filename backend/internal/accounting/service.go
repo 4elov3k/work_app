@@ -597,6 +597,16 @@ func (s *Service) PrepareCreateContract(ctx context.Context, input CreateContrac
 		}
 		input.Number = strconv.FormatInt(next, 10)
 	}
+	startDate, err := normalizeOptionalRuDate(input.StartDate)
+	if err != nil {
+		return nil, appError("VALIDATION_ERROR", "Дата начала договора должна быть в формате DD.MM.YYYY", true, "Исправьте start_date")
+	}
+	input.StartDate = startDate
+	endDate, err := normalizeOptionalRuDate(input.EndDate)
+	if err != nil {
+		return nil, appError("VALIDATION_ERROR", "Дата окончания договора должна быть в формате DD.MM.YYYY", true, "Исправьте end_date")
+	}
+	input.EndDate = endDate
 	if input.Currency == "" {
 		input.Currency = "RUB"
 	}
@@ -2308,6 +2318,23 @@ var moscowLocation = time.FixedZone("MSK", 3*60*60)
 
 func todayRu() string {
 	return time.Now().In(moscowLocation).Format("02.01.2006")
+}
+
+// normalizeOptionalRuDate validates a DD.MM.YYYY date (empty is allowed —
+// e.g. contract start_date/end_date are optional) and converts it to
+// YYYY-MM-DD for the ::date cast in SQL. Without this, a raw "19.02.2026"
+// passed straight to Postgres gets read as MM.DD.YYYY (month 19 — "date/time
+// field value out of range"), or worse, silently misparsed as the wrong date
+// for any day <= 12.
+func normalizeOptionalRuDate(value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	t, err := time.Parse("02.01.2006", value)
+	if err != nil {
+		return "", fmt.Errorf("expected DD.MM.YYYY, got %q: %w", value, err)
+	}
+	return t.Format("2006-01-02"), nil
 }
 
 func boundedLimit(limit, fallback int) int {
