@@ -39,13 +39,18 @@ func (s *Service) Configured() bool {
 
 // SyncStatus reports the state of the (at most one) in-flight or last
 // completed sync run, for the frontend to poll instead of holding an HTTP
-// request open for the whole batch.
+// request open for the whole batch. TotalToProcess/Processed cover only the
+// transcribe+analyze phase (the slow part) — CDR fetch/insert is fast
+// enough that a coarse "still fetching CDR" vs "processing N/M" distinction
+// (Processed==0 vs >0) is all the UI needs.
 type SyncStatus struct {
-	Running    bool        `json:"running"`
-	StartedAt  *time.Time  `json:"started_at,omitempty"`
-	FinishedAt *time.Time  `json:"finished_at,omitempty"`
-	Result     *SyncResult `json:"result,omitempty"`
-	Error      string      `json:"error,omitempty"`
+	Running        bool        `json:"running"`
+	StartedAt      *time.Time  `json:"started_at,omitempty"`
+	FinishedAt     *time.Time  `json:"finished_at,omitempty"`
+	TotalToProcess int         `json:"total_to_process,omitempty"`
+	Processed      int         `json:"processed,omitempty"`
+	Result         *SyncResult `json:"result,omitempty"`
+	Error          string      `json:"error,omitempty"`
 }
 
 // StartSync launches a sync in the background and returns immediately.
@@ -225,6 +230,11 @@ func (s *Service) SyncCalls(ctx context.Context, from, to time.Time) (*SyncResul
 		toProcess = append(toProcess, pending{call: call, uuid: rec.UUID})
 	}
 
+	s.syncMu.Lock()
+	s.syncStatus.TotalToProcess = len(toProcess)
+	s.syncStatus.Processed = 0
+	s.syncMu.Unlock()
+
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	sem := make(chan struct{}, maxConcurrentProcessing)
@@ -235,6 +245,9 @@ func (s *Service) SyncCalls(ctx context.Context, from, to time.Time) (*SyncResul
 			defer wg.Done()
 			defer func() { <-sem }()
 			s.transcribeAndAnalyze(ctx, call, uuid, &mu, result)
+			s.syncMu.Lock()
+			s.syncStatus.Processed++
+			s.syncMu.Unlock()
 		}(p.call, p.uuid)
 	}
 	wg.Wait()
@@ -280,6 +293,26 @@ func (s *Service) transcribeAndAnalyze(ctx context.Context, call *models.Call, p
 	if err := s.db.SetCallAnalytics(ctx, call.ID, analysis.AnalyticsJSON); err != nil {
 		log.Printf("zvonari: saving analytics failed for call %s: %v", pbxUUID, err)
 	}
+}
+
+// RetranscribeCall (re)runs transcribe+analyze for one existing call, on
+// demand from the UI — the only way that was previously possible was via a
+// full sync, which only ever processes calls at insert time: a call stuck
+// on "transcribing"/"failed" (e.g. because the backend restarted mid-batch)
+// had no way to be retried short of that. Runs synchronously — a single
+// call is seconds, not minutes, so it doesn't need the background-job
+// treatment SyncCalls does.
+func (s *Service) RetranscribeCall(ctx context.Context, callID string) (*models.Call, error) {
+	call, err := s.db.GetCallByID(ctx, callID)
+	if err != nil {
+		return nil, err
+	}
+
+	var result SyncResult
+	var mu sync.Mutex
+	s.transcribeAndAnalyze(ctx, call, call.PBXUUID, &mu, &result)
+
+	return s.db.GetCallByID(ctx, callID)
 }
 
 // RequestCallerReport aggregates a caller's transcribed calls for [from, to),

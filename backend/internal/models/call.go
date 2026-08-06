@@ -28,6 +28,11 @@ type CallListResponse struct {
 	Data []Call `json:"data"`
 }
 
+// CallResponse представляет ответ с одним звонком
+type CallResponse struct {
+	Data Call `json:"data"`
+}
+
 // CallerReport представляет сводный отчёт Hermes по звонарю за период
 type CallerReport struct {
 	ID          string          `json:"id"`
