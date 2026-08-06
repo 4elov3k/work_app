@@ -1,13 +1,27 @@
 "use client"
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, RefreshCw, FileBarChart, Phone, Mic, Loader2 } from "lucide-react";
+import {
+  ArrowLeft,
+  RefreshCw,
+  FileBarChart,
+  Phone,
+  Mic,
+  Loader2,
+  Sparkles,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  ChevronRight,
+  Search,
+} from "lucide-react";
 
 import { zvonariAPI, Caller, CallerReport, Call, ApiError } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
 function todayISO(offsetDays = 0): string {
   const d = new Date();
@@ -15,29 +29,11 @@ function todayISO(offsetDays = 0): string {
   return d.toISOString().slice(0, 10);
 }
 
-function DistributionBars({ distribution }: { distribution: Record<string, number> }) {
-  const entries = Object.entries(distribution);
-  const max = Math.max(1, ...entries.map(([, count]) => count));
-  if (entries.length === 0) {
-    return <p className="text-sm text-muted-foreground">Нет звонков за этот период</p>;
-  }
-  return (
-    <div className="space-y-2">
-      {entries.map(([outcome, count]) => (
-        <div key={outcome} className="flex items-center gap-3 text-sm">
-          <span className="w-40 shrink-0 truncate text-muted-foreground">{outcome}</span>
-          <div className="h-3 flex-1 rounded bg-muted overflow-hidden">
-            <div
-              className="h-full bg-primary"
-              style={{ width: `${(count / max) * 100}%` }}
-            />
-          </div>
-          <span className="w-6 shrink-0 text-right font-medium">{count}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
+const PERIOD_PRESETS: { label: string; from: () => string; to: () => string }[] = [
+  { label: "Сегодня", from: () => todayISO(), to: () => todayISO() },
+  { label: "Неделя", from: () => todayISO(-6), to: () => todayISO() },
+  { label: "Месяц", from: () => todayISO(-29), to: () => todayISO() },
+];
 
 const DIRECTION_LABELS: Record<string, string> = {
   outbound: "исходящий",
@@ -55,25 +51,62 @@ const STATUS_LABELS: Record<string, string> = {
 
 const STATUS_ORDER = ["done", "transcribing", "pending", "failed", "no_recording"];
 
-function StatusBreakdown({ counts }: { counts: Record<string, number> | undefined }) {
-  if (!counts) return null;
-  const entries = STATUS_ORDER.filter((status) => counts[status] > 0);
-  if (entries.length === 0) return null;
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {entries.map((status) => (
-        <Badge key={status} variant={status === "done" ? "secondary" : "outline"} className="text-xs">
-          {STATUS_LABELS[status]}: {counts[status]}
-        </Badge>
-      ))}
-    </div>
-  );
-}
+// Порог, начиная с которого звонарь помечается как "требует внимания" —
+// доля ошибок/без записи от всех его звонков за период. Игнорируем совсем
+// маленькие выборки (<5 звонков), чтобы один неудачный звонок не красил
+// звонаря с 1-2 звонками в красный без статистической значимости.
+const PROBLEM_RATIO_THRESHOLD = 0.3;
+const PROBLEM_MIN_CALLS = 5;
 
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function DistributionBars({ distribution }: { distribution: Record<string, number> }) {
+  const entries = Object.entries(distribution);
+  const max = Math.max(1, ...entries.map(([, count]) => count));
+  if (entries.length === 0) {
+    return <p className="text-sm text-muted-foreground">Нет звонков за этот период</p>;
+  }
+  return (
+    <div className="space-y-2">
+      {entries.map(([outcome, count]) => (
+        <div key={outcome} className="flex items-center gap-3 text-sm">
+          <span className="w-40 shrink-0 truncate text-muted-foreground">{outcome}</span>
+          <div className="h-3 flex-1 rounded bg-muted overflow-hidden">
+            <div className="h-full bg-primary" style={{ width: `${(count / max) * 100}%` }} />
+          </div>
+          <span className="w-6 shrink-0 text-right font-medium">{count}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+interface CallFilters {
+  status: string;
+  outcome: string;
+  direction: string;
+  search: string;
+}
+
+const EMPTY_FILTERS: CallFilters = { status: "", outcome: "", direction: "", search: "" };
+
+function filterCalls(calls: Call[], filters: CallFilters): Call[] {
+  return calls.filter((call) => {
+    if (filters.status && call.transcript_status !== filters.status) return false;
+    if (filters.outcome && (call.analytics_json?.outcome || "") !== filters.outcome) return false;
+    if (filters.direction && call.direction !== filters.direction) return false;
+    if (filters.search) {
+      const q = filters.search.toLowerCase();
+      const inTranscript = (call.transcript_text || "").toLowerCase().includes(q);
+      const inNumber = call.counterparty_number.includes(filters.search);
+      if (!inTranscript && !inNumber) return false;
+    }
+    return true;
+  });
 }
 
 function CallDetailList({
@@ -85,63 +118,165 @@ function CallDetailList({
   retranscribingIds: Set<string>;
   onRetranscribe: (callId: string) => void;
 }) {
+  const [filters, setFilters] = useState<CallFilters>(EMPTY_FILTERS);
+  const filtered = useMemo(() => filterCalls(calls, filters), [calls, filters]);
+
+  const outcomes = useMemo(() => {
+    const set = new Set<string>();
+    calls.forEach((c) => c.analytics_json?.outcome && set.add(c.analytics_json.outcome));
+    return Array.from(set).sort();
+  }, [calls]);
+
   if (calls.length === 0) {
     return <p className="text-sm text-muted-foreground">Нет звонков за этот период</p>;
   }
+
   return (
-    <div className="space-y-2">
-      {calls.map((call) => {
-        const isRetranscribing = retranscribingIds.has(call.id);
-        return (
-          <details key={call.id} className="rounded border p-2">
-            <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-sm">
-              <span className="text-muted-foreground">
-                {new Date(call.started_at).toLocaleString("ru-RU")}
-              </span>
-              <Badge variant="outline">{DIRECTION_LABELS[call.direction] || call.direction}</Badge>
-              <span className="text-muted-foreground">{formatDuration(call.duration_sec)}</span>
-              {call.analytics_json?.outcome && <Badge variant="secondary">{call.analytics_json.outcome}</Badge>}
-              <span
-                className={`text-xs ${
-                  call.transcript_status === "done" ? "text-muted-foreground" : "text-amber-600"
-                }`}
-              >
-                {call.transcript_status}
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="ml-auto h-7 px-2"
-                disabled={isRetranscribing}
-                onClick={(e) => {
-                  e.preventDefault();
-                  onRetranscribe(call.id);
-                }}
-              >
-                {isRetranscribing ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Mic className="h-3.5 w-3.5" />
-                )}
-                <span className="ml-1">Транскрибировать</span>
-              </Button>
-            </summary>
-            <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
-              {call.transcript_text || "Транскрипт недоступен"}
-            </p>
-          </details>
-        );
-      })}
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Поиск по тексту или номеру"
+            value={filters.search}
+            onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
+            className="h-8 w-56 pl-7 text-sm"
+          />
+        </div>
+        <select
+          value={filters.status}
+          onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
+          className="h-8 rounded-md border border-input bg-transparent px-2 text-sm"
+        >
+          <option value="">Все статусы</option>
+          {STATUS_ORDER.map((s) => (
+            <option key={s} value={s}>
+              {STATUS_LABELS[s]}
+            </option>
+          ))}
+        </select>
+        <select
+          value={filters.outcome}
+          onChange={(e) => setFilters((f) => ({ ...f, outcome: e.target.value }))}
+          className="h-8 rounded-md border border-input bg-transparent px-2 text-sm"
+        >
+          <option value="">Все категории</option>
+          {outcomes.map((o) => (
+            <option key={o} value={o}>
+              {o}
+            </option>
+          ))}
+        </select>
+        <select
+          value={filters.direction}
+          onChange={(e) => setFilters((f) => ({ ...f, direction: e.target.value }))}
+          className="h-8 rounded-md border border-input bg-transparent px-2 text-sm"
+        >
+          <option value="">Все направления</option>
+          {Object.entries(DIRECTION_LABELS).map(([key, label]) => (
+            <option key={key} value={key}>
+              {label}
+            </option>
+          ))}
+        </select>
+        {(filters.status || filters.outcome || filters.direction || filters.search) && (
+          <Button variant="ghost" size="sm" className="h-8" onClick={() => setFilters(EMPTY_FILTERS)}>
+            Сбросить
+          </Button>
+        )}
+        <span className="text-xs text-muted-foreground">
+          {filtered.length} из {calls.length}
+        </span>
+      </div>
+
+      {filtered.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Ничего не найдено по этим фильтрам</p>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map((call) => {
+            const isRetranscribing = retranscribingIds.has(call.id);
+            return (
+              <details key={call.id} className="rounded border p-2">
+                <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">{new Date(call.started_at).toLocaleString("ru-RU")}</span>
+                  <Badge variant="outline">{DIRECTION_LABELS[call.direction] || call.direction}</Badge>
+                  <span className="text-muted-foreground">{formatDuration(call.duration_sec)}</span>
+                  {call.analytics_json?.outcome && <Badge variant="secondary">{call.analytics_json.outcome}</Badge>}
+                  <span
+                    className={`text-xs ${call.transcript_status === "done" ? "text-muted-foreground" : "text-amber-600"}`}
+                  >
+                    {STATUS_LABELS[call.transcript_status] || call.transcript_status}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="ml-auto h-7 px-2"
+                    disabled={isRetranscribing}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      onRetranscribe(call.id);
+                    }}
+                  >
+                    {isRetranscribing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mic className="h-3.5 w-3.5" />}
+                    <span className="ml-1">Транскрибировать</span>
+                  </Button>
+                </summary>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
+                  {call.transcript_text || "Транскрипт недоступен"}
+                </p>
+              </details>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
 interface CallerPanelState {
-  loading: boolean;
-  error: string;
   distribution: Record<string, number> | null;
+  distributionLoading: boolean;
+  reportLoading: boolean;
+  reportError: string;
   report: CallerReport | null;
+  callsLoading: boolean;
+  callsError: string;
   calls: Call[] | null;
+}
+
+const EMPTY_PANEL: CallerPanelState = {
+  distribution: null,
+  distributionLoading: false,
+  reportLoading: false,
+  reportError: "",
+  report: null,
+  callsLoading: false,
+  callsError: "",
+  calls: null,
+};
+
+interface CallerStats {
+  caller: Caller;
+  total: number;
+  done: number;
+  donePct: number;
+  outcomes: Record<string, number>;
+  problemRatio: number;
+  isProblem: boolean;
+}
+
+type SortKey = "name" | "total" | "donePct" | "заинтересован" | "отказ" | "problem";
+
+function KpiCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <div className="text-2xl font-bold tracking-tight">{value}</div>
+        <div className="text-sm text-muted-foreground">{label}</div>
+        {hint && <div className="mt-1 text-xs text-muted-foreground">{hint}</div>}
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function ZvonariPage() {
@@ -155,12 +290,20 @@ export default function ZvonariPage() {
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState("");
   const [syncMessage, setSyncMessage] = useState("");
+  const [syncProgress, setSyncProgress] = useState<{ total: number; processed: number } | null>(null);
 
-  const [panels, setPanels] = useState<Record<string, CallerPanelState>>({});
   const [callCounts, setCallCounts] = useState<Record<string, number>>({});
   const [statusCounts, setStatusCounts] = useState<Record<string, Record<string, number>>>({});
-  const [syncProgress, setSyncProgress] = useState<{ total: number; processed: number } | null>(null);
+  const [outcomeCounts, setOutcomeCounts] = useState<Record<string, Record<string, number>>>({});
+
+  const [panels, setPanels] = useState<Record<string, CallerPanelState>>({});
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [retranscribingIds, setRetranscribingIds] = useState<Set<string>>(new Set());
+
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const period = useMemo(() => ({ from, to }), [from, to]);
 
   const loadCallers = () => {
     setLoadingCallers(true);
@@ -177,7 +320,7 @@ export default function ZvonariPage() {
       .finally(() => setLoadingCallers(false));
   };
 
-  const loadCallCounts = (periodFrom: string, periodTo: string) => {
+  const loadAggregates = (periodFrom: string, periodTo: string) => {
     zvonariAPI
       .getCallCounts(periodFrom, periodTo)
       .then((response) => setCallCounts(response.data || {}))
@@ -186,12 +329,16 @@ export default function ZvonariPage() {
       .getStatusCounts(periodFrom, periodTo)
       .then((response) => setStatusCounts(response.data || {}))
       .catch((err) => console.error("Failed to load status counts:", err));
+    zvonariAPI
+      .getOutcomeCounts(periodFrom, periodTo)
+      .then((response) => setOutcomeCounts(response.data || {}))
+      .catch((err) => console.error("Failed to load outcome counts:", err));
   };
 
-  // Синхронизация идёт в фоне на бэкенде (может занимать минуты — сотни
-  // звонков, каждый со своей транскрибацией и анализом), поэтому опрашиваем
-  // статус вместо того, чтобы держать один долгий запрос — иначе прокси/
-  // браузер обрывает соединение раньше, чем бэкенд успевает закончить.
+  // Синхронизация/анализ/повтор идут в фоне на бэкенде (могут занимать
+  // минуты — сотни звонков), поэтому опрашиваем статус вместо того, чтобы
+  // держать один долгий запрос — иначе прокси/браузер обрывает соединение
+  // раньше, чем бэкенд успевает закончить.
   const pollSyncStatus = () => {
     const interval = setInterval(async () => {
       try {
@@ -208,13 +355,15 @@ export default function ZvonariPage() {
             setSyncError(status.error);
           } else if (status.result) {
             const r = status.result;
-            setSyncMessage(
-              `Найдено звонков: ${r.calls_found}, новых: ${r.calls_new}, пропущено: ${r.calls_skipped}` +
-                (r.transcribe_errors > 0 ? `, ошибок транскрибации: ${r.transcribe_errors}` : "")
-            );
+            const parts = [`найдено: ${r.calls_found}`];
+            if (r.calls_new) parts.push(`новых: ${r.calls_new}`);
+            if (r.calls_skipped) parts.push(`пропущено: ${r.calls_skipped}`);
+            if (r.transcribe_errors) parts.push(`ошибок транскрибации: ${r.transcribe_errors}`);
+            if (r.analyze_errors) parts.push(`ошибок анализа: ${r.analyze_errors}`);
+            setSyncMessage(parts.join(", "));
           }
           loadCallers();
-          loadCallCounts(from, to);
+          loadAggregates(from, to);
         }
       } catch (err) {
         console.error("Sync status poll failed:", err);
@@ -225,8 +374,7 @@ export default function ZvonariPage() {
     }, 3000);
   };
 
-  // При открытии страницы проверяем, не идёт ли уже синхронизация (например,
-  // запущенная ранее и не завершившаяся к моменту перезагрузки страницы).
+  // При открытии страницы проверяем, не идёт ли уже фоновая задача.
   useEffect(() => {
     loadCallers();
     zvonariAPI
@@ -234,7 +382,7 @@ export default function ZvonariPage() {
       .then((response) => {
         if (response.data.running) {
           setSyncing(true);
-          setSyncMessage("Синхронизация уже выполняется...");
+          setSyncMessage("Задача уже выполняется...");
           pollSyncStatus();
         }
       })
@@ -242,93 +390,92 @@ export default function ZvonariPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Счётчик звонков на карточках всегда отражает текущий выбранный период.
   useEffect(() => {
-    loadCallCounts(from, to);
+    loadAggregates(from, to);
   }, [from, to]);
 
-  const period = useMemo(() => ({ from, to }), [from, to]);
-
-  const handleSync = async () => {
+  const runBackgroundJob = async (
+    starter: () => Promise<{ data: { status: string } }>,
+    startMessage: string
+  ) => {
     setSyncing(true);
     setSyncError("");
-    setSyncMessage("Синхронизация запущена, это может занять несколько минут...");
+    setSyncMessage(startMessage);
     try {
-      await zvonariAPI.sync(period.from, period.to);
+      await starter();
       pollSyncStatus();
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
-        setSyncMessage("Синхронизация уже выполняется, ожидаем завершения...");
+        setSyncMessage("Уже выполняется другая задача, ожидаем завершения...");
         pollSyncStatus();
         return;
       }
-      console.error("Sync failed:", err);
-      setSyncError(err instanceof Error ? err.message : "Не удалось синхронизировать звонки");
+      console.error("Background job failed to start:", err);
+      setSyncError(err instanceof Error ? err.message : "Не удалось запустить задачу");
       setSyncing(false);
     }
   };
 
-  // Массовый повтор для звонков, застрявших на failed/no_recording/pending/
-  // transcribing — тот же фоновый "слот" на бэкенде, что и обычный синк,
-  // поэтому переиспользуем ту же индикацию (syncing/прогресс-бар/сообщение).
-  const handleRetryFailed = async () => {
-    setSyncing(true);
-    setSyncError("");
-    setSyncMessage("Повтор запущен, это может занять несколько минут...");
-    try {
-      await zvonariAPI.retryFailed(period.from, period.to);
-      pollSyncStatus();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        setSyncMessage("Уже выполняется синхронизация или повтор, ожидаем завершения...");
-        pollSyncStatus();
-        return;
-      }
-      console.error("Retry failed calls request failed:", err);
-      setSyncError(err instanceof Error ? err.message : "Не удалось запустить повтор");
-      setSyncing(false);
+  const handleSync = () =>
+    runBackgroundJob(
+      () => zvonariAPI.sync(period.from, period.to),
+      "Синхронизация запущена, это может занять несколько минут..."
+    );
+  const handleRetryFailed = () =>
+    runBackgroundJob(
+      () => zvonariAPI.retryFailed(period.from, period.to),
+      "Повтор запущен, это может занять несколько минут..."
+    );
+  const handleAnalyze = () =>
+    runBackgroundJob(
+      () => zvonariAPI.analyzeCalls(period.from, period.to),
+      "Анализ запущен — классифицируем готовые транскрипты..."
+    );
+
+  const updatePanel = (callerId: string, patch: Partial<CallerPanelState>) => {
+    setPanels((current) => ({ ...current, [callerId]: { ...(current[callerId] || EMPTY_PANEL), ...patch } }));
+  };
+
+  const toggleExpand = (callerId: string) => {
+    const next = expandedId === callerId ? null : callerId;
+    setExpandedId(next);
+    if (next && !panels[next]?.distribution && !panels[next]?.distributionLoading) {
+      updatePanel(next, { distributionLoading: true });
+      zvonariAPI
+        .getDistribution(next, period.from, period.to)
+        .then((response) => updatePanel(next, { distribution: response.data, distributionLoading: false }))
+        .catch((err) => {
+          console.error("Failed to load distribution:", err);
+          updatePanel(next, { distributionLoading: false });
+        });
     }
   };
 
   const handleRequestReport = async (callerId: string) => {
-    setPanels((current) => ({
-      ...current,
-      [callerId]: {
-        loading: true,
-        error: "",
-        distribution: current[callerId]?.distribution ?? null,
-        report: null,
-        calls: current[callerId]?.calls ?? null,
-      },
-    }));
+    updatePanel(callerId, { reportLoading: true, reportError: "" });
     try {
-      const [distResponse, reportResponse, callsResponse] = await Promise.all([
-        zvonariAPI.getDistribution(callerId, period.from, period.to),
-        zvonariAPI.requestReport(callerId, "custom", period.from, period.to),
-        zvonariAPI.getCalls(callerId, period.from, period.to),
-      ]);
-      setPanels((current) => ({
-        ...current,
-        [callerId]: {
-          loading: false,
-          error: "",
-          distribution: distResponse.data,
-          report: reportResponse.data,
-          calls: callsResponse.data,
-        },
-      }));
+      const response = await zvonariAPI.requestReport(callerId, "custom", period.from, period.to);
+      updatePanel(callerId, { reportLoading: false, report: response.data });
     } catch (err) {
       console.error("Report request failed:", err);
-      setPanels((current) => ({
-        ...current,
-        [callerId]: {
-          loading: false,
-          error: err instanceof Error ? err.message : "Не удалось получить отчёт",
-          distribution: current[callerId]?.distribution ?? null,
-          report: null,
-          calls: current[callerId]?.calls ?? null,
-        },
-      }));
+      updatePanel(callerId, {
+        reportLoading: false,
+        reportError: err instanceof Error ? err.message : "Не удалось получить отчёт",
+      });
+    }
+  };
+
+  const handleLoadCalls = async (callerId: string) => {
+    updatePanel(callerId, { callsLoading: true, callsError: "" });
+    try {
+      const response = await zvonariAPI.getCalls(callerId, period.from, period.to);
+      updatePanel(callerId, { callsLoading: false, calls: response.data || [] });
+    } catch (err) {
+      console.error("Failed to load calls:", err);
+      updatePanel(callerId, {
+        callsLoading: false,
+        callsError: err instanceof Error ? err.message : "Не удалось загрузить звонки",
+      });
     }
   };
 
@@ -340,13 +487,7 @@ export default function ZvonariPage() {
       setPanels((current) => {
         const panel = current[callerId];
         if (!panel?.calls) return current;
-        return {
-          ...current,
-          [callerId]: {
-            ...panel,
-            calls: panel.calls.map((c) => (c.id === callId ? updated : c)),
-          },
-        };
+        return { ...current, [callerId]: { ...panel, calls: panel.calls.map((c) => (c.id === callId ? updated : c)) } };
       });
     } catch (err) {
       console.error("Retranscribe failed:", err);
@@ -359,8 +500,77 @@ export default function ZvonariPage() {
     }
   };
 
+  const callerStats: CallerStats[] = useMemo(() => {
+    return callers.map((caller) => {
+      const total = callCounts[caller.id] ?? 0;
+      const statuses = statusCounts[caller.id] ?? {};
+      const outcomes = outcomeCounts[caller.id] ?? {};
+      const done = statuses.done ?? 0;
+      const problems = (statuses.failed ?? 0) + (statuses.no_recording ?? 0);
+      const problemRatio = total > 0 ? problems / total : 0;
+      return {
+        caller,
+        total,
+        done,
+        donePct: total > 0 ? Math.round((done / total) * 100) : 0,
+        outcomes,
+        problemRatio,
+        isProblem: total >= PROBLEM_MIN_CALLS && problemRatio >= PROBLEM_RATIO_THRESHOLD,
+      };
+    });
+  }, [callers, callCounts, statusCounts, outcomeCounts]);
+
+  const sortedStats = useMemo(() => {
+    const sorted = [...callerStats].sort((a, b) => {
+      let cmp = 0;
+      switch (sortKey) {
+        case "name":
+          cmp = a.caller.name.localeCompare(b.caller.name, "ru");
+          break;
+        case "total":
+          cmp = a.total - b.total;
+          break;
+        case "donePct":
+          cmp = a.donePct - b.donePct;
+          break;
+        case "заинтересован":
+        case "отказ":
+          cmp = (a.outcomes[sortKey] ?? 0) - (b.outcomes[sortKey] ?? 0);
+          break;
+        case "problem":
+          cmp = a.problemRatio - b.problemRatio;
+          break;
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return sorted;
+  }, [callerStats, sortKey, sortDir]);
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir(key === "name" ? "asc" : "desc");
+    }
+  };
+
+  const SortIcon = ({ column }: { column: SortKey }) => {
+    if (sortKey !== column) return null;
+    return sortDir === "asc" ? <ChevronUp className="ml-1 inline h-3 w-3" /> : <ChevronDown className="ml-1 inline h-3 w-3" />;
+  };
+
+  const kpi = useMemo(() => {
+    const totalCalls = Object.values(callCounts).reduce((a, b) => a + b, 0);
+    const totalDone = Object.values(statusCounts).reduce((sum, s) => sum + (s.done ?? 0), 0);
+    const totalInterested = Object.values(outcomeCounts).reduce((sum, o) => sum + (o["заинтересован"] ?? 0), 0);
+    const totalRefused = Object.values(outcomeCounts).reduce((sum, o) => sum + (o["отказ"] ?? 0), 0);
+    const totalUnanalyzed = Object.values(outcomeCounts).reduce((sum, o) => sum + (o["не проанализировано"] ?? 0), 0);
+    return { totalCalls, totalDone, totalInterested, totalRefused, totalUnanalyzed };
+  }, [callCounts, statusCounts, outcomeCounts]);
+
   return (
-    <div className="container mx-auto py-8 px-4 max-w-5xl">
+    <div className="container mx-auto py-8 px-4 max-w-6xl">
       <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>
           <div className="mb-2">
@@ -378,10 +588,10 @@ export default function ZvonariPage() {
         </div>
       </div>
 
-      <Card className="mb-8">
+      <Card className="mb-6">
         <CardHeader>
-          <CardTitle className="text-lg">Синхронизация звонков</CardTitle>
-          <CardDescription>Период для загрузки CDR и записей разговоров из OnlinePBX</CardDescription>
+          <CardTitle className="text-lg">Синхронизация и анализ</CardTitle>
+          <CardDescription>Период для загрузки CDR, транскрибации и классификации звонков</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap items-end gap-3">
@@ -393,19 +603,40 @@ export default function ZvonariPage() {
               <label className="mb-1 block text-sm text-muted-foreground">По</label>
               <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" />
             </div>
-            <Button onClick={handleSync} disabled={syncing}>
-              <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-              {syncing ? "Синхронизация..." : "Синхронизировать"}
-            </Button>
-            <Button variant="outline" onClick={handleRetryFailed} disabled={syncing}>
-              <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-              Повторить неудачные
-            </Button>
+            <div className="flex gap-1">
+              {PERIOD_PRESETS.map((preset) => (
+                <Button
+                  key={preset.label}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setFrom(preset.from());
+                    setTo(preset.to());
+                  }}
+                >
+                  {preset.label}
+                </Button>
+              ))}
+            </div>
+            <div className="ml-auto flex flex-wrap gap-2">
+              <Button onClick={handleSync} disabled={syncing}>
+                <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+                Синхронизировать
+              </Button>
+              <Button variant="outline" onClick={handleAnalyze} disabled={syncing}>
+                <Sparkles className="mr-2 h-4 w-4" />
+                Анализировать
+              </Button>
+              <Button variant="outline" onClick={handleRetryFailed} disabled={syncing}>
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Повторить неудачные
+              </Button>
+            </div>
           </div>
           {syncing && syncProgress && syncProgress.total > 0 && (
             <div className="mt-3">
               <div className="mb-1 flex justify-between text-xs text-muted-foreground">
-                <span>Транскрибация и анализ звонков</span>
+                <span>Обработка звонков</span>
                 <span>
                   {syncProgress.processed} / {syncProgress.total}
                 </span>
@@ -423,6 +654,24 @@ export default function ZvonariPage() {
         </CardContent>
       </Card>
 
+      {callers.length > 0 && (
+        <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
+          <KpiCard label="Всего звонков" value={String(kpi.totalCalls)} />
+          <KpiCard
+            label="Готово"
+            value={kpi.totalCalls > 0 ? `${Math.round((kpi.totalDone / kpi.totalCalls) * 100)}%` : "—"}
+            hint={`${kpi.totalDone} из ${kpi.totalCalls}`}
+          />
+          <KpiCard label="Заинтересован" value={String(kpi.totalInterested)} />
+          <KpiCard label="Отказ" value={String(kpi.totalRefused)} />
+          <KpiCard
+            label="Не проанализировано"
+            value={String(kpi.totalUnanalyzed)}
+            hint={kpi.totalUnanalyzed > 0 ? "нажмите «Анализировать»" : undefined}
+          />
+        </div>
+      )}
+
       {listError && <p className="mb-4 text-sm text-destructive">{listError}</p>}
       {loadingCallers ? (
         <p className="text-muted-foreground">Загрузка...</p>
@@ -431,69 +680,148 @@ export default function ZvonariPage() {
           Звонарей пока нет — нажмите «Синхронизировать», чтобы подтянуть список из OnlinePBX.
         </p>
       ) : (
-        <div className="space-y-4">
-          {callers.map((caller) => {
-            const panel = panels[caller.id];
-            return (
-              <Card key={caller.id}>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0">
-                  <div>
-                    <CardTitle className="text-base">{caller.name}</CardTitle>
-                    <CardDescription className="flex items-center gap-2">
-                      <span>внутр. номер {caller.pbx_extension}</span>
-                      <span className="inline-flex items-center gap-1">
-                        <Phone className="h-3 w-3" />
-                        {callCounts[caller.id] ?? 0} звонков за период
-                      </span>
-                    </CardDescription>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {!caller.active && <Badge variant="secondary">неактивен</Badge>}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleRequestReport(caller.id)}
-                      disabled={panel?.loading}
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-8" />
+                <TableHead className="cursor-pointer select-none" onClick={() => handleSort("name")}>
+                  Звонарь
+                  <SortIcon column="name" />
+                </TableHead>
+                <TableHead className="cursor-pointer select-none text-right" onClick={() => handleSort("total")}>
+                  Звонков
+                  <SortIcon column="total" />
+                </TableHead>
+                <TableHead className="cursor-pointer select-none text-right" onClick={() => handleSort("donePct")}>
+                  Готово
+                  <SortIcon column="donePct" />
+                </TableHead>
+                <TableHead
+                  className="cursor-pointer select-none text-right"
+                  onClick={() => handleSort("заинтересован")}
+                >
+                  Заинтересован
+                  <SortIcon column="заинтересован" />
+                </TableHead>
+                <TableHead className="cursor-pointer select-none text-right" onClick={() => handleSort("отказ")}>
+                  Отказ
+                  <SortIcon column="отказ" />
+                </TableHead>
+                <TableHead className="text-right">Действия</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {sortedStats.map(({ caller, total, donePct, outcomes, isProblem }) => {
+                const panel = panels[caller.id] || EMPTY_PANEL;
+                const isExpanded = expandedId === caller.id;
+                return (
+                  <Fragment key={caller.id}>
+                    <TableRow
+                      className="cursor-pointer"
+                      onClick={() => toggleExpand(caller.id)}
                     >
-                      <FileBarChart className="mr-2 h-4 w-4" />
-                      {panel?.loading ? "Формирование..." : "Запросить отчёт"}
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent className="pt-0 pb-4">
-                  <StatusBreakdown counts={statusCounts[caller.id]} />
-                </CardContent>
-                {panel && (panel.error || panel.distribution || panel.report || panel.calls) && (
-                  <CardContent className="space-y-4">
-                    {panel.error && <p className="text-sm text-destructive">{panel.error}</p>}
-                    {panel.distribution && (
-                      <div>
-                        <h4 className="mb-2 text-sm font-medium">Распределение звонков за период</h4>
-                        <DistributionBars distribution={panel.distribution} />
-                      </div>
+                      <TableCell>
+                        <ChevronRight className={`h-4 w-4 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{caller.name}</span>
+                          {!caller.active && (
+                            <Badge variant="secondary" className="text-xs">
+                              неактивен
+                            </Badge>
+                          )}
+                          {isProblem && (
+                            <Badge variant="destructive" className="gap-1 text-xs">
+                              <AlertTriangle className="h-3 w-3" />
+                              требует внимания
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground">внутр. номер {caller.pbx_extension}</div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <span className="inline-flex items-center gap-1">
+                          <Phone className="h-3 w-3 text-muted-foreground" />
+                          {total}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right">{total > 0 ? `${donePct}%` : "—"}</TableCell>
+                      <TableCell className="text-right">{outcomes["заинтересован"] ?? 0}</TableCell>
+                      <TableCell className="text-right">{outcomes["отказ"] ?? 0}</TableCell>
+                      <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleRequestReport(caller.id)}
+                          disabled={panel.reportLoading}
+                        >
+                          <FileBarChart className="mr-2 h-4 w-4" />
+                          {panel.reportLoading ? "Формирование..." : "Отчёт"}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                    {isExpanded && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="bg-muted/30">
+                          <div className="space-y-4 py-2">
+                            {panel.distributionLoading ? (
+                              <p className="text-sm text-muted-foreground">Загрузка распределения...</p>
+                            ) : panel.distribution ? (
+                              <div>
+                                <h4 className="mb-2 text-sm font-medium">Распределение звонков за период</h4>
+                                <DistributionBars distribution={panel.distribution} />
+                              </div>
+                            ) : null}
+
+                            {panel.reportError && <p className="text-sm text-destructive">{panel.reportError}</p>}
+                            {panel.report && (
+                              <div>
+                                <h4 className="mb-2 text-sm font-medium">Анализ за период</h4>
+                                <p className="whitespace-pre-wrap text-sm text-muted-foreground">
+                                  {panel.report.summary_text}
+                                </p>
+                              </div>
+                            )}
+
+                            <div>
+                              {panel.calls === null ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleLoadCalls(caller.id)}
+                                  disabled={panel.callsLoading}
+                                >
+                                  {panel.callsLoading ? (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Phone className="mr-2 h-4 w-4" />
+                                  )}
+                                  Показать звонки
+                                </Button>
+                              ) : (
+                                <div>
+                                  <h4 className="mb-2 text-sm font-medium">Детализация по звонкам ({panel.calls.length})</h4>
+                                  {panel.callsError && <p className="mb-2 text-sm text-destructive">{panel.callsError}</p>}
+                                  <CallDetailList
+                                    calls={panel.calls}
+                                    retranscribingIds={retranscribingIds}
+                                    onRetranscribe={(callId) => handleRetranscribeCall(caller.id, callId)}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </TableCell>
+                      </TableRow>
                     )}
-                    {panel.report && (
-                      <div>
-                        <h4 className="mb-2 text-sm font-medium">Анализ за период</h4>
-                        <p className="whitespace-pre-wrap text-sm text-muted-foreground">{panel.report.summary_text}</p>
-                      </div>
-                    )}
-                    {panel.calls && (
-                      <div>
-                        <h4 className="mb-2 text-sm font-medium">Детализация по звонкам ({panel.calls.length})</h4>
-                        <CallDetailList
-                          calls={panel.calls}
-                          retranscribingIds={retranscribingIds}
-                          onRetranscribe={(callId) => handleRetranscribeCall(caller.id, callId)}
-                        />
-                      </div>
-                    )}
-                  </CardContent>
-                )}
-              </Card>
-            );
-          })}
-        </div>
+                  </Fragment>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </Card>
       )}
     </div>
   );

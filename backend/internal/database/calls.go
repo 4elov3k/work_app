@@ -174,6 +174,44 @@ func (db *DB) CountCallsByCallerAndStatus(ctx context.Context, from, to time.Tim
 	return counts, nil
 }
 
+// CountOutcomesByCaller returns, for every caller with calls in [from, to),
+// a breakdown of their Hermes outcome classification (analytics_json.outcome)
+// — one query across all callers, so the caller table can sort/highlight by
+// conversion (e.g. % отказ) without an N+1 fetch per caller. Calls without
+// an outcome yet (not analyzed, or analysis failed) bucket under "не
+// проанализировано", matching CallDistribution's client-facing label for a
+// single caller.
+func (db *DB) CountOutcomesByCaller(ctx context.Context, from, to time.Time) (map[string]map[string]int, error) {
+	query := `
+		SELECT caller_id, COALESCE(analytics_json->>'outcome', 'не проанализировано'), count(*)
+		FROM calls
+		WHERE caller_id IS NOT NULL AND started_at >= $1 AND started_at < $2
+		GROUP BY caller_id, COALESCE(analytics_json->>'outcome', 'не проанализировано')
+	`
+	rows, err := db.QueryContext(ctx, query, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count outcomes by caller: %w", err)
+	}
+	defer rows.Close()
+
+	counts := map[string]map[string]int{}
+	for rows.Next() {
+		var callerID, outcome string
+		var count int
+		if err := rows.Scan(&callerID, &outcome, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan outcome count: %w", err)
+		}
+		if counts[callerID] == nil {
+			counts[callerID] = map[string]int{}
+		}
+		counts[callerID][outcome] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating outcome counts: %w", err)
+	}
+	return counts, nil
+}
+
 // ListCallsByStatusPeriod returns all calls (any caller) in [from, to)
 // whose transcript_status is one of the given values — for a bulk "retry
 // everything that didn't finish processing" job.

@@ -1087,6 +1087,7 @@ export interface SyncCallsResult {
   calls_new: number;
   calls_skipped: number;
   transcribe_errors: number;
+  analyze_errors: number;
 }
 
 export interface SyncStatus {
@@ -1136,13 +1137,30 @@ export const zvonariAPI = {
     return handleResponse<SingleResponse<Record<string, Record<string, number>>>>(response);
   },
 
-  // Массово повторить транскрибацию+аналитику для всех звонков за период
-  // со статусом failed/no_recording/pending/transcribing. Тоже фоновая
-  // задача — статус через getSyncStatus.
+  // Массово повторить транскрибацию для всех звонков за период со статусом
+  // failed/no_recording/pending/transcribing. Тоже фоновая задача — статус
+  // через getSyncStatus.
   retryFailed: async (from: string, to: string): Promise<SingleResponse<{ status: string }>> => {
     const params = new URLSearchParams({ from, to });
     const response = await fetch(`${API_BASE}/zvonari/calls/retry-failed?${params.toString()}`, { method: 'POST' });
     return handleResponse<SingleResponse<{ status: string }>>(response);
+  },
+
+  // Запустить LLM-классификацию (заинтересован/отказ/...) для звонков за
+  // период, у которых уже готов транскрипт, но ещё нет категории —
+  // отдельный шаг от синхронизации/транскрибации. Тоже фоновая задача.
+  analyzeCalls: async (from: string, to: string): Promise<SingleResponse<{ status: string }>> => {
+    const params = new URLSearchParams({ from, to });
+    const response = await fetch(`${API_BASE}/zvonari/calls/analyze?${params.toString()}`, { method: 'POST' });
+    return handleResponse<SingleResponse<{ status: string }>>(response);
+  },
+
+  // Разбивка по категориям (заинтересован/отказ/...) на каждого звонаря за
+  // период одним запросом — для таблицы звонарей без N+1.
+  getOutcomeCounts: async (from: string, to: string): Promise<SingleResponse<Record<string, Record<string, number>>>> => {
+    const params = new URLSearchParams({ from, to });
+    const response = await fetch(`${API_BASE}/zvonari/calls/outcomes?${params.toString()}`);
+    return handleResponse<SingleResponse<Record<string, Record<string, number>>>>(response);
   },
 
   // Вручную (пере)запустить транскрибацию+аналитику для одного звонка —
