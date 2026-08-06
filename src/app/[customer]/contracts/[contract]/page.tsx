@@ -7,6 +7,7 @@ import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import DocumentList from "../../components/documentList"
 import AppendixList from "./components/appendixList"
+import DeleteContractButton from "./components/deleteContractButton"
 import { contractsAPI, customersAPI } from "@/lib/api.server"
 
 export default async function ContractPage({
@@ -52,6 +53,11 @@ export default async function ContractPage({
                   {customer.name} • {contract.topic}
                 </CardDescription>
               </div>
+              <DeleteContractButton
+                customerId={customerId}
+                contractId={contractId}
+                contractNumber={contract.number}
+              />
             </div>
           </CardHeader>
           <CardContent>

@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -132,4 +134,30 @@ func (h *Handlers) CreateCustomer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondWithJSON(w, http.StatusCreated, response)
+}
+
+// DeleteCustomer обрабатывает DELETE /api/customers/{id}
+func (h *Handlers) DeleteCustomer(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respondWithError(w, http.StatusBadRequest, "Customer ID is required")
+		return
+	}
+
+	if err := h.db.DeleteCustomer(ctx, id); err != nil {
+		if isForeignKeyViolation(err) {
+			respondWithError(w, http.StatusConflict, "У контрагента есть договоры или счета — сначала удалите их")
+			return
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, http.StatusNotFound, "Customer not found")
+			return
+		}
+		log.Printf("DeleteCustomer failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to delete customer")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

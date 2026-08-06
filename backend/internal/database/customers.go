@@ -204,6 +204,22 @@ func (db *DB) CreateCustomer(ctx context.Context, req models.CreateCustomerReque
 	return &customer, nil
 }
 
+// DeleteCustomer удаляет контрагента. FK-ограничения (ON DELETE RESTRICT на
+// contracts.customer_id / invoices.customer_id) не дадут удалить контрагента
+// со связанными договорами или счетами — вызывающий код должен показать это
+// пользователю как понятную ошибку, а не удалять связанные документы молча.
+func (db *DB) DeleteCustomer(ctx context.Context, id string) error {
+	res, err := db.ExecContext(ctx, `DELETE FROM customers WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete customer: %w", err)
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (db *DB) UpdateCustomerTensorEDOID(ctx context.Context, id, edoID string) error {
 	query := `
 		UPDATE customers

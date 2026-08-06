@@ -69,6 +69,7 @@ func main() {
 		r.Post("/customers", h.CreateCustomer)
 		r.Get("/customers/lookup", h.LookupCustomerByINN)
 		r.Get("/customers/{id}", h.GetCustomerByID)
+		r.Delete("/customers/{id}", h.DeleteCustomer)
 		r.Get("/customers/{id}/redmine-project", h.GetCustomerRedmineProject)
 		r.Put("/customers/{id}/redmine-project", h.LinkCustomerRedmineProject)
 		r.Get("/customers/{id}/redmine-document-statuses", h.GetCustomerRedmineDocumentStatuses)

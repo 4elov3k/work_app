@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { customersAPI, ApiError } from "@/lib/api"
 import RedmineProjectLinkPanel from "./components/redmineProjectLink"
+import DeleteCustomerButton from "./components/deleteCustomerButton"
 
 export interface IData {
   collectionId?: string
@@ -82,6 +83,7 @@ export default async function Page({
                     <CardTitle className="text-2xl mb-1">{customer.name}</CardTitle>
                     <CardDescription className="text-base">{customer.fullname}</CardDescription>
                   </div>
+                  <DeleteCustomerButton customerId={slug} customerName={customer.name} />
                 </div>
               </CardHeader>
               <CardContent>
