@@ -88,6 +88,8 @@ services:
       MCP_PATH: /mcp
       MCP_AUTH_ENABLED: ${MCP_AUTH_ENABLED:-true}
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
+      SHEETS_SYNC_URL: ${SHEETS_SYNC_URL:-http://hermes_sheets_sync:8644}
+      SHEETS_SYNC_TOKEN: ${SHEETS_SYNC_TOKEN:-}
       DOCUMENT_STORAGE_PATH: /data/documents
       ORGANIZATION_TIMEZONE: Europe/Moscow
       COUNTERPARTY_LOOKUP_PROVIDER: none
