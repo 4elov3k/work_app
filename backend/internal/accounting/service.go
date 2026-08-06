@@ -26,6 +26,7 @@ import (
 	"invoices-backend/internal/database"
 	"invoices-backend/internal/export/updxml"
 	"invoices-backend/internal/models"
+	"invoices-backend/internal/sheetsync"
 )
 
 const defaultUserID = "hermes"
@@ -58,8 +59,9 @@ type Config struct {
 }
 
 type Service struct {
-	db     *database.DB
-	config Config
+	db        *database.DB
+	config    Config
+	sheetsync *sheetsync.Client
 }
 
 func NewService(db *database.DB, config Config) *Service {
@@ -69,7 +71,7 @@ func NewService(db *database.DB, config Config) *Service {
 	if config.TokenTTL == 0 {
 		config.TokenTTL = 15 * time.Minute
 	}
-	return &Service{db: db, config: config}
+	return &Service{db: db, config: config, sheetsync: sheetsync.NewFromEnv()}
 }
 
 type AccountingError struct {
@@ -1117,17 +1119,42 @@ func (s *Service) PrepareCreateAct(ctx context.Context, input CreateActInput) (*
 	return s.createConfirmation(ctx, "acts.commit_create", UserFromContext(ctx), payload, preview, warnings, "Будет создан акт без НДС")
 }
 
+// nextActNumber returns the number to assign to a newly created act. When
+// sheets-sync is configured, the number MUST come from the real act-numbering
+// registry (a Google Sheet the business has kept since 2013) — work_app's own
+// sequence is not the source of truth and must never silently diverge from
+// it (this was a real incident: a leftover test act drove work_app's internal
+// counter to suggest "3001" while the real registry's next number was
+// "2177"). If sheets-sync is unreachable, this fails loudly rather than
+// falling back to the internal counter, matching that same principle.
+// Falls back to the internal counter only when sheets-sync isn't configured
+// at all (e.g. a deployment without the Hermes integration).
+func (s *Service) nextActNumber(ctx context.Context, tx *sql.Tx, orgID string) (int64, error) {
+	if s.sheetsync != nil && s.sheetsync.Configured() {
+		result, err := s.sheetsync.NextActNumber(ctx)
+		if err != nil {
+			return 0, appError("SHEET_SYNC_ERROR", "Не удалось получить номер акта из реестра", true, "Проверьте доступность sheets-sync и повторите")
+		}
+		number, err := strconv.ParseInt(result.Number, 10, 64)
+		if err != nil {
+			return 0, appError("SHEET_SYNC_ERROR", "Реестр вернул нечисловой номер акта", true, "Проверьте таблицу вручную")
+		}
+		return number, nil
+	}
+	return s.nextNumberTx(ctx, tx, orgID, "act")
+}
+
 func (s *Service) CommitCreateAct(ctx context.Context, input CommitInput) (map[string]any, error) {
 	var payload struct {
 		Input      CreateActInput `json:"input"`
 		TotalCents int64          `json:"total_cents"`
 	}
-	return s.commitWithConfirmation(ctx, "acts.commit_create", input, &payload, func(tx *sql.Tx) (map[string]any, error) {
+	result, err := s.commitWithConfirmation(ctx, "acts.commit_create", input, &payload, func(tx *sql.Tx) (map[string]any, error) {
 		org, err := s.currentOrganizationTx(ctx, tx)
 		if err != nil {
 			return nil, err
 		}
-		number, err := s.nextNumberTx(ctx, tx, org.ID, "act")
+		number, err := s.nextActNumber(ctx, tx, org.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -1171,6 +1198,25 @@ func (s *Service) CommitCreateAct(ctx context.Context, input CommitInput) (map[s
 		act.ContractNumber = payload.Input.ContractNumber
 		return map[string]any{"status": "created", "data": act, "vat": "без НДС"}, nil
 	})
+	if err != nil {
+		return result, err
+	}
+
+	// The act is already committed at this point — a failure to register it
+	// in the sheet must not be reported as if act creation itself failed.
+	// Best-effort: note it in the response instead so the caller (Hermes)
+	// can tell the user to check the sheet manually.
+	if s.sheetsync != nil && s.sheetsync.Configured() {
+		customer, custErr := s.db.GetCustomerByID(ctx, payload.Input.CounterpartyID)
+		if custErr != nil {
+			result["sheet_registration"] = "не удалось загрузить контрагента для регистрации в таблице: " + custErr.Error()
+		} else if _, regErr := s.sheetsync.RegisterAct(ctx, customer.Name, payload.Input.Date); regErr != nil {
+			result["sheet_registration"] = "акт создан, но не записан в реестр: " + regErr.Error()
+		} else {
+			result["sheet_registration"] = "ok"
+		}
+	}
+	return result, nil
 }
 
 func (s *Service) PrepareIssueAct(ctx context.Context, input IDInput) (*ConfirmationResponse, error) {
