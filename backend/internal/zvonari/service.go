@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"invoices-backend/internal/callreport"
@@ -23,6 +24,9 @@ type Service struct {
 	pbx        *pbx.Client
 	transcribe *transcribe.Client
 	callreport *callreport.Client
+
+	syncMu     sync.Mutex
+	syncStatus SyncStatus
 }
 
 func NewService(db *database.DB, pbxClient *pbx.Client, transcribeClient *transcribe.Client, callreportClient *callreport.Client) *Service {
@@ -31,6 +35,62 @@ func NewService(db *database.DB, pbxClient *pbx.Client, transcribeClient *transc
 
 func (s *Service) Configured() bool {
 	return s.pbx.Configured()
+}
+
+// SyncStatus reports the state of the (at most one) in-flight or last
+// completed sync run, for the frontend to poll instead of holding an HTTP
+// request open for the whole batch.
+type SyncStatus struct {
+	Running    bool        `json:"running"`
+	StartedAt  *time.Time  `json:"started_at,omitempty"`
+	FinishedAt *time.Time  `json:"finished_at,omitempty"`
+	Result     *SyncResult `json:"result,omitempty"`
+	Error      string      `json:"error,omitempty"`
+}
+
+// StartSync launches a sync in the background and returns immediately.
+// Returns false if one is already running (never runs two concurrently —
+// OnlinePBX/Hermes get hammered otherwise, and duplicate concurrent inserts
+// would race on the same pbx_uuid). The background run uses its own
+// context, detached from the triggering HTTP request, so a client
+// disconnect (browser closed, proxy idle-timeout) can't abort a batch
+// that's minutes into transcribing/analyzing calls — a full sync over many
+// calls easily exceeds typical reverse-proxy idle timeouts.
+func (s *Service) StartSync(from, to time.Time) bool {
+	s.syncMu.Lock()
+	if s.syncStatus.Running {
+		s.syncMu.Unlock()
+		return false
+	}
+	startedAt := time.Now()
+	s.syncStatus = SyncStatus{Running: true, StartedAt: &startedAt}
+	s.syncMu.Unlock()
+
+	go func() {
+		result, err := s.SyncCalls(context.Background(), from, to)
+		finishedAt := time.Now()
+
+		s.syncMu.Lock()
+		defer s.syncMu.Unlock()
+		s.syncStatus.Running = false
+		s.syncStatus.FinishedAt = &finishedAt
+		s.syncStatus.Result = result
+		if err != nil {
+			log.Printf("zvonari: background sync failed: %v", err)
+			s.syncStatus.Error = err.Error()
+		} else {
+			s.syncStatus.Error = ""
+		}
+	}()
+
+	return true
+}
+
+// GetSyncStatus returns a snapshot of the current/last sync run.
+func (s *Service) GetSyncStatus() SyncStatus {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	return s.syncStatus
 }
 
 // cancelledHangupCause is OnlinePBX's hangup_cause for a call the originating

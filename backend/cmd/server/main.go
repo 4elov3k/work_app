@@ -152,6 +152,7 @@ func main() {
 		// Звонари (OnlinePBX CDR + Hermes transcribe/analytics)
 		r.Get("/zvonari/callers", h.GetCallers)
 		r.Post("/zvonari/sync", h.SyncZvonariCalls)
+		r.Get("/zvonari/sync/status", h.GetZvonariSyncStatus)
 		r.Get("/zvonari/callers/{id}/distribution", h.GetCallerCallDistribution)
 		r.Post("/zvonari/callers/{id}/report", h.RequestCallerReport)
 	})

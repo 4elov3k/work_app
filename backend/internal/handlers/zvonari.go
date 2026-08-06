@@ -39,6 +39,10 @@ func (h *Handlers) GetCallers(w http.ResponseWriter, r *http.Request) {
 }
 
 // SyncZvonariCalls обрабатывает POST /api/zvonari/sync?from=YYYY-MM-DD&to=YYYY-MM-DD
+// Запускает синхронизацию в фоне и сразу возвращает ответ — сама синхронизация
+// (скачивание записей + транскрибация + аналитика по каждому звонку) может
+// занимать минуты, что не переживёт таймаут прокси/браузера, если держать
+// HTTP-запрос открытым. Прогресс — через GET /api/zvonari/sync/status.
 func (h *Handlers) SyncZvonariCalls(w http.ResponseWriter, r *http.Request) {
 	if !h.zvonari.Configured() {
 		respondWithError(w, http.StatusServiceUnavailable, "PBX не настроен (нет PBX_API_TOKEN/PBX_DOMAIN)")
@@ -50,20 +54,22 @@ func (h *Handlers) SyncZvonariCalls(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.zvonari.SyncCalls(r.Context(), from, to)
-	if err != nil {
-		log.Printf("SyncZvonariCalls failed: %v", err)
-		respondWithError(w, http.StatusBadGateway, "Не удалось синхронизировать звонки: "+err.Error())
+	started := h.zvonari.StartSync(from, to)
+	if !started {
+		respondWithJSON(w, http.StatusConflict, map[string]interface{}{
+			"data": map[string]string{"status": "already_running"},
+		})
 		return
 	}
+	respondWithJSON(w, http.StatusAccepted, map[string]interface{}{
+		"data": map[string]string{"status": "started"},
+	})
+}
 
-	respondWithJSON(w, http.StatusOK, models.SyncCallsResponse{Data: models.SyncCallsResult{
-		CallersSynced:    result.CallersSynced,
-		CallsFound:       result.CallsFound,
-		CallsNew:         result.CallsNew,
-		CallsSkipped:     result.CallsSkipped,
-		TranscribeErrors: result.TranscribeErrors,
-	}})
+// GetZvonariSyncStatus обрабатывает GET /api/zvonari/sync/status
+func (h *Handlers) GetZvonariSyncStatus(w http.ResponseWriter, r *http.Request) {
+	status := h.zvonari.GetSyncStatus()
+	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": status})
 }
 
 // GetCallerCallDistribution обрабатывает GET /api/zvonari/callers/{id}/distribution?from=&to=
