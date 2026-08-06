@@ -45,6 +45,31 @@ const DIRECTION_LABELS: Record<string, string> = {
   local: "внутренний",
 };
 
+const STATUS_LABELS: Record<string, string> = {
+  done: "готово",
+  failed: "ошибка",
+  no_recording: "без записи",
+  pending: "в очереди",
+  transcribing: "обрабатывается",
+};
+
+const STATUS_ORDER = ["done", "transcribing", "pending", "failed", "no_recording"];
+
+function StatusBreakdown({ counts }: { counts: Record<string, number> | undefined }) {
+  if (!counts) return null;
+  const entries = STATUS_ORDER.filter((status) => counts[status] > 0);
+  if (entries.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {entries.map((status) => (
+        <Badge key={status} variant={status === "done" ? "secondary" : "outline"} className="text-xs">
+          {STATUS_LABELS[status]}: {counts[status]}
+        </Badge>
+      ))}
+    </div>
+  );
+}
+
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
@@ -133,6 +158,7 @@ export default function ZvonariPage() {
 
   const [panels, setPanels] = useState<Record<string, CallerPanelState>>({});
   const [callCounts, setCallCounts] = useState<Record<string, number>>({});
+  const [statusCounts, setStatusCounts] = useState<Record<string, Record<string, number>>>({});
   const [syncProgress, setSyncProgress] = useState<{ total: number; processed: number } | null>(null);
   const [retranscribingIds, setRetranscribingIds] = useState<Set<string>>(new Set());
 
@@ -156,6 +182,10 @@ export default function ZvonariPage() {
       .getCallCounts(periodFrom, periodTo)
       .then((response) => setCallCounts(response.data || {}))
       .catch((err) => console.error("Failed to load call counts:", err));
+    zvonariAPI
+      .getStatusCounts(periodFrom, periodTo)
+      .then((response) => setStatusCounts(response.data || {}))
+      .catch((err) => console.error("Failed to load status counts:", err));
   };
 
   // Синхронизация идёт в фоне на бэкенде (может занимать минуты — сотни
@@ -234,6 +264,28 @@ export default function ZvonariPage() {
       }
       console.error("Sync failed:", err);
       setSyncError(err instanceof Error ? err.message : "Не удалось синхронизировать звонки");
+      setSyncing(false);
+    }
+  };
+
+  // Массовый повтор для звонков, застрявших на failed/no_recording/pending/
+  // transcribing — тот же фоновый "слот" на бэкенде, что и обычный синк,
+  // поэтому переиспользуем ту же индикацию (syncing/прогресс-бар/сообщение).
+  const handleRetryFailed = async () => {
+    setSyncing(true);
+    setSyncError("");
+    setSyncMessage("Повтор запущен, это может занять несколько минут...");
+    try {
+      await zvonariAPI.retryFailed(period.from, period.to);
+      pollSyncStatus();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setSyncMessage("Уже выполняется синхронизация или повтор, ожидаем завершения...");
+        pollSyncStatus();
+        return;
+      }
+      console.error("Retry failed calls request failed:", err);
+      setSyncError(err instanceof Error ? err.message : "Не удалось запустить повтор");
       setSyncing(false);
     }
   };
@@ -345,6 +397,10 @@ export default function ZvonariPage() {
               <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
               {syncing ? "Синхронизация..." : "Синхронизировать"}
             </Button>
+            <Button variant="outline" onClick={handleRetryFailed} disabled={syncing}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+              Повторить неудачные
+            </Button>
           </div>
           {syncing && syncProgress && syncProgress.total > 0 && (
             <div className="mt-3">
@@ -404,6 +460,9 @@ export default function ZvonariPage() {
                     </Button>
                   </div>
                 </CardHeader>
+                <CardContent className="pt-0 pb-4">
+                  <StatusBreakdown counts={statusCounts[caller.id]} />
+                </CardContent>
                 {panel && (panel.error || panel.distribution || panel.report || panel.calls) && (
                   <CardContent className="space-y-4">
                     {panel.error && <p className="text-sm text-destructive">{panel.error}</p>}

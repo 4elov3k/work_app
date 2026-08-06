@@ -7,6 +7,7 @@ package zvonari
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -53,15 +54,14 @@ type SyncStatus struct {
 	Error          string      `json:"error,omitempty"`
 }
 
-// StartSync launches a sync in the background and returns immediately.
-// Returns false if one is already running (never runs two concurrently —
-// OnlinePBX/Hermes get hammered otherwise, and duplicate concurrent inserts
-// would race on the same pbx_uuid). The background run uses its own
-// context, detached from the triggering HTTP request, so a client
-// disconnect (browser closed, proxy idle-timeout) can't abort a batch
-// that's minutes into transcribing/analyzing calls — a full sync over many
-// calls easily exceeds typical reverse-proxy idle timeouts.
-func (s *Service) StartSync(from, to time.Time) bool {
+// startBackgroundJob runs job in the background and returns immediately.
+// Returns false if one is already running — a sync and a retry-failed run
+// share this same slot so they never run concurrently against each other
+// either (both hammer OnlinePBX/Hermes and both write to the same rows).
+// The background run uses its own context, detached from the triggering
+// HTTP request, so a client disconnect (browser closed, proxy idle-timeout)
+// can't abort a batch that's minutes into transcribing/analyzing calls.
+func (s *Service) startBackgroundJob(job func(ctx context.Context) (*SyncResult, error)) bool {
 	s.syncMu.Lock()
 	if s.syncStatus.Running {
 		s.syncMu.Unlock()
@@ -72,7 +72,7 @@ func (s *Service) StartSync(from, to time.Time) bool {
 	s.syncMu.Unlock()
 
 	go func() {
-		result, err := s.SyncCalls(context.Background(), from, to)
+		result, err := job(context.Background())
 		finishedAt := time.Now()
 
 		s.syncMu.Lock()
@@ -81,7 +81,7 @@ func (s *Service) StartSync(from, to time.Time) bool {
 		s.syncStatus.FinishedAt = &finishedAt
 		s.syncStatus.Result = result
 		if err != nil {
-			log.Printf("zvonari: background sync failed: %v", err)
+			log.Printf("zvonari: background job failed: %v", err)
 			s.syncStatus.Error = err.Error()
 		} else {
 			s.syncStatus.Error = ""
@@ -89,6 +89,24 @@ func (s *Service) StartSync(from, to time.Time) bool {
 	}()
 
 	return true
+}
+
+// StartSync launches a CDR sync in the background — see startBackgroundJob.
+func (s *Service) StartSync(from, to time.Time) bool {
+	return s.startBackgroundJob(func(ctx context.Context) (*SyncResult, error) {
+		return s.SyncCalls(ctx, from, to)
+	})
+}
+
+// StartRetryFailed re-attempts transcribe+analyze, in the background, for
+// every existing call in [from, to) stuck on "failed"/"no_recording"/
+// "pending"/"transcribing" — the bulk counterpart to RetranscribeCall, for
+// clearing a backlog (e.g. after a bug fix, or a batch of backend restarts
+// mid-sync) without clicking through each call one at a time.
+func (s *Service) StartRetryFailed(from, to time.Time) bool {
+	return s.startBackgroundJob(func(ctx context.Context) (*SyncResult, error) {
+		return s.RetryFailedCalls(ctx, from, to)
+	})
 }
 
 // GetSyncStatus returns a snapshot of the current/last sync run.
@@ -164,6 +182,14 @@ type SyncResult struct {
 // see TRANSCRIBE_CPU_THREADS) from oversubscribing an 8-core host.
 const maxConcurrentProcessing = 4
 
+// pending is a call queued for transcribe+analyze, shared by SyncCalls
+// (freshly-inserted CDR rows) and RetryFailedCalls (existing rows stuck on
+// a non-"done" status).
+type pending struct {
+	call *models.Call
+	uuid string
+}
+
 // SyncCalls pulls CDR for [from, to) from OnlinePBX, inserts new valid calls,
 // and (best-effort, per call) transcribes + analyzes each one via Hermes —
 // several calls concurrently (see maxConcurrentProcessing) rather than one
@@ -189,10 +215,6 @@ func (s *Service) SyncCalls(ctx context.Context, from, to time.Time) (*SyncResul
 
 	result := &SyncResult{CallersSynced: callersSynced, CallsFound: len(records)}
 
-	type pending struct {
-		call *models.Call
-		uuid string
-	}
 	var toProcess []pending
 
 	for _, rec := range records {
@@ -230,6 +252,35 @@ func (s *Service) SyncCalls(ctx context.Context, from, to time.Time) (*SyncResul
 		toProcess = append(toProcess, pending{call: call, uuid: rec.UUID})
 	}
 
+	s.processConcurrently(ctx, toProcess, result)
+
+	return result, nil
+}
+
+// RetryFailedCalls re-runs transcribe+analyze for every existing call in
+// [from, to) whose transcript_status isn't "done" — the bulk counterpart to
+// a single RetranscribeCall, for clearing a backlog in one go.
+func (s *Service) RetryFailedCalls(ctx context.Context, from, to time.Time) (*SyncResult, error) {
+	calls, err := s.db.ListCallsByStatusPeriod(ctx, []string{"failed", "no_recording", "pending", "transcribing"}, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("listing calls to retry: %w", err)
+	}
+
+	result := &SyncResult{CallsFound: len(calls)}
+	var toProcess []pending
+	for i := range calls {
+		toProcess = append(toProcess, pending{call: &calls[i], uuid: calls[i].PBXUUID})
+	}
+
+	s.processConcurrently(ctx, toProcess, result)
+
+	return result, nil
+}
+
+// processConcurrently runs transcribeAndAnalyze for each pending call, up
+// to maxConcurrentProcessing at once, and keeps the live sync-status
+// progress counters (TotalToProcess/Processed) up to date as it goes.
+func (s *Service) processConcurrently(ctx context.Context, toProcess []pending, result *SyncResult) {
 	s.syncMu.Lock()
 	s.syncStatus.TotalToProcess = len(toProcess)
 	s.syncStatus.Processed = 0
@@ -251,8 +302,6 @@ func (s *Service) SyncCalls(ctx context.Context, from, to time.Time) (*SyncResul
 		}(p.call, p.uuid)
 	}
 	wg.Wait()
-
-	return result, nil
 }
 
 func (s *Service) transcribeAndAnalyze(ctx context.Context, call *models.Call, pbxUUID string, mu *sync.Mutex, result *SyncResult) {
@@ -260,10 +309,27 @@ func (s *Service) transcribeAndAnalyze(ctx context.Context, call *models.Call, p
 		return
 	}
 
+	// One retry before giving up: under concurrent processing, an
+	// occasional OnlinePBX API hiccup (rate limit, transient network error)
+	// previously got permanently misfiled as "no recording" right alongside
+	// calls that genuinely never had one — this only downgrades to
+	// ErrNoRecording (not retried, since that means OnlinePBX explicitly
+	// confirmed there's nothing to fetch) after a real second failure.
 	audio, err := s.pbx.DownloadRecording(ctx, pbxUUID)
+	if err != nil && !errors.Is(err, pbx.ErrNoRecording) {
+		audio, err = s.pbx.DownloadRecording(ctx, pbxUUID)
+	}
 	if err != nil {
-		log.Printf("zvonari: no recording for call %s: %v", pbxUUID, err)
-		_ = s.db.SetCallTranscriptStatus(ctx, call.ID, "no_recording")
+		if errors.Is(err, pbx.ErrNoRecording) {
+			log.Printf("zvonari: no recording for call %s", pbxUUID)
+			_ = s.db.SetCallTranscriptStatus(ctx, call.ID, "no_recording")
+		} else {
+			log.Printf("zvonari: failed to download recording for call %s: %v", pbxUUID, err)
+			_ = s.db.SetCallTranscriptStatus(ctx, call.ID, "failed")
+			mu.Lock()
+			result.TranscribeErrors++
+			mu.Unlock()
+		}
 		return
 	}
 
@@ -378,6 +444,14 @@ func (s *Service) RequestCallerReport(ctx context.Context, callerID, period stri
 // per card without a request per caller.
 func (s *Service) CallCounts(ctx context.Context, from, to time.Time) (map[string]int, error) {
 	return s.db.CountCallsByCallerPeriod(ctx, from, to)
+}
+
+// CallStatusCounts returns, per caller, a breakdown of calls by
+// transcript_status in [from, to) — the "полная статистика" view showing
+// how many actually finished processing vs are stuck/failed, not just a
+// raw call count.
+func (s *Service) CallStatusCounts(ctx context.Context, from, to time.Time) (map[string]map[string]int, error) {
+	return s.db.CountCallsByCallerAndStatus(ctx, from, to)
 }
 
 // ListCalls returns a caller's individual calls for a period (with

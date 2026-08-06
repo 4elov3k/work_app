@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -98,9 +99,12 @@ type CallRecord struct {
 const maxSearchWindow = 7 * 24 * time.Hour
 
 // SearchHistory возвращает звонки за [from, to), разбивая запрос на
-// недельные окна, и просит сервер отфильтровать короткие звонки
-// (duration_from=10) — оставшийся критерий "не отменён" (hangup_cause)
-// проверяется на стороне вызывающего кода, серверного фильтра для него нет.
+// недельные окна, и просит сервер отфильтровать по времени именно
+// разговора (user_talk_time_from=10), а не по общей длительности звонка —
+// duration_sec включает время дозвона/гудков, так что звонок с нулевым
+// talk_time (никто не ответил) мог проходить фильтр по одной "duration".
+// Оставшийся критерий "не отменён" (hangup_cause) проверяется на стороне
+// вызывающего кода, серверного фильтра для него нет.
 func (c *Client) SearchHistory(ctx context.Context, from, to time.Time) ([]CallRecord, error) {
 	var all []CallRecord
 	windowStart := from
@@ -121,9 +125,9 @@ func (c *Client) SearchHistory(ctx context.Context, from, to time.Time) ([]CallR
 
 func (c *Client) searchWindow(ctx context.Context, from, to time.Time) ([]CallRecord, error) {
 	body, err := c.post(ctx, "mongo_history/search.json", map[string]interface{}{
-		"start_stamp_from": from.Unix(),
-		"start_stamp_to":   to.Unix(),
-		"duration_from":    10,
+		"start_stamp_from":    from.Unix(),
+		"start_stamp_to":      to.Unix(),
+		"user_talk_time_from": 10,
 	})
 	if err != nil {
 		return nil, err
@@ -141,6 +145,15 @@ func (c *Client) searchWindow(ctx context.Context, from, to time.Time) ([]CallRe
 	return parsed.Data, nil
 }
 
+// ErrNoRecording is returned only when OnlinePBX explicitly confirms there
+// is no recording for a call (a successful API response with an empty
+// link) — as opposed to any other failure (network error, rate limiting,
+// a bad HTTP status downloading the file), which is a transient/technical
+// problem the caller should treat as retryable, not "there was never a
+// recording". Conflating the two previously caused real recordings to be
+// permanently marked "no_recording" whenever the fetch merely failed once.
+var ErrNoRecording = errors.New("onlinepbx: no recording available for this call")
+
 // DownloadRecording resolves a short-lived signed URL for the call's audio
 // (valid ~30 minutes per OnlinePBX docs) and fetches it immediately.
 func (c *Client) DownloadRecording(ctx context.Context, uuid string) ([]byte, error) {
@@ -149,7 +162,7 @@ func (c *Client) DownloadRecording(ctx context.Context, uuid string) ([]byte, er
 		"download": true,
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("requesting recording link: %w", err)
 	}
 	var parsed struct {
 		Status string `json:"status"`
@@ -158,8 +171,11 @@ func (c *Client) DownloadRecording(ctx context.Context, uuid string) ([]byte, er
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return nil, fmt.Errorf("onlinepbx recording link: parsing response: %w", err)
 	}
-	if parsed.Status != "1" || parsed.Data == "" {
-		return nil, fmt.Errorf("onlinepbx: no recording available for call %s", uuid)
+	if parsed.Status != "1" {
+		return nil, fmt.Errorf("onlinepbx recording link: request returned status %s", parsed.Status)
+	}
+	if parsed.Data == "" {
+		return nil, ErrNoRecording
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.Data, nil)

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lib/pq"
+
 	"invoices-backend/internal/models"
 )
 
@@ -134,6 +136,81 @@ func (db *DB) CountCallsByCallerPeriod(ctx context.Context, from, to time.Time) 
 		return nil, fmt.Errorf("error iterating call counts: %w", err)
 	}
 	return counts, nil
+}
+
+// CountCallsByCallerAndStatus returns, for every caller with calls in
+// [from, to), a breakdown of how many calls they have per transcript_status
+// (done/failed/no_recording/transcribing/pending) — one query, for the
+// caller-list "full statistics" view instead of raw counts hiding whether
+// transcription actually succeeded.
+func (db *DB) CountCallsByCallerAndStatus(ctx context.Context, from, to time.Time) (map[string]map[string]int, error) {
+	query := `
+		SELECT caller_id, transcript_status, count(*)
+		FROM calls
+		WHERE caller_id IS NOT NULL AND started_at >= $1 AND started_at < $2
+		GROUP BY caller_id, transcript_status
+	`
+	rows, err := db.QueryContext(ctx, query, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count calls by status: %w", err)
+	}
+	defer rows.Close()
+
+	counts := map[string]map[string]int{}
+	for rows.Next() {
+		var callerID, status string
+		var count int
+		if err := rows.Scan(&callerID, &status, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan call status count: %w", err)
+		}
+		if counts[callerID] == nil {
+			counts[callerID] = map[string]int{}
+		}
+		counts[callerID][status] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating call status counts: %w", err)
+	}
+	return counts, nil
+}
+
+// ListCallsByStatusPeriod returns all calls (any caller) in [from, to)
+// whose transcript_status is one of the given values — for a bulk "retry
+// everything that didn't finish processing" job.
+func (db *DB) ListCallsByStatusPeriod(ctx context.Context, statuses []string, from, to time.Time) ([]models.Call, error) {
+	query := `
+		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
+		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json, created_at, updated_at
+		FROM calls
+		WHERE transcript_status = ANY($1) AND started_at >= $2 AND started_at < $3
+		ORDER BY started_at
+	`
+	rows, err := db.QueryContext(ctx, query, pq.Array(statuses), from, to)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query calls by status: %w", err)
+	}
+	defer rows.Close()
+
+	var calls []models.Call
+	for rows.Next() {
+		var c models.Call
+		var analytics []byte
+		if err := rows.Scan(
+			&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
+			&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
+			&c.TranscriptText, &analytics, &c.CreatedAt, &c.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan call: %w", err)
+		}
+		if len(analytics) > 0 {
+			c.AnalyticsJSON = json.RawMessage(analytics)
+		}
+		calls = append(calls, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating calls: %w", err)
+	}
+	return calls, nil
 }
 
 func (db *DB) ListCallsByCallerPeriod(ctx context.Context, callerID string, from, to time.Time) ([]models.Call, error) {
