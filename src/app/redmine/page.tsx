@@ -31,12 +31,14 @@ import {
 } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
+import { Alert } from "@/components/ui/alert"
 
 const STATUS_COLUMNS = [
-  { key: "active", title: "Активные", tone: "bg-emerald-500", icon: CheckCircle2 },
-  { key: "pause", title: "Пауза", tone: "bg-amber-500", icon: PauseCircle },
-  { key: "done", title: "Завершенные", tone: "bg-slate-500", icon: CheckCircle2 },
-  { key: "unknown", title: "Не разобраны", tone: "bg-zinc-400", icon: UserRound },
+  { key: "active", title: "Активные", tone: "bg-success", icon: CheckCircle2 },
+  { key: "pause", title: "Пауза", tone: "bg-warning", icon: PauseCircle },
+  { key: "done", title: "Завершенные", tone: "bg-neutral-500", icon: CheckCircle2 },
+  { key: "unknown", title: "Не разобраны", tone: "bg-neutral-400", icon: UserRound },
 ]
 
 const PROJECT_TYPES: Array<{ key: RedmineProjectType; label: string }> = [
@@ -49,10 +51,10 @@ const PROJECT_TYPES: Array<{ key: RedmineProjectType; label: string }> = [
 ]
 
 const DEADLINE_STATES: Record<RedmineDeadlineState, { label: string; className: string; icon: typeof CheckCircle2 }> = {
-  ok: { label: "Ок", className: "border-emerald-200 bg-emerald-50 text-emerald-800", icon: CheckCircle2 },
-  due_soon: { label: "Скоро срок", className: "border-amber-200 bg-amber-50 text-amber-800", icon: AlertTriangle },
-  burning: { label: "Горит", className: "border-red-200 bg-red-50 text-red-800", icon: Flame },
-  urgent: { label: "Срочное", className: "border-red-300 bg-red-100 text-red-900", icon: Flame },
+  ok: { label: "Ок", className: "border-success/30 bg-success/10 text-success", icon: CheckCircle2 },
+  due_soon: { label: "Скоро срок", className: "border-warning/30 bg-warning/10 text-warning", icon: AlertTriangle },
+  burning: { label: "Горит", className: "border-destructive/30 bg-destructive/10 text-destructive", icon: Flame },
+  urgent: { label: "Срочное", className: "border-destructive/50 bg-destructive/20 text-destructive", icon: Flame },
 }
 
 function groupKeyForItem(item: RedmineProjectDashboardItem) {
@@ -398,7 +400,7 @@ export default function RedmineDashboardPage() {
         }}
         onDragEnd={() => setDragProjectId("")}
         className={`cursor-pointer rounded-md border bg-background p-4 shadow-sm transition-colors hover:border-primary/50 hover:bg-muted/30 ${
-          item.deadline_state === "burning" || item.deadline_state === "urgent" ? "border-red-200" : ""
+          item.deadline_state === "burning" || item.deadline_state === "urgent" ? "border-destructive/40" : ""
         }`}
       >
         <div className="flex items-start justify-between gap-3">
@@ -435,9 +437,9 @@ export default function RedmineDashboardPage() {
         )}
 
         {item.urgent && item.urgent_reason && cardMode !== "compact" && (
-          <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
+          <Alert className="mt-3" icon={<Flame className="mt-0.5 h-4 w-4 shrink-0" />}>
             Срочно: {item.urgent_reason}
-          </div>
+          </Alert>
         )}
 
         {cardMode !== "docs" && (
@@ -534,8 +536,7 @@ export default function RedmineDashboardPage() {
           <div className="mt-3 space-y-3">
             <label className="block space-y-1">
               <span className="text-xs font-medium text-muted-foreground">Тип проекта</span>
-              <select
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+              <Select
                 value={item.project_type}
                 onChange={(event) => handleProjectTypeChange(item, event.target.value as RedmineProjectType)}
                 disabled={isSaving}
@@ -543,13 +544,12 @@ export default function RedmineDashboardPage() {
                 {PROJECT_TYPES.map((type) => (
                   <option key={type.key || "none"} value={type.key}>{type.label}</option>
                 ))}
-              </select>
+              </Select>
             </label>
 
             <label className="block space-y-1">
               <span className="text-xs font-medium text-muted-foreground">Проектник</span>
-              <select
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+              <Select
                 value={managerValue}
                 onChange={(event) => handleManagerChange(item, event.target.value)}
               >
@@ -557,13 +557,12 @@ export default function RedmineDashboardPage() {
                 {managers.map((manager) => (
                   <option key={manager} value={manager}>{manager}</option>
                 ))}
-              </select>
+              </Select>
             </label>
 
             <label className="block space-y-1">
               <span className="text-xs font-medium text-muted-foreground">Статус</span>
-              <select
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+              <Select
                 value={currentKey}
                 onChange={(event) => handleStatusChange(item, event.target.value)}
               >
@@ -571,7 +570,7 @@ export default function RedmineDashboardPage() {
                 <option value="pause">Пауза</option>
                 <option value="done">Завершенный</option>
                 <option value="unknown">Не разобран</option>
-              </select>
+              </Select>
             </label>
 
             <Button type="button" variant="outline" size="sm" disabled={isSaving} onClick={() => handleUrgentToggle(item)}>
@@ -654,14 +653,13 @@ export default function RedmineDashboardPage() {
             placeholder="Найти проект"
           />
         </div>
-        <select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={managerFilter} onChange={(event) => setManagerFilter(event.target.value)}>
+        <Select value={managerFilter} onChange={(event) => setManagerFilter(event.target.value)}>
           <option value="">Все проектники</option>
           {managers.map((manager) => (
             <option key={manager} value={manager}>{manager}</option>
           ))}
-        </select>
-        <select
-          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+        </Select>
+        <Select
           value={typeFilter}
           onChange={(event) => {
             setTypeFilter(event.target.value as RedmineProjectType)
@@ -672,14 +670,14 @@ export default function RedmineDashboardPage() {
           {PROJECT_TYPES.filter((type) => type.key).map((type) => (
             <option key={type.key} value={type.key}>{type.label}</option>
           ))}
-        </select>
-        <select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={deadlineFilter} onChange={(event) => setDeadlineFilter(event.target.value)}>
+        </Select>
+        <Select value={deadlineFilter} onChange={(event) => setDeadlineFilter(event.target.value)}>
           <option value="">Все сроки</option>
           <option value="urgent">Срочные</option>
           <option value="burning">Горят</option>
           <option value="due_soon">Скоро срок</option>
           <option value="ok">Ок</option>
-        </select>
+        </Select>
         <div className="text-sm text-muted-foreground lg:self-center">
           Показано {filteredItems.length} из {items.length}
         </div>
@@ -729,11 +727,7 @@ export default function RedmineDashboardPage() {
         )}
       </div>
 
-      {error && (
-        <div className="mb-6 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {error}
-        </div>
-      )}
+      {error && <Alert className="mb-6">{error}</Alert>}
 
       {loading ? (
         <div className="flex items-center justify-center py-16">

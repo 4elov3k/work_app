@@ -6,6 +6,8 @@ import { ExternalLink, Loader2, RefreshCw, Settings } from "lucide-react"
 import { customersAPI, redmineAPI, RedmineProject, RedmineProjectLink } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
+import { Alert } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 
 export default function RedmineProjectLinkPanel({ customerId }: { customerId: string }) {
@@ -144,8 +146,7 @@ export default function RedmineProjectLinkPanel({ customerId }: { customerId: st
             placeholder="Поиск проекта"
             disabled={saving}
           />
-          <select
-            className="min-h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+          <Select
             value={selectedProjectId}
             onChange={(event) => setSelectedProjectId(event.target.value)}
             disabled={loading || saving}
@@ -156,7 +157,7 @@ export default function RedmineProjectLinkPanel({ customerId }: { customerId: st
                 {project.name} ({project.identifier})
               </option>
             ))}
-          </select>
+          </Select>
           <div className="flex gap-2">
             <Button type="button" variant="outline" onClick={loadData} disabled={loading || saving} aria-label="Обновить проекты">
               <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
@@ -169,11 +170,7 @@ export default function RedmineProjectLinkPanel({ customerId }: { customerId: st
         </div>
       )}
 
-      {error && (
-        <div className="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-          {error}
-        </div>
-      )}
+      {error && <Alert className="mt-3">{error}</Alert>}
     </div>
   )
 }

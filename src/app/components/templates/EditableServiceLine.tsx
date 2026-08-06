@@ -7,6 +7,8 @@ import { useRouter } from "next/navigation"
 import { Service, servicesAPI, invoicesAPI, actsAPI } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
+import { Alert } from "@/components/ui/alert"
 import { TableCell, TableRow } from "@/components/ui/table"
 import {
   Dialog,
@@ -208,19 +210,14 @@ export default function EditableServiceLine({
               <DialogTitle>{mode === "edit" ? "Редактировать услугу" : "Добавить услугу"}</DialogTitle>
               <DialogDescription>Выберите готовую услугу или заполните поля вручную.</DialogDescription>
             </DialogHeader>
-            {error && (
-              <div className="mt-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-                {error}
-              </div>
-            )}
+            {error && <Alert className="mt-4">{error}</Alert>}
             <div className="grid gap-4 py-4">
               <div className="space-y-2">
                 <label htmlFor={`service-${service.id}`} className="text-sm font-medium">
                   Готовая услуга
                 </label>
-                <select
+                <Select
                   id={`service-${service.id}`}
-                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
                   value={serviceId}
                   onChange={(event) => setServiceId(event.target.value)}
                 >
@@ -230,7 +227,7 @@ export default function EditableServiceLine({
                       {item.name} • {item.price} ₽
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               {!serviceId && (

@@ -7,6 +7,7 @@ import { FileSpreadsheet, Loader2, Plus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Alert } from "@/components/ui/alert"
 import {
   Dialog,
   DialogContent,
@@ -213,9 +214,7 @@ export default function AppendixList({ customerId, contractId }: AppendixListPro
               </DialogDescription>
             </DialogHeader>
 
-            {formError && (
-              <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{formError}</div>
-            )}
+            {formError && <Alert>{formError}</Alert>}
 
             <div className="grid grid-cols-2 gap-4 mb-2">
               <div>
@@ -321,13 +320,18 @@ export default function AppendixList({ customerId, contractId }: AppendixListPro
         </Dialog>
       </div>
 
-      {error && (
-        <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>
-      )}
+      {error && <Alert className="mb-4">{error}</Alert>}
 
       {loading ? (
-        <div className="flex items-center justify-center py-8">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <div className="grid gap-3 md:grid-cols-2">
+          {[1, 2].map((i) => (
+            <Card key={i} className="animate-pulse">
+              <CardHeader className="py-4">
+                <div className="h-4 bg-muted rounded w-1/3 mb-2"></div>
+                <div className="h-3 bg-muted rounded w-1/2"></div>
+              </CardHeader>
+            </Card>
+          ))}
         </div>
       ) : appendices.length === 0 && !error ? (
         <Card>
@@ -376,11 +380,7 @@ export default function AppendixList({ customerId, contractId }: AppendixListPro
               Приложение № {deleteTarget?.number} будет удалено без возможности восстановления.
             </DialogDescription>
           </DialogHeader>
-          {deleteError && (
-            <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded text-sm">
-              {deleteError}
-            </div>
-          )}
+          {deleteError && <Alert>{deleteError}</Alert>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setDeleteOpen(false)} disabled={deleting}>
               Отмена

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation"
 import { contractsAPI, invoicesAPI } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Alert } from "@/components/ui/alert"
 import {
   Dialog,
   DialogContent,
@@ -92,11 +93,7 @@ export default function CreateActFromInvoice({ invoiceId, customerId, contractId
             <DialogTitle>Акт на основании счета</DialogTitle>
             <DialogDescription>Укажите номер и дату акта.</DialogDescription>
           </DialogHeader>
-          {error && (
-            <div role="alert" className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded text-sm">
-              {error}
-            </div>
-          )}
+          {error && <Alert>{error}</Alert>}
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
               <label htmlFor="actNumber" className="text-sm font-medium">

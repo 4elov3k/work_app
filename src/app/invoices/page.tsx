@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react"
 import { Invoice, Act, invoicesAPI, actsAPI, customersAPI, Customer } from "@/lib/api"
 import Link from "next/link"
-import { ArrowLeft, FileText, FileCheck, Calendar, User, Loader2 } from "lucide-react"
+import { ArrowLeft, FileText, FileCheck, Calendar, User, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -126,11 +126,13 @@ export default function AllInvoicesPage() {
         </div>
 
         {/* Поиск */}
-        <div className="max-w-md">
+        <div className="relative max-w-md">
+          <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Поиск по номеру, дате или клиенту..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10"
           />
         </div>
       </div>
@@ -149,8 +151,15 @@ export default function AllInvoicesPage() {
 
         <TabsContent value="invoices" className="mt-6">
           {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {[1, 2, 3, 4].map((i) => (
+                <Card key={i} className="animate-pulse">
+                  <CardHeader>
+                    <div className="h-4 bg-muted rounded w-3/4 mb-2"></div>
+                    <div className="h-3 bg-muted rounded w-1/2"></div>
+                  </CardHeader>
+                </Card>
+              ))}
             </div>
           ) : filterDocuments(invoices).length === 0 ? (
             <Card>
@@ -170,8 +179,15 @@ export default function AllInvoicesPage() {
 
         <TabsContent value="acts" className="mt-6">
           {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {[1, 2, 3, 4].map((i) => (
+                <Card key={i} className="animate-pulse">
+                  <CardHeader>
+                    <div className="h-4 bg-muted rounded w-3/4 mb-2"></div>
+                    <div className="h-3 bg-muted rounded w-1/2"></div>
+                  </CardHeader>
+                </Card>
+              ))}
             </div>
           ) : filterDocuments(acts).length === 0 ? (
             <Card>

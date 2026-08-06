@@ -16,6 +16,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
+import { Alert } from "@/components/ui/alert"
 
 export default function ServicesList() {
   const [services, setServices] = useState<Service[]>([])
@@ -101,11 +102,7 @@ export default function ServicesList() {
                 <DialogTitle>Создать услугу</DialogTitle>
                 <DialogDescription>Введите название и цену</DialogDescription>
               </DialogHeader>
-              {error && (
-                <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded text-sm">
-                  {error}
-                </div>
-              )}
+              {error && <Alert>{error}</Alert>}
               <div className="grid gap-4 py-4">
                 <div className="space-y-2">
                   <label htmlFor="serviceName" className="text-sm font-medium">
@@ -207,11 +204,7 @@ export default function ServicesList() {
             <DialogTitle>Удалить услугу?</DialogTitle>
             <DialogDescription>Это действие нельзя отменить.</DialogDescription>
           </DialogHeader>
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded text-sm">
-              {error}
-            </div>
-          )}
+          {error && <Alert>{error}</Alert>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setDeleteOpen(false)} disabled={submitting}>
               Отмена

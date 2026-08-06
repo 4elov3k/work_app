@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation"
 import { servicesAPI, invoicesAPI, actsAPI, Service } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
+import { Alert } from "@/components/ui/alert"
 import {
   Dialog,
   DialogContent,
@@ -88,19 +90,14 @@ export default function AddLine({ docId, docType }: AddLineProps) {
             <DialogTitle>Добавить услугу</DialogTitle>
             <DialogDescription>Выберите услугу из справочника или укажите вручную.</DialogDescription>
           </DialogHeader>
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded text-sm">
-              {error}
-            </div>
-          )}
+          {error && <Alert>{error}</Alert>}
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
               <label htmlFor="serviceSelect" className="text-sm font-medium">
                 Справочник услуг
               </label>
-              <select
+              <Select
                 id="serviceSelect"
-                className="w-full border rounded-md px-3 py-2 text-sm bg-background"
                 value={serviceId}
                 onChange={(e) => setServiceId(e.target.value)}
               >
@@ -110,7 +107,7 @@ export default function AddLine({ docId, docType }: AddLineProps) {
                     {service.name} • {service.price} ₽
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             {!serviceId && (
               <>
