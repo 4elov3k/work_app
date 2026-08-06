@@ -137,6 +137,9 @@ func main() {
 		r.Patch("/acts/{id}", h.UpdateAct)
 		r.Delete("/acts/{id}", h.DeleteAct)
 
+		// Documents
+		r.Post("/documents/parse-contract", h.ParseContractDocument)
+
 		// Services
 		r.Get("/services/catalog", h.GetServiceCatalog)
 		r.Get("/services", h.GetServices)
