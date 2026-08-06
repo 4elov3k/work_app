@@ -148,6 +148,12 @@ func main() {
 		r.Get("/services", h.GetServices)
 		r.Post("/services", h.CreateService)
 		r.Delete("/services/{id}", h.DeleteService)
+
+		// Звонари (OnlinePBX CDR + Hermes transcribe/analytics)
+		r.Get("/zvonari/callers", h.GetCallers)
+		r.Post("/zvonari/sync", h.SyncZvonariCalls)
+		r.Get("/zvonari/callers/{id}/distribution", h.GetCallerCallDistribution)
+		r.Post("/zvonari/callers/{id}/report", h.RequestCallerReport)
 	})
 
 	// Запуск сервера

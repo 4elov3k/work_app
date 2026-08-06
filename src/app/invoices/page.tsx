@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react"
 import { Invoice, Act, invoicesAPI, actsAPI, customersAPI, Customer } from "@/lib/api"
 import Link from "next/link"
-import { ArrowLeft, FileText, FileCheck, Calendar, User, Loader2 } from "lucide-react"
+import { ArrowLeft, FileText, FileCheck, Calendar, User, Loader2, Phone } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -120,6 +120,12 @@ export default function AllInvoicesPage() {
             <Button variant="outline">
               <ArrowLeft className="mr-2 h-4 w-4" />
               Главная
+            </Button>
+          </Link>
+          <Link href="/zvonari">
+            <Button variant="outline">
+              <Phone className="mr-2 h-4 w-4" />
+              Звонари
             </Button>
           </Link>
           <h1 className="text-3xl font-bold">Все документы</h1>

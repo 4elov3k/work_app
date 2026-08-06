@@ -1,7 +1,7 @@
 "use client"
 import { ChangeEvent, useEffect, useState } from "react";
 import Link from "next/link";
-import { LayoutDashboard, Search, Building2, FileText } from "lucide-react";
+import { LayoutDashboard, Search, Building2, FileText, Phone } from "lucide-react";
 
 import { customersAPI, Customer } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -84,6 +84,12 @@ export default function Home() {
             <Button variant="outline">
               <FileText className="mr-2 h-4 w-4" />
               Все документы
+            </Button>
+          </Link>
+          <Link href="/zvonari">
+            <Button variant="outline">
+              <Phone className="mr-2 h-4 w-4" />
+              Звонари
             </Button>
           </Link>
           <CreateCustomerDialog onCreated={handleCustomerCreated} />
