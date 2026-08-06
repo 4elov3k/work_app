@@ -150,13 +150,23 @@ type SyncResult struct {
 	TranscribeErrors int
 }
 
+// maxConcurrentProcessing bounds how many calls are transcribed+analyzed at
+// once. Each step is a slow network round-trip (Whisper is CPU-bound on the
+// Hermes side, ~10-20s/call; the analytics LLM call is another ~10-20s) —
+// running them one at a time left the machine's other CPU cores idle for no
+// reason, so a sync over a busy day took many minutes longer than it needed
+// to. 4 keeps call-transcribe's own per-request thread cap (2 CPU threads,
+// see TRANSCRIBE_CPU_THREADS) from oversubscribing an 8-core host.
+const maxConcurrentProcessing = 4
+
 // SyncCalls pulls CDR for [from, to) from OnlinePBX, inserts new valid calls,
-// and (best-effort, per call) transcribes + analyzes each one via Hermes.
-// A transcription/analytics failure never rolls back the CDR row already
-// written — the call stays visible with transcript_status reflecting what
-// went wrong, and a re-sync of the same period retries it, since pbx_uuid
-// uniqueness only blocks re-inserting the CDR row, not re-processing a row
-// stuck on "failed"/"no_recording".
+// and (best-effort, per call) transcribes + analyzes each one via Hermes —
+// several calls concurrently (see maxConcurrentProcessing) rather than one
+// at a time. A transcription/analytics failure never rolls back the CDR row
+// already written — the call stays visible with transcript_status
+// reflecting what went wrong, and a re-sync of the same period retries it,
+// since pbx_uuid uniqueness only blocks re-inserting the CDR row, not
+// re-processing a row stuck on "failed"/"no_recording".
 func (s *Service) SyncCalls(ctx context.Context, from, to time.Time) (*SyncResult, error) {
 	if !s.pbx.Configured() {
 		return nil, fmt.Errorf("PBX не настроен (нет PBX_API_TOKEN/PBX_DOMAIN)")
@@ -173,6 +183,12 @@ func (s *Service) SyncCalls(ctx context.Context, from, to time.Time) (*SyncResul
 	}
 
 	result := &SyncResult{CallersSynced: callersSynced, CallsFound: len(records)}
+
+	type pending struct {
+		call *models.Call
+		uuid string
+	}
+	var toProcess []pending
 
 	for _, rec := range records {
 		if rec.HangupCause == cancelledHangupCause {
@@ -206,14 +222,27 @@ func (s *Service) SyncCalls(ctx context.Context, from, to time.Time) (*SyncResul
 			continue
 		}
 		result.CallsNew++
-
-		s.transcribeAndAnalyze(ctx, call, rec.UUID, result)
+		toProcess = append(toProcess, pending{call: call, uuid: rec.UUID})
 	}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	sem := make(chan struct{}, maxConcurrentProcessing)
+	for _, p := range toProcess {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(call *models.Call, uuid string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			s.transcribeAndAnalyze(ctx, call, uuid, &mu, result)
+		}(p.call, p.uuid)
+	}
+	wg.Wait()
 
 	return result, nil
 }
 
-func (s *Service) transcribeAndAnalyze(ctx context.Context, call *models.Call, pbxUUID string, result *SyncResult) {
+func (s *Service) transcribeAndAnalyze(ctx context.Context, call *models.Call, pbxUUID string, mu *sync.Mutex, result *SyncResult) {
 	if !s.transcribe.Configured() {
 		return
 	}
@@ -230,7 +259,9 @@ func (s *Service) transcribeAndAnalyze(ctx context.Context, call *models.Call, p
 	if err != nil {
 		log.Printf("zvonari: transcribe failed for call %s: %v", pbxUUID, err)
 		_ = s.db.SetCallTranscriptStatus(ctx, call.ID, "failed")
+		mu.Lock()
 		result.TranscribeErrors++
+		mu.Unlock()
 		return
 	}
 	if err := s.db.SetCallTranscript(ctx, call.ID, tr.Text); err != nil {
