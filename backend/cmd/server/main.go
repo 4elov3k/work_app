@@ -100,6 +100,16 @@ func main() {
 		r.Get("/contracts/{id}/next-number", h.GetNextContractDocumentNumber)
 		r.Delete("/contracts/{id}", h.DeleteContract)
 
+		// Contract appendices (приложения к договору)
+		r.Get("/contracts/{id}/appendices", h.GetContractAppendices)
+		r.Post("/contracts/{id}/appendices", h.CreateContractAppendix)
+		r.Get("/contracts/{id}/appendices/next-number", h.GetNextContractAppendixNumber)
+		r.Get("/contract-appendices/{id}", h.GetContractAppendix)
+		r.Patch("/contract-appendices/{id}", h.UpdateContractAppendix)
+		r.Delete("/contract-appendices/{id}", h.DeleteContractAppendix)
+		r.Post("/contract-appendices/{id}/lines", h.AddContractAppendixLine)
+		r.Delete("/contract-appendices/{id}/lines/{lineID}", h.DeleteContractAppendixLine)
+
 		// Invoices
 		r.Get("/invoices", h.GetInvoices)
 		r.Post("/invoices/duplicate", h.DuplicateInvoice)
@@ -128,6 +138,7 @@ func main() {
 		r.Delete("/acts/{id}", h.DeleteAct)
 
 		// Services
+		r.Get("/services/catalog", h.GetServiceCatalog)
 		r.Get("/services", h.GetServices)
 		r.Post("/services", h.CreateService)
 		r.Delete("/services/{id}", h.DeleteService)

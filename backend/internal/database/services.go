@@ -11,17 +11,26 @@ import (
 
 // CreateService создает новую услугу
 func (db *DB) CreateService(ctx context.Context, req models.CreateServiceRequest) (*models.Service, error) {
+	unit := req.Unit
+	if unit == "" {
+		unit = "услуга"
+	}
 	query := `
-		INSERT INTO services (name, price)
-		VALUES ($1, $2)
-		RETURNING id, name, price, created_at, updated_at
+		INSERT INTO services (name, price, unit, section, price_per_hour, hours_per_unit)
+		VALUES ($1, $2, $3, $4, NULLIF($5, 0), NULLIF($6, 0))
+		RETURNING id, name, price, unit, section, COALESCE(price_per_hour, 0), COALESCE(hours_per_unit, 0), archived, created_at, updated_at
 	`
 
 	var service models.Service
-	err := db.QueryRowContext(ctx, query, req.Name, req.Price).Scan(
+	err := db.QueryRowContext(ctx, query, req.Name, req.Price, unit, req.Section, req.PricePerHour, req.HoursPerUnit).Scan(
 		&service.ID,
 		&service.Name,
 		&service.Price,
+		&service.Unit,
+		&service.Section,
+		&service.PricePerHour,
+		&service.HoursPerUnit,
+		&service.Archived,
 		&service.CreatedAt,
 		&service.UpdatedAt,
 	)
@@ -48,7 +57,7 @@ func (db *DB) GetServicesByIDs(ctx context.Context, ids []string) ([]models.Serv
 	}
 
 	query := fmt.Sprintf(`
-		SELECT id, name, price, created_at, updated_at
+		SELECT id, name, price, unit, section, COALESCE(price_per_hour, 0), COALESCE(hours_per_unit, 0), archived, created_at, updated_at
 		FROM services
 		WHERE id IN (%s)
 	`, strings.Join(placeholders, ", "))
@@ -66,6 +75,11 @@ func (db *DB) GetServicesByIDs(ctx context.Context, ids []string) ([]models.Serv
 			&service.ID,
 			&service.Name,
 			&service.Price,
+			&service.Unit,
+			&service.Section,
+			&service.PricePerHour,
+			&service.HoursPerUnit,
+			&service.Archived,
 			&service.CreatedAt,
 			&service.UpdatedAt,
 		)
@@ -92,7 +106,7 @@ func (db *DB) GetServices(ctx context.Context, page, perPage int) ([]models.Serv
 	}
 
 	query := `
-		SELECT id, name, price, created_at, updated_at
+		SELECT id, name, price, unit, section, COALESCE(price_per_hour, 0), COALESCE(hours_per_unit, 0), archived, created_at, updated_at
 		FROM services
 		ORDER BY created_at DESC
 	`
@@ -115,6 +129,11 @@ func (db *DB) GetServices(ctx context.Context, page, perPage int) ([]models.Serv
 			&service.ID,
 			&service.Name,
 			&service.Price,
+			&service.Unit,
+			&service.Section,
+			&service.PricePerHour,
+			&service.HoursPerUnit,
+			&service.Archived,
 			&service.CreatedAt,
 			&service.UpdatedAt,
 		); err != nil {
@@ -128,6 +147,54 @@ func (db *DB) GetServices(ctx context.Context, page, perPage int) ([]models.Serv
 	}
 
 	return services, total, nil
+}
+
+// GetServiceCatalog возвращает каталожные позиции услуг (с непустым section),
+// сгруппированные по разделам в порядке их естественного появления в прайсе.
+func (db *DB) GetServiceCatalog(ctx context.Context) ([]models.ServiceCatalogSection, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, name, price, unit, section, COALESCE(price_per_hour, 0), COALESCE(hours_per_unit, 0), archived, created_at, updated_at
+		FROM services
+		WHERE section <> '' AND NOT archived
+		ORDER BY section, created_at
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query service catalog: %w", err)
+	}
+	defer rows.Close()
+
+	order := []string{}
+	bySection := map[string][]models.Service{}
+	for rows.Next() {
+		var service models.Service
+		if err := rows.Scan(
+			&service.ID,
+			&service.Name,
+			&service.Price,
+			&service.Unit,
+			&service.Section,
+			&service.PricePerHour,
+			&service.HoursPerUnit,
+			&service.Archived,
+			&service.CreatedAt,
+			&service.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan service catalog item: %w", err)
+		}
+		if _, ok := bySection[service.Section]; !ok {
+			order = append(order, service.Section)
+		}
+		bySection[service.Section] = append(bySection[service.Section], service)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating service catalog: %w", err)
+	}
+
+	sections := make([]models.ServiceCatalogSection, 0, len(order))
+	for _, section := range order {
+		sections = append(sections, models.ServiceCatalogSection{Section: section, Items: bySection[section]})
+	}
+	return sections, nil
 }
 
 // DeleteService удаляет услугу по ID
