@@ -349,6 +349,9 @@ func (db *DB) LinkActInvoices(ctx context.Context, actID string, invoiceIDs []st
 }
 
 // CheckActNumberExists проверяет уникальность номера акта в рамках договора
+// CheckActNumberExists проверяет, занят ли номер акта. Номера актов
+// уникальны глобально, поэтому contract_id в условие не входит; contractID
+// сохранён в сигнатуре ради обратной совместимости вызовов.
 func (db *DB) CheckActNumberExists(ctx context.Context, contractID, number string, excludeID string) (bool, error) {
 	var query string
 	var args []interface{}
@@ -357,16 +360,16 @@ func (db *DB) CheckActNumberExists(ctx context.Context, contractID, number strin
 		query = `
 			SELECT COUNT(*)
 			FROM acts
-			WHERE contract_id = $1 AND number = $2
+			WHERE number = $1
 		`
-		args = []interface{}{contractID, number}
+		args = []interface{}{number}
 	} else {
 		query = `
 			SELECT COUNT(*)
 			FROM acts
-			WHERE contract_id = $1 AND number = $2 AND id != $3
+			WHERE number = $1 AND id != $2
 		`
-		args = []interface{}{contractID, number, excludeID}
+		args = []interface{}{number, excludeID}
 	}
 
 	var count int
@@ -390,15 +393,18 @@ func (db *DB) DeleteAct(ctx context.Context, id string) error {
 }
 
 // GetNextActNumber возвращает следующий номер акта для договора
+// GetNextActNumber возвращает следующий номер акта. Номера актов уникальны
+// глобально (across всех договоров и клиентов), а не только в рамках одного
+// договора — поэтому MAX считается по всей таблице. contractID сохранён в
+// сигнатуре ради обратной совместимости вызовов, но в запросе не участвует.
 func (db *DB) GetNextActNumber(ctx context.Context, contractID string) (int64, error) {
 	query := `
 		SELECT COALESCE(MAX(number::bigint), 2999) + 1
 		FROM acts
-		WHERE contract_id = $1
-		  AND number ~ '^[0-9]+$'
+		WHERE number ~ '^[0-9]+$'
 	`
 	var next int64
-	if err := db.QueryRowContext(ctx, query, contractID).Scan(&next); err != nil {
+	if err := db.QueryRowContext(ctx, query).Scan(&next); err != nil {
 		return 0, fmt.Errorf("failed to get next act number: %w", err)
 	}
 	return next, nil

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import CreateCustomerDialog from "./components/CreateCustomerDialog";
+import DeleteCustomerButton from "./[customer]/components/deleteCustomerButton";
 
 
 export default function Home() {
@@ -134,10 +135,17 @@ export default function Home() {
                 <CardHeader>
                   <div className="flex items-start justify-between">
                     <Building2 className="h-5 w-5 text-muted-foreground" />
-                    <Badge variant="secondary" className="ml-2">
-                      <FileText className="h-3 w-3 mr-1" />
-                      Активен
-                    </Badge>
+                    <div className="flex items-center gap-1">
+                      <Badge variant="secondary">
+                        <FileText className="h-3 w-3 mr-1" />
+                        Активен
+                      </Badge>
+                      <DeleteCustomerButton
+                        customerId={item.id}
+                        customerName={item.name}
+                        onDeleted={() => setItems((current) => current.filter((c) => c.id !== item.id))}
+                      />
+                    </div>
                   </div>
                   <CardTitle className="text-xl">{item.name}</CardTitle>
                   <CardDescription className="line-clamp-1">
