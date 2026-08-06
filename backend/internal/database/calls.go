@@ -39,6 +39,34 @@ func (db *DB) InsertCall(ctx context.Context, call models.Call) (*models.Call, b
 	return &c, true, nil
 }
 
+// GetCallByID returns a single call by its internal ID, e.g. for a manual
+// "(re)transcribe this call" trigger from the UI.
+func (db *DB) GetCallByID(ctx context.Context, id string) (*models.Call, error) {
+	query := `
+		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
+		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json, created_at, updated_at
+		FROM calls
+		WHERE id = $1
+	`
+	var c models.Call
+	var analytics []byte
+	err := db.QueryRowContext(ctx, query, id).Scan(
+		&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
+		&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
+		&c.TranscriptText, &analytics, &c.CreatedAt, &c.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("call not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get call: %w", err)
+	}
+	if len(analytics) > 0 {
+		c.AnalyticsJSON = json.RawMessage(analytics)
+	}
+	return &c, nil
+}
+
 // SetCallTranscriptStatus updates only the processing status (e.g. while a
 // transcription is in flight, or when it failed / no recording exists).
 func (db *DB) SetCallTranscriptStatus(ctx context.Context, id, status string) error {

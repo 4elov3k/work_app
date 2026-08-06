@@ -1093,6 +1093,8 @@ export interface SyncStatus {
   running: boolean;
   started_at?: string;
   finished_at?: string;
+  total_to_process?: number;
+  processed?: number;
   result?: SyncCallsResult;
   error?: string;
 }
@@ -1124,6 +1126,13 @@ export const zvonariAPI = {
     const params = new URLSearchParams({ from, to });
     const response = await fetch(`${API_BASE}/zvonari/calls/count?${params.toString()}`);
     return handleResponse<SingleResponse<Record<string, number>>>(response);
+  },
+
+  // Вручную (пере)запустить транскрибацию+аналитику для одного звонка —
+  // например, если он застрял в статусе transcribing/failed.
+  retranscribeCall: async (callId: string): Promise<SingleResponse<Call>> => {
+    const response = await fetch(`${API_BASE}/zvonari/calls/${callId}/transcribe`, { method: 'POST' });
+    return handleResponse<SingleResponse<Call>>(response);
   },
 
   // Детализация звонков звонаря за период (время, направление, транскрипт, категория)

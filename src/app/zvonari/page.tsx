@@ -1,7 +1,7 @@
 "use client"
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, RefreshCw, FileBarChart, Phone } from "lucide-react";
+import { ArrowLeft, RefreshCw, FileBarChart, Phone, Mic, Loader2 } from "lucide-react";
 
 import { zvonariAPI, Caller, CallerReport, Call, ApiError } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -51,30 +51,62 @@ function formatDuration(seconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function CallDetailList({ calls }: { calls: Call[] }) {
+function CallDetailList({
+  calls,
+  retranscribingIds,
+  onRetranscribe,
+}: {
+  calls: Call[];
+  retranscribingIds: Set<string>;
+  onRetranscribe: (callId: string) => void;
+}) {
   if (calls.length === 0) {
     return <p className="text-sm text-muted-foreground">Нет звонков за этот период</p>;
   }
   return (
     <div className="space-y-2">
-      {calls.map((call) => (
-        <details key={call.id} className="rounded border p-2">
-          <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-sm">
-            <span className="text-muted-foreground">
-              {new Date(call.started_at).toLocaleString("ru-RU")}
-            </span>
-            <Badge variant="outline">{DIRECTION_LABELS[call.direction] || call.direction}</Badge>
-            <span className="text-muted-foreground">{formatDuration(call.duration_sec)}</span>
-            {call.analytics_json?.outcome && <Badge variant="secondary">{call.analytics_json.outcome}</Badge>}
-            {call.transcript_status !== "done" && (
-              <span className="text-xs text-muted-foreground">({call.transcript_status})</span>
-            )}
-          </summary>
-          <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
-            {call.transcript_text || "Транскрипт недоступен"}
-          </p>
-        </details>
-      ))}
+      {calls.map((call) => {
+        const isRetranscribing = retranscribingIds.has(call.id);
+        return (
+          <details key={call.id} className="rounded border p-2">
+            <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted-foreground">
+                {new Date(call.started_at).toLocaleString("ru-RU")}
+              </span>
+              <Badge variant="outline">{DIRECTION_LABELS[call.direction] || call.direction}</Badge>
+              <span className="text-muted-foreground">{formatDuration(call.duration_sec)}</span>
+              {call.analytics_json?.outcome && <Badge variant="secondary">{call.analytics_json.outcome}</Badge>}
+              <span
+                className={`text-xs ${
+                  call.transcript_status === "done" ? "text-muted-foreground" : "text-amber-600"
+                }`}
+              >
+                {call.transcript_status}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="ml-auto h-7 px-2"
+                disabled={isRetranscribing}
+                onClick={(e) => {
+                  e.preventDefault();
+                  onRetranscribe(call.id);
+                }}
+              >
+                {isRetranscribing ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Mic className="h-3.5 w-3.5" />
+                )}
+                <span className="ml-1">Транскрибировать</span>
+              </Button>
+            </summary>
+            <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
+              {call.transcript_text || "Транскрипт недоступен"}
+            </p>
+          </details>
+        );
+      })}
     </div>
   );
 }
@@ -101,6 +133,8 @@ export default function ZvonariPage() {
 
   const [panels, setPanels] = useState<Record<string, CallerPanelState>>({});
   const [callCounts, setCallCounts] = useState<Record<string, number>>({});
+  const [syncProgress, setSyncProgress] = useState<{ total: number; processed: number } | null>(null);
+  const [retranscribingIds, setRetranscribingIds] = useState<Set<string>>(new Set());
 
   const loadCallers = () => {
     setLoadingCallers(true);
@@ -133,9 +167,13 @@ export default function ZvonariPage() {
       try {
         const response = await zvonariAPI.getSyncStatus();
         const status = response.data;
+        if (status.total_to_process) {
+          setSyncProgress({ total: status.total_to_process, processed: status.processed ?? 0 });
+        }
         if (!status.running) {
           clearInterval(interval);
           setSyncing(false);
+          setSyncProgress(null);
           if (status.error) {
             setSyncError(status.error);
           } else if (status.result) {
@@ -152,6 +190,7 @@ export default function ZvonariPage() {
         console.error("Sync status poll failed:", err);
         clearInterval(interval);
         setSyncing(false);
+        setSyncProgress(null);
       }
     }, 3000);
   };
@@ -241,6 +280,33 @@ export default function ZvonariPage() {
     }
   };
 
+  const handleRetranscribeCall = async (callerId: string, callId: string) => {
+    setRetranscribingIds((current) => new Set(current).add(callId));
+    try {
+      const response = await zvonariAPI.retranscribeCall(callId);
+      const updated = response.data;
+      setPanels((current) => {
+        const panel = current[callerId];
+        if (!panel?.calls) return current;
+        return {
+          ...current,
+          [callerId]: {
+            ...panel,
+            calls: panel.calls.map((c) => (c.id === callId ? updated : c)),
+          },
+        };
+      });
+    } catch (err) {
+      console.error("Retranscribe failed:", err);
+    } finally {
+      setRetranscribingIds((current) => {
+        const next = new Set(current);
+        next.delete(callId);
+        return next;
+      });
+    }
+  };
+
   return (
     <div className="container mx-auto py-8 px-4 max-w-5xl">
       <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -280,6 +346,22 @@ export default function ZvonariPage() {
               {syncing ? "Синхронизация..." : "Синхронизировать"}
             </Button>
           </div>
+          {syncing && syncProgress && syncProgress.total > 0 && (
+            <div className="mt-3">
+              <div className="mb-1 flex justify-between text-xs text-muted-foreground">
+                <span>Транскрибация и анализ звонков</span>
+                <span>
+                  {syncProgress.processed} / {syncProgress.total}
+                </span>
+              </div>
+              <div className="h-2 rounded bg-muted overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{ width: `${Math.min(100, (syncProgress.processed / syncProgress.total) * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
           {syncError && <p className="mt-3 text-sm text-destructive">{syncError}</p>}
           {syncMessage && <p className="mt-3 text-sm text-muted-foreground">{syncMessage}</p>}
         </CardContent>
@@ -340,7 +422,11 @@ export default function ZvonariPage() {
                     {panel.calls && (
                       <div>
                         <h4 className="mb-2 text-sm font-medium">Детализация по звонкам ({panel.calls.length})</h4>
-                        <CallDetailList calls={panel.calls} />
+                        <CallDetailList
+                          calls={panel.calls}
+                          retranscribingIds={retranscribingIds}
+                          onRetranscribe={(callId) => handleRetranscribeCall(caller.id, callId)}
+                        />
                       </div>
                     )}
                   </CardContent>

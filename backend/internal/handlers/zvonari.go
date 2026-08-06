@@ -111,6 +111,22 @@ func (h *Handlers) GetCallerCalls(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusOK, models.CallListResponse{Data: calls})
 }
 
+// RetranscribeCall обрабатывает POST /api/zvonari/calls/{id}/transcribe
+// Ручной (пере)запуск транскрибации+аналитики для одного звонка — например,
+// если он застрял в статусе "transcribing"/"failed" после перезапуска
+// бэкенда посреди синка. Синхронный: один звонок занимает секунды, не минуты.
+func (h *Handlers) RetranscribeCall(w http.ResponseWriter, r *http.Request) {
+	callID := chi.URLParam(r, "id")
+
+	call, err := h.zvonari.RetranscribeCall(r.Context(), callID)
+	if err != nil {
+		log.Printf("RetranscribeCall failed: %v", err)
+		respondNotFoundOrInternal(w, err, "Call not found")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, models.CallResponse{Data: *call})
+}
+
 // GetCallerCallDistribution обрабатывает GET /api/zvonari/callers/{id}/distribution?from=&to=
 func (h *Handlers) GetCallerCallDistribution(w http.ResponseWriter, r *http.Request) {
 	callerID := chi.URLParam(r, "id")
