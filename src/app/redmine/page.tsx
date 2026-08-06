@@ -18,6 +18,7 @@ import {
   Settings,
   Trash2,
   UserRound,
+  X,
 } from "lucide-react"
 
 import {
@@ -216,6 +217,24 @@ export default function RedmineDashboardPage() {
     }
     return result
   }, [items])
+
+  const activeFilterChips = useMemo(() => {
+    const chips: { key: string; label: string; onRemove: () => void }[] = []
+    if (searchQuery) chips.push({ key: "search", label: `Поиск: «${searchQuery}»`, onRemove: () => setSearchQuery("") })
+    if (managerFilter) chips.push({ key: "manager", label: `Проектник: ${managerFilter}`, onRemove: () => setManagerFilter("") })
+    if (typeFilter) chips.push({ key: "type", label: `Тип: ${projectTypeLabel(typeFilter)}`, onRemove: () => setTypeFilter("") })
+    if (statusFilter) {
+      const columnTitle = STATUS_COLUMNS.find((column) => column.key === statusFilter)?.title || statusFilter
+      chips.push({ key: "status", label: `Статус: ${columnTitle}`, onRemove: () => setStatusFilter("") })
+    }
+    if (deadlineFilter) {
+      const stateLabel = DEADLINE_STATES[deadlineFilter as RedmineDeadlineState]?.label || deadlineFilter
+      chips.push({ key: "deadline", label: `Срок: ${stateLabel}`, onRemove: () => setDeadlineFilter("") })
+    }
+    if (withoutTypeOnly) chips.push({ key: "withoutType", label: "Без типа", onRemove: () => setWithoutTypeOnly(false) })
+    if (missingCycleOnly) chips.push({ key: "missingCycle", label: "Без цикла", onRemove: () => setMissingCycleOnly(false) })
+    return chips
+  }, [searchQuery, managerFilter, typeFilter, statusFilter, deadlineFilter, withoutTypeOnly, missingCycleOnly])
 
   const countsByColumn = useMemo(() => {
     const result: Record<string, number> = {
@@ -605,20 +624,39 @@ export default function RedmineDashboardPage() {
         </Button>
       </div>
 
+      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Быстрые фильтры — нажмите ещё раз, чтобы снять
+      </p>
       <div className="mb-6 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <button type="button" onClick={() => setStatusFilter("active")} className="rounded-md border bg-background p-4 text-left hover:bg-muted/40">
+        <button
+          type="button"
+          onClick={() => setStatusFilter((current) => (current === "active" ? "" : "active"))}
+          className={`rounded-md border p-4 text-left transition-colors hover:bg-muted/40 ${statusFilter === "active" ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "bg-background"}`}
+        >
           <div className="text-xs text-muted-foreground">Активные</div>
           <div className="mt-1 text-2xl font-semibold">{summary.active}</div>
         </button>
-        <button type="button" onClick={() => setDeadlineFilter("urgent")} className="rounded-md border bg-background p-4 text-left hover:bg-muted/40">
+        <button
+          type="button"
+          onClick={() => setDeadlineFilter((current) => (current === "urgent" ? "" : "urgent"))}
+          className={`rounded-md border p-4 text-left transition-colors hover:bg-muted/40 ${deadlineFilter === "urgent" ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "bg-background"}`}
+        >
           <div className="text-xs text-muted-foreground">Срочные</div>
           <div className="mt-1 text-2xl font-semibold">{summary.urgent}</div>
         </button>
-        <button type="button" onClick={() => setDeadlineFilter("burning")} className="rounded-md border bg-background p-4 text-left hover:bg-muted/40">
+        <button
+          type="button"
+          onClick={() => setDeadlineFilter((current) => (current === "burning" ? "" : "burning"))}
+          className={`rounded-md border p-4 text-left transition-colors hover:bg-muted/40 ${deadlineFilter === "burning" ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "bg-background"}`}
+        >
           <div className="text-xs text-muted-foreground">Горят</div>
           <div className="mt-1 text-2xl font-semibold">{summary.burning}</div>
         </button>
-        <button type="button" onClick={() => setDeadlineFilter("due_soon")} className="rounded-md border bg-background p-4 text-left hover:bg-muted/40">
+        <button
+          type="button"
+          onClick={() => setDeadlineFilter((current) => (current === "due_soon" ? "" : "due_soon"))}
+          className={`rounded-md border p-4 text-left transition-colors hover:bg-muted/40 ${deadlineFilter === "due_soon" ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "bg-background"}`}
+        >
           <div className="text-xs text-muted-foreground">Скоро срок</div>
           <div className="mt-1 text-2xl font-semibold">{summary.dueSoon}</div>
         </button>
@@ -628,7 +666,7 @@ export default function RedmineDashboardPage() {
             setWithoutTypeOnly((current) => !current)
             setTypeFilter("")
           }}
-          className={`rounded-md border p-4 text-left hover:bg-muted/40 ${withoutTypeOnly ? "border-primary bg-primary/5" : "bg-background"}`}
+          className={`rounded-md border p-4 text-left transition-colors hover:bg-muted/40 ${withoutTypeOnly ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "bg-background"}`}
         >
           <div className="text-xs text-muted-foreground">Без типа</div>
           <div className="mt-1 text-2xl font-semibold">{summary.withoutType}</div>
@@ -636,52 +674,80 @@ export default function RedmineDashboardPage() {
         <button
           type="button"
           onClick={() => setMissingCycleOnly((current) => !current)}
-          className={`rounded-md border p-4 text-left hover:bg-muted/40 ${missingCycleOnly ? "border-primary bg-primary/5" : "bg-background"}`}
+          className={`rounded-md border p-4 text-left transition-colors hover:bg-muted/40 ${missingCycleOnly ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "bg-background"}`}
         >
           <div className="text-xs text-muted-foreground">Без цикла</div>
           <div className="mt-1 text-2xl font-semibold">{summary.withoutCycle}</div>
         </button>
       </div>
 
-      <div className="mb-6 grid gap-3 lg:grid-cols-[1fr_220px_220px_190px_auto]">
-        <div className="relative">
-          <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-          <Input
-            className="pl-10"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Найти проект"
-          />
-        </div>
-        <Select value={managerFilter} onChange={(event) => setManagerFilter(event.target.value)}>
-          <option value="">Все проектники</option>
-          {managers.map((manager) => (
-            <option key={manager} value={manager}>{manager}</option>
-          ))}
-        </Select>
-        <Select
-          value={typeFilter}
-          onChange={(event) => {
-            setTypeFilter(event.target.value as RedmineProjectType)
-            setWithoutTypeOnly(false)
-          }}
-        >
-          <option value="">Все типы</option>
-          {PROJECT_TYPES.filter((type) => type.key).map((type) => (
-            <option key={type.key} value={type.key}>{type.label}</option>
-          ))}
-        </Select>
-        <Select value={deadlineFilter} onChange={(event) => setDeadlineFilter(event.target.value)}>
-          <option value="">Все сроки</option>
-          <option value="urgent">Срочные</option>
-          <option value="burning">Горят</option>
-          <option value="due_soon">Скоро срок</option>
-          <option value="ok">Ок</option>
-        </Select>
-        <div className="text-sm text-muted-foreground lg:self-center">
+      <div className="mb-3 grid gap-3 lg:grid-cols-[1fr_220px_220px_190px_auto]">
+        <label className="block space-y-1">
+          <span className="text-xs font-medium text-muted-foreground">Поиск</span>
+          <div className="relative">
+            <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+            <Input
+              className="pl-10"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Название или идентификатор"
+            />
+          </div>
+        </label>
+        <label className="block space-y-1">
+          <span className="text-xs font-medium text-muted-foreground">Проектник</span>
+          <Select value={managerFilter} onChange={(event) => setManagerFilter(event.target.value)}>
+            <option value="">Все проектники</option>
+            {managers.map((manager) => (
+              <option key={manager} value={manager}>{manager}</option>
+            ))}
+          </Select>
+        </label>
+        <label className="block space-y-1">
+          <span className="text-xs font-medium text-muted-foreground">Тип проекта</span>
+          <Select
+            value={typeFilter}
+            onChange={(event) => {
+              setTypeFilter(event.target.value as RedmineProjectType)
+              setWithoutTypeOnly(false)
+            }}
+          >
+            <option value="">Все типы</option>
+            {PROJECT_TYPES.filter((type) => type.key).map((type) => (
+              <option key={type.key} value={type.key}>{type.label}</option>
+            ))}
+          </Select>
+        </label>
+        <label className="block space-y-1">
+          <span className="text-xs font-medium text-muted-foreground">Срок</span>
+          <Select value={deadlineFilter} onChange={(event) => setDeadlineFilter(event.target.value)}>
+            <option value="">Все сроки</option>
+            <option value="urgent">Срочные</option>
+            <option value="burning">Горят</option>
+            <option value="due_soon">Скоро срок</option>
+            <option value="ok">Ок</option>
+          </Select>
+        </label>
+        <div className="text-sm text-muted-foreground lg:self-end lg:pb-2">
           Показано {filteredItems.length} из {items.length}
         </div>
       </div>
+
+      {activeFilterChips.length > 0 && (
+        <div className="mb-6 flex flex-wrap items-center gap-2">
+          {activeFilterChips.map((chip) => (
+            <button
+              key={chip.key}
+              type="button"
+              onClick={chip.onRemove}
+              className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/5 py-1 pl-3 pr-2 text-xs font-medium text-primary hover:bg-primary/10"
+            >
+              {chip.label}
+              <X className="h-3 w-3" />
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="mb-6 flex flex-wrap gap-3">
         <div className="inline-flex rounded-md border bg-muted p-1">
