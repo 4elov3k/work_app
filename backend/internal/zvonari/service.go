@@ -164,27 +164,31 @@ func callerExtension(rec pbx.CallRecord) string {
 	return last
 }
 
-// SyncResult — итог одного запуска SyncCalls
+// SyncResult — итог одного запуска фоновой задачи (синк+транскрибация или
+// анализ) — общий тип для всех задач, использующих один "слот"
+// (startBackgroundJob), чтобы синк/повтор/анализ никогда не бежали
+// одновременно и делили один и тот же прогресс-статус.
 type SyncResult struct {
 	CallersSynced    int
 	CallsFound       int
 	CallsNew         int
 	CallsSkipped     int
 	TranscribeErrors int
+	AnalyzeErrors    int
 }
 
-// maxConcurrentProcessing bounds how many calls are transcribed+analyzed at
-// once. Each step is a slow network round-trip (Whisper is CPU-bound on the
-// Hermes side; the analytics step spawns its own `hermes chat` subprocess,
-// uncapped on threads) — running them one at a time left the machine's
-// other CPU cores idle for no reason, so a sync over a busy day took many
-// minutes longer than it needed to. Started at 4 (call-transcribe's own
-// per-request thread cap is 2, see TRANSCRIBE_CPU_THREADS, so 4×2=8 lines
-// up with an 8-core host) but a real batch run showed call-transcribe
-// requests timing out under the combined load of 4 concurrent transcriptions
-// *plus* 4 concurrent uncapped analytics subprocesses — dropped to 3 for
-// headroom.
-const maxConcurrentProcessing = 3
+// maxConcurrentProcessing bounds how many calls are transcribed at once.
+// Measured directly on this host (isolated, in-process, not confounded by
+// analytics or network overhead): 1 stream at cpu_threads=2 transcribes at
+// 2.07x realtime; 2 concurrent streams manage only 2.21x *aggregate* — i.e.
+// concurrency buys almost nothing here, this Docker VM's CPU scheduling
+// just doesn't scale past a single well-tuned stream. Pushing to 4
+// concurrent (an earlier attempt) made it actively worse — full
+// oversubscription collapsed aggregate throughput to ~1x. Given that
+// ceiling, sequential processing (1) is simpler and avoids the
+// timeout/contention failures concurrency was causing, for no real speed
+// cost — see decision to decouple transcription from analytics below.
+const maxConcurrentProcessing = 1
 
 // pending is a call queued for transcribe+analyze, shared by SyncCalls
 // (freshly-inserted CDR rows) and RetryFailedCalls (existing rows stuck on
@@ -299,7 +303,7 @@ func (s *Service) processConcurrently(ctx context.Context, toProcess []pending, 
 		go func(call *models.Call, uuid string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			s.transcribeAndAnalyze(ctx, call, uuid, &mu, result)
+			s.transcribeOnly(ctx, call, uuid, &mu, result)
 			s.syncMu.Lock()
 			s.syncStatus.Processed++
 			s.syncMu.Unlock()
@@ -308,17 +312,24 @@ func (s *Service) processConcurrently(ctx context.Context, toProcess []pending, 
 	wg.Wait()
 }
 
-func (s *Service) transcribeAndAnalyze(ctx context.Context, call *models.Call, pbxUUID string, mu *sync.Mutex, result *SyncResult) {
+// transcribeOnly downloads and transcribes one call via local Whisper —
+// deliberately does NOT call the LLM analytics step. Transcription and
+// analysis are decoupled on purpose: transcription is the CPU-bound,
+// time-sensitive batch (run once a day, ideally via cron, sequentially —
+// see maxConcurrentProcessing), while classification can lag behind by
+// hours without anyone noticing, so it runs as its own separate job
+// (AnalyzeCalls) instead of blocking or being blocked by transcription.
+func (s *Service) transcribeOnly(ctx context.Context, call *models.Call, pbxUUID string, mu *sync.Mutex, result *SyncResult) {
 	if !s.transcribe.Configured() {
 		return
 	}
 
-	// One retry before giving up: under concurrent processing, an
-	// occasional OnlinePBX API hiccup (rate limit, transient network error)
-	// previously got permanently misfiled as "no recording" right alongside
-	// calls that genuinely never had one — this only downgrades to
-	// ErrNoRecording (not retried, since that means OnlinePBX explicitly
-	// confirmed there's nothing to fetch) after a real second failure.
+	// One retry before giving up: an occasional OnlinePBX API hiccup (rate
+	// limit, transient network error) previously got permanently misfiled
+	// as "no recording" right alongside calls that genuinely never had
+	// one — this only downgrades to ErrNoRecording (not retried, since
+	// that means OnlinePBX explicitly confirmed there's nothing to fetch)
+	// after a real second failure.
 	audio, err := s.pbx.DownloadRecording(ctx, pbxUUID)
 	if err != nil && !errors.Is(err, pbx.ErrNoRecording) {
 		audio, err = s.pbx.DownloadRecording(ctx, pbxUUID)
@@ -349,29 +360,63 @@ func (s *Service) transcribeAndAnalyze(ctx context.Context, call *models.Call, p
 	}
 	if err := s.db.SetCallTranscript(ctx, call.ID, tr.Text); err != nil {
 		log.Printf("zvonari: saving transcript failed for call %s: %v", pbxUUID, err)
-		return
-	}
-
-	if !s.callreport.Configured() {
-		return
-	}
-	analysis, err := s.callreport.AnalyzeCall(ctx, callreport.AnalyzeCallRequest{CallID: call.ID, Transcript: tr.Text})
-	if err != nil {
-		log.Printf("zvonari: call analysis failed for call %s: %v", pbxUUID, err)
-		return
-	}
-	if err := s.db.SetCallAnalytics(ctx, call.ID, analysis.AnalyticsJSON); err != nil {
-		log.Printf("zvonari: saving analytics failed for call %s: %v", pbxUUID, err)
 	}
 }
 
-// RetranscribeCall (re)runs transcribe+analyze for one existing call, on
-// demand from the UI — the only way that was previously possible was via a
-// full sync, which only ever processes calls at insert time: a call stuck
-// on "transcribing"/"failed" (e.g. because the backend restarted mid-batch)
+// AnalyzeCalls finds every call in [from, to) whose transcript is ready but
+// hasn't been classified yet, and runs the LLM outcome classification for
+// each — decoupled from transcription (see transcribeOnly), so it can run
+// on its own schedule (e.g. a few hours after the morning transcription
+// batch) without either job blocking the other.
+func (s *Service) AnalyzeCalls(ctx context.Context, from, to time.Time) (*SyncResult, error) {
+	if !s.callreport.Configured() {
+		return nil, fmt.Errorf("аналитика недоступна (не настроен CALL_ANALYTICS_URL)")
+	}
+
+	calls, err := s.db.ListCallsNeedingAnalysis(ctx, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("listing calls needing analysis: %w", err)
+	}
+
+	result := &SyncResult{CallsFound: len(calls)}
+	s.syncMu.Lock()
+	s.syncStatus.TotalToProcess = len(calls)
+	s.syncStatus.Processed = 0
+	s.syncMu.Unlock()
+
+	for i := range calls {
+		call := &calls[i]
+		analysis, err := s.callreport.AnalyzeCall(ctx, callreport.AnalyzeCallRequest{CallID: call.ID, Transcript: call.TranscriptText})
+		if err != nil {
+			log.Printf("zvonari: call analysis failed for call %s: %v", call.PBXUUID, err)
+			result.AnalyzeErrors++
+		} else if err := s.db.SetCallAnalytics(ctx, call.ID, analysis.AnalyticsJSON); err != nil {
+			log.Printf("zvonari: saving analytics failed for call %s: %v", call.PBXUUID, err)
+			result.AnalyzeErrors++
+		}
+		s.syncMu.Lock()
+		s.syncStatus.Processed++
+		s.syncMu.Unlock()
+	}
+
+	return result, nil
+}
+
+// StartAnalyzeCalls launches AnalyzeCalls in the background — see startBackgroundJob.
+func (s *Service) StartAnalyzeCalls(from, to time.Time) bool {
+	return s.startBackgroundJob(func(ctx context.Context) (*SyncResult, error) {
+		return s.AnalyzeCalls(ctx, from, to)
+	})
+}
+
+// RetranscribeCall (re)runs transcription for one existing call, on demand
+// from the UI — the only way that was previously possible was via a full
+// sync, which only ever processes calls at insert time: a call stuck on
+// "transcribing"/"failed" (e.g. because the backend restarted mid-batch)
 // had no way to be retried short of that. Runs synchronously — a single
 // call is seconds, not minutes, so it doesn't need the background-job
-// treatment SyncCalls does.
+// treatment SyncCalls does. Does NOT re-run analysis — call AnalyzeCalls
+// separately if the transcript changed and needs re-classifying.
 func (s *Service) RetranscribeCall(ctx context.Context, callID string) (*models.Call, error) {
 	call, err := s.db.GetCallByID(ctx, callID)
 	if err != nil {
@@ -380,7 +425,7 @@ func (s *Service) RetranscribeCall(ctx context.Context, callID string) (*models.
 
 	var result SyncResult
 	var mu sync.Mutex
-	s.transcribeAndAnalyze(ctx, call, call.PBXUUID, &mu, &result)
+	s.transcribeOnly(ctx, call, call.PBXUUID, &mu, &result)
 
 	return s.db.GetCallByID(ctx, callID)
 }
