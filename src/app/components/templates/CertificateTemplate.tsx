@@ -188,10 +188,7 @@ export default function CertificateTemplate({ invoice, customer, docId, organiza
             <div className="flex items-center gap-2 mt-2">
               <div className="border-b border-black flex-1 h-6"></div>
             </div>
-            <div className="flex items-start justify-between gap-3 text-[9px] text-gray-500 mt-1">
-              <span>(подпись)</span>
-              <span className="text-right">{customerSignerPosition}</span>
-            </div>
+            <p className="text-[9px] text-gray-500 mt-1">(подпись)</p>
           </div>
         </div>
 
