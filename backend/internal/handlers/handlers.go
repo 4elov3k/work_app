@@ -10,6 +10,7 @@ import (
 	"github.com/lib/pq"
 
 	"invoices-backend/internal/database"
+	"invoices-backend/internal/docparse"
 	"invoices-backend/internal/models"
 	"invoices-backend/internal/redmine"
 	"invoices-backend/internal/saby"
@@ -17,17 +18,19 @@ import (
 
 // Handlers содержит все HTTP обработчики
 type Handlers struct {
-	db      *database.DB
-	redmine *redmine.Client
-	saby    *saby.Client
+	db       *database.DB
+	redmine  *redmine.Client
+	saby     *saby.Client
+	docparse *docparse.Client
 }
 
 // NewHandlers создает новый экземпляр handlers
 func NewHandlers(db *database.DB) *Handlers {
 	return &Handlers{
-		db:      db,
-		redmine: redmine.NewFromEnv(),
-		saby:    saby.NewFromEnv(),
+		db:       db,
+		redmine:  redmine.NewFromEnv(),
+		saby:     saby.NewFromEnv(),
+		docparse: docparse.NewFromEnv(),
 	}
 }
 

@@ -991,3 +991,30 @@ export const contractAppendicesAPI = {
     return handleResponse<{ status: string }>(response);
   },
 };
+
+// Поля договора, извлечённые из загруженного скана (не более чем найдено —
+// пустые поля означают "не распознано", а не догадку).
+export interface ParsedContractFields {
+  number?: string;
+  date?: string; // YYYY-MM-DD
+  candidate_inn?: string[];
+}
+
+export interface ParsedContractDocument {
+  fields: ParsedContractFields;
+  pages: number;
+  doc_type: string;
+}
+
+export const documentsAPI = {
+  // Загружает скан договора и возвращает распознанные поля для предзаполнения формы.
+  parseContract: async (file: File): Promise<SingleResponse<ParsedContractDocument>> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await fetch(`${API_BASE}/documents/parse-contract`, {
+      method: 'POST',
+      body: formData,
+    });
+    return handleResponse<SingleResponse<ParsedContractDocument>>(response);
+  },
+};
