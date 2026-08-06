@@ -24,8 +24,12 @@ type Client struct {
 }
 
 // A multi-minute call recording can take a while to transcribe locally with
-// faster-whisper — same rationale as docparse's OCR timeout.
-const transcribeTimeout = 3 * time.Minute
+// faster-whisper — same rationale as docparse's OCR timeout. Bumped from an
+// initial 3 minutes after real batch runs (4 concurrent calls, each
+// analytics call also running its own CPU-heavy `hermes chat` subprocess on
+// the same host) showed "context deadline exceeded" on requests that were
+// still legitimately in progress, not stuck.
+const transcribeTimeout = 6 * time.Minute
 
 func NewFromEnv() *Client {
 	baseURL := strings.TrimRight(os.Getenv("TRANSCRIBE_SERVICE_URL"), "/")
