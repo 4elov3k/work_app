@@ -175,12 +175,16 @@ type SyncResult struct {
 
 // maxConcurrentProcessing bounds how many calls are transcribed+analyzed at
 // once. Each step is a slow network round-trip (Whisper is CPU-bound on the
-// Hermes side, ~10-20s/call; the analytics LLM call is another ~10-20s) —
-// running them one at a time left the machine's other CPU cores idle for no
-// reason, so a sync over a busy day took many minutes longer than it needed
-// to. 4 keeps call-transcribe's own per-request thread cap (2 CPU threads,
-// see TRANSCRIBE_CPU_THREADS) from oversubscribing an 8-core host.
-const maxConcurrentProcessing = 4
+// Hermes side; the analytics step spawns its own `hermes chat` subprocess,
+// uncapped on threads) — running them one at a time left the machine's
+// other CPU cores idle for no reason, so a sync over a busy day took many
+// minutes longer than it needed to. Started at 4 (call-transcribe's own
+// per-request thread cap is 2, see TRANSCRIBE_CPU_THREADS, so 4×2=8 lines
+// up with an 8-core host) but a real batch run showed call-transcribe
+// requests timing out under the combined load of 4 concurrent transcriptions
+// *plus* 4 concurrent uncapped analytics subprocesses — dropped to 3 for
+// headroom.
+const maxConcurrentProcessing = 3
 
 // pending is a call queued for transcribe+analyze, shared by SyncCalls
 // (freshly-inserted CDR rows) and RetryFailedCalls (existing rows stuck on
