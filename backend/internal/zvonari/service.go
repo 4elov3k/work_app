@@ -309,6 +309,19 @@ func (s *Service) RequestCallerReport(ctx context.Context, callerID, period stri
 	return report, nil
 }
 
+// CallCounts returns how many synced calls each caller has in [from, to) —
+// one query for all callers, for the caller-list UI to show a count badge
+// per card without a request per caller.
+func (s *Service) CallCounts(ctx context.Context, from, to time.Time) (map[string]int, error) {
+	return s.db.CountCallsByCallerPeriod(ctx, from, to)
+}
+
+// ListCalls returns a caller's individual calls for a period (with
+// transcript + per-call analytics), for the UI's call-detail breakdown.
+func (s *Service) ListCalls(ctx context.Context, callerID string, from, to time.Time) ([]models.Call, error) {
+	return s.db.ListCallsByCallerPeriod(ctx, callerID, from, to)
+}
+
 // CallDistribution buckets a caller's calls for a period by their Hermes
 // outcome classification (analytics_json.outcome) — the UI's "brief
 // distribution" view. No Hermes call needed: it aggregates analysis that

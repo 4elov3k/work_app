@@ -1,9 +1,9 @@
 "use client"
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, RefreshCw, FileBarChart } from "lucide-react";
+import { ArrowLeft, RefreshCw, FileBarChart, Phone } from "lucide-react";
 
-import { zvonariAPI, Caller, CallerReport, ApiError } from "@/lib/api";
+import { zvonariAPI, Caller, CallerReport, Call, ApiError } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -39,11 +39,52 @@ function DistributionBars({ distribution }: { distribution: Record<string, numbe
   );
 }
 
+const DIRECTION_LABELS: Record<string, string> = {
+  outbound: "исходящий",
+  inbound: "входящий",
+  local: "внутренний",
+};
+
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function CallDetailList({ calls }: { calls: Call[] }) {
+  if (calls.length === 0) {
+    return <p className="text-sm text-muted-foreground">Нет звонков за этот период</p>;
+  }
+  return (
+    <div className="space-y-2">
+      {calls.map((call) => (
+        <details key={call.id} className="rounded border p-2">
+          <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-sm">
+            <span className="text-muted-foreground">
+              {new Date(call.started_at).toLocaleString("ru-RU")}
+            </span>
+            <Badge variant="outline">{DIRECTION_LABELS[call.direction] || call.direction}</Badge>
+            <span className="text-muted-foreground">{formatDuration(call.duration_sec)}</span>
+            {call.analytics_json?.outcome && <Badge variant="secondary">{call.analytics_json.outcome}</Badge>}
+            {call.transcript_status !== "done" && (
+              <span className="text-xs text-muted-foreground">({call.transcript_status})</span>
+            )}
+          </summary>
+          <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
+            {call.transcript_text || "Транскрипт недоступен"}
+          </p>
+        </details>
+      ))}
+    </div>
+  );
+}
+
 interface CallerPanelState {
   loading: boolean;
   error: string;
   distribution: Record<string, number> | null;
   report: CallerReport | null;
+  calls: Call[] | null;
 }
 
 export default function ZvonariPage() {
@@ -59,6 +100,7 @@ export default function ZvonariPage() {
   const [syncMessage, setSyncMessage] = useState("");
 
   const [panels, setPanels] = useState<Record<string, CallerPanelState>>({});
+  const [callCounts, setCallCounts] = useState<Record<string, number>>({});
 
   const loadCallers = () => {
     setLoadingCallers(true);
@@ -73,6 +115,13 @@ export default function ZvonariPage() {
         setListError("Не удалось загрузить список звонарей.");
       })
       .finally(() => setLoadingCallers(false));
+  };
+
+  const loadCallCounts = (periodFrom: string, periodTo: string) => {
+    zvonariAPI
+      .getCallCounts(periodFrom, periodTo)
+      .then((response) => setCallCounts(response.data || {}))
+      .catch((err) => console.error("Failed to load call counts:", err));
   };
 
   // Синхронизация идёт в фоне на бэкенде (может занимать минуты — сотни
@@ -97,6 +146,7 @@ export default function ZvonariPage() {
             );
           }
           loadCallers();
+          loadCallCounts(from, to);
         }
       } catch (err) {
         console.error("Sync status poll failed:", err);
@@ -123,6 +173,11 @@ export default function ZvonariPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Счётчик звонков на карточках всегда отражает текущий выбранный период.
+  useEffect(() => {
+    loadCallCounts(from, to);
+  }, [from, to]);
+
   const period = useMemo(() => ({ from, to }), [from, to]);
 
   const handleSync = async () => {
@@ -147,16 +202,29 @@ export default function ZvonariPage() {
   const handleRequestReport = async (callerId: string) => {
     setPanels((current) => ({
       ...current,
-      [callerId]: { loading: true, error: "", distribution: current[callerId]?.distribution ?? null, report: null },
+      [callerId]: {
+        loading: true,
+        error: "",
+        distribution: current[callerId]?.distribution ?? null,
+        report: null,
+        calls: current[callerId]?.calls ?? null,
+      },
     }));
     try {
-      const [distResponse, reportResponse] = await Promise.all([
+      const [distResponse, reportResponse, callsResponse] = await Promise.all([
         zvonariAPI.getDistribution(callerId, period.from, period.to),
         zvonariAPI.requestReport(callerId, "custom", period.from, period.to),
+        zvonariAPI.getCalls(callerId, period.from, period.to),
       ]);
       setPanels((current) => ({
         ...current,
-        [callerId]: { loading: false, error: "", distribution: distResponse.data, report: reportResponse.data },
+        [callerId]: {
+          loading: false,
+          error: "",
+          distribution: distResponse.data,
+          report: reportResponse.data,
+          calls: callsResponse.data,
+        },
       }));
     } catch (err) {
       console.error("Report request failed:", err);
@@ -167,6 +235,7 @@ export default function ZvonariPage() {
           error: err instanceof Error ? err.message : "Не удалось получить отчёт",
           distribution: current[callerId]?.distribution ?? null,
           report: null,
+          calls: current[callerId]?.calls ?? null,
         },
       }));
     }
@@ -232,7 +301,13 @@ export default function ZvonariPage() {
                 <CardHeader className="flex flex-row items-center justify-between space-y-0">
                   <div>
                     <CardTitle className="text-base">{caller.name}</CardTitle>
-                    <CardDescription>внутр. номер {caller.pbx_extension}</CardDescription>
+                    <CardDescription className="flex items-center gap-2">
+                      <span>внутр. номер {caller.pbx_extension}</span>
+                      <span className="inline-flex items-center gap-1">
+                        <Phone className="h-3 w-3" />
+                        {callCounts[caller.id] ?? 0} звонков за период
+                      </span>
+                    </CardDescription>
                   </div>
                   <div className="flex items-center gap-2">
                     {!caller.active && <Badge variant="secondary">неактивен</Badge>}
@@ -247,7 +322,7 @@ export default function ZvonariPage() {
                     </Button>
                   </div>
                 </CardHeader>
-                {panel && (panel.error || panel.distribution || panel.report) && (
+                {panel && (panel.error || panel.distribution || panel.report || panel.calls) && (
                   <CardContent className="space-y-4">
                     {panel.error && <p className="text-sm text-destructive">{panel.error}</p>}
                     {panel.distribution && (
@@ -260,6 +335,12 @@ export default function ZvonariPage() {
                       <div>
                         <h4 className="mb-2 text-sm font-medium">Анализ за период</h4>
                         <p className="whitespace-pre-wrap text-sm text-muted-foreground">{panel.report.summary_text}</p>
+                      </div>
+                    )}
+                    {panel.calls && (
+                      <div>
+                        <h4 className="mb-2 text-sm font-medium">Детализация по звонкам ({panel.calls.length})</h4>
+                        <CallDetailList calls={panel.calls} />
                       </div>
                     )}
                   </CardContent>
