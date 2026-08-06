@@ -406,6 +406,14 @@ export const customersAPI = {
     return handleResponse<SingleResponse<Customer>>(response);
   },
 
+  // Удалить контрагента (сервер отклонит, если есть связанные договоры/счета)
+  delete: async (id: string): Promise<{ status: string }> => {
+    const response = await fetch(`${API_BASE}/customers/${id}`, {
+      method: 'DELETE',
+    });
+    return handleResponse<{ status: string }>(response);
+  },
+
   getRedmineProject: async (id: string): Promise<NullableSingleResponse<RedmineProjectLink>> => {
     const response = await fetch(`${API_BASE}/customers/${id}/redmine-project`);
     return handleResponse<NullableSingleResponse<RedmineProjectLink>>(response);
