@@ -72,6 +72,45 @@ func (h *Handlers) GetZvonariSyncStatus(w http.ResponseWriter, r *http.Request) 
 	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": status})
 }
 
+// GetCallCounts обрабатывает GET /api/zvonari/calls/count?from=&to=
+// Возвращает число синхронизированных звонков за период по каждому звонарю
+// (map caller_id -> count) — для счётчика на карточках в списке.
+func (h *Handlers) GetCallCounts(w http.ResponseWriter, r *http.Request) {
+	from, to, err := parseRangeParams(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	counts, err := h.zvonari.CallCounts(r.Context(), from, to)
+	if err != nil {
+		log.Printf("GetCallCounts failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to get call counts")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": counts})
+}
+
+// GetCallerCalls обрабатывает GET /api/zvonari/callers/{id}/calls?from=&to=
+// Детализация звонков звонаря за период: время, направление, длительность,
+// категория (analytics_json.outcome) и транскрипт по каждому звонку.
+func (h *Handlers) GetCallerCalls(w http.ResponseWriter, r *http.Request) {
+	callerID := chi.URLParam(r, "id")
+	from, to, err := parseRangeParams(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	calls, err := h.zvonari.ListCalls(r.Context(), callerID, from, to)
+	if err != nil {
+		log.Printf("GetCallerCalls failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to get calls")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, models.CallListResponse{Data: calls})
+}
+
 // GetCallerCallDistribution обрабатывает GET /api/zvonari/callers/{id}/distribution?from=&to=
 func (h *Handlers) GetCallerCallDistribution(w http.ResponseWriter, r *http.Request) {
 	callerID := chi.URLParam(r, "id")

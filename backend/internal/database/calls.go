@@ -77,6 +77,37 @@ func (db *DB) SetCallAnalytics(ctx context.Context, id string, analytics json.Ra
 }
 
 // ListCallsByCallerPeriod returns a caller's calls with started_at in [from, to).
+// CountCallsByCallerPeriod returns, for every caller with at least one call
+// in [from, to), how many synced calls they have — one query for all
+// callers, so rendering the caller list doesn't need N per-card requests.
+func (db *DB) CountCallsByCallerPeriod(ctx context.Context, from, to time.Time) (map[string]int, error) {
+	query := `
+		SELECT caller_id, count(*)
+		FROM calls
+		WHERE caller_id IS NOT NULL AND started_at >= $1 AND started_at < $2
+		GROUP BY caller_id
+	`
+	rows, err := db.QueryContext(ctx, query, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count calls: %w", err)
+	}
+	defer rows.Close()
+
+	counts := map[string]int{}
+	for rows.Next() {
+		var callerID string
+		var count int
+		if err := rows.Scan(&callerID, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan call count: %w", err)
+		}
+		counts[callerID] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating call counts: %w", err)
+	}
+	return counts, nil
+}
+
 func (db *DB) ListCallsByCallerPeriod(ctx context.Context, callerID string, from, to time.Time) ([]models.Call, error) {
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,

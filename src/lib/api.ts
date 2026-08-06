@@ -1064,6 +1064,23 @@ export interface CallerReport {
   requested_at: string;
 }
 
+export interface Call {
+  id: string;
+  pbx_uuid: string;
+  caller_id: string | null;
+  direction: string;
+  counterparty_number: string;
+  started_at: string;
+  duration_sec: number;
+  talk_time_sec: number;
+  hangup_cause: string;
+  transcript_status: string;
+  transcript_text?: string;
+  analytics_json?: { outcome?: string; note?: string };
+  created_at: string;
+  updated_at: string;
+}
+
 export interface SyncCallsResult {
   callers_synced: number;
   calls_found: number;
@@ -1100,6 +1117,20 @@ export const zvonariAPI = {
   getSyncStatus: async (): Promise<SingleResponse<SyncStatus>> => {
     const response = await fetch(`${API_BASE}/zvonari/sync/status`);
     return handleResponse<SingleResponse<SyncStatus>>(response);
+  },
+
+  // Число синхронизированных звонков за период по каждому звонарю (для счётчика на карточках)
+  getCallCounts: async (from: string, to: string): Promise<SingleResponse<Record<string, number>>> => {
+    const params = new URLSearchParams({ from, to });
+    const response = await fetch(`${API_BASE}/zvonari/calls/count?${params.toString()}`);
+    return handleResponse<SingleResponse<Record<string, number>>>(response);
+  },
+
+  // Детализация звонков звонаря за период (время, направление, транскрипт, категория)
+  getCalls: async (callerId: string, from: string, to: string): Promise<SingleResponse<Call[]>> => {
+    const params = new URLSearchParams({ from, to });
+    const response = await fetch(`${API_BASE}/zvonari/callers/${callerId}/calls?${params.toString()}`);
+    return handleResponse<SingleResponse<Call[]>>(response);
   },
 
   // Распределение звонков звонаря по категориям (аналитика Hermes) за период
