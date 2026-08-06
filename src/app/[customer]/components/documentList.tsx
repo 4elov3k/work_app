@@ -1,7 +1,7 @@
 "use client"
-import React, { useCallback, useEffect, useState } from "react"
+import React, { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { Plus, FileText, FileCheck, Calendar, Loader2, RefreshCw, Trash2 } from "lucide-react"
+import { Plus, FileText, FileCheck, Calendar, Loader2, RefreshCw, Search, Trash2 } from "lucide-react"
 
 import {
   Invoice,
@@ -18,6 +18,8 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
+import { Alert } from "@/components/ui/alert"
 import {
   Dialog,
   DialogContent,
@@ -79,6 +81,7 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
   const [date, setDate] = useState<string>("")
   const [selectedContractId, setSelectedContractId] = useState<string>(fixedContractId || "")
   const [archiveFilter, setArchiveFilter] = useState<"all" | "true" | "false">("all")
+  const [search, setSearch] = useState("")
   const [serviceName, setServiceName] = useState<string>("")
   const [servicePrice, setServicePrice] = useState<string>("")
   const [selectedServiceId, setSelectedServiceId] = useState<string>("")
@@ -202,6 +205,16 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
 
   const newDate = date.split("-").reverse().join(".")
 
+  const filteredItems = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    if (!query) return fetchItems
+    return fetchItems.filter(
+      (item) =>
+        item.number.toLowerCase().includes(query) ||
+        item.contract_number.toLowerCase().includes(query)
+    )
+  }, [fetchItems, search])
+
   const handleOpenChange = (value: boolean) => {
     setIsOpen(value)
     if (value && !manualNumber && selectedContractId) {
@@ -301,27 +314,32 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h3 className="text-lg font-semibold">{cfg.title}</h3>
           <p className="text-sm text-muted-foreground">Всего: {fetchItems.length}</p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="relative">
-            <select
-              className="border rounded-md px-3 py-2 pr-10 text-sm bg-background appearance-none"
-              value={archiveFilter}
-              onChange={(e) => setArchiveFilter(e.target.value as "all" | "true" | "false")}
-            >
-              <option value="false">Активные</option>
-              <option value="true">Архивные</option>
-              <option value="all">Все</option>
-            </select>
-            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-black text-base font-bold">
-              ▾
-            </span>
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="text"
+              placeholder="Поиск по номеру..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-44 pl-8"
+            />
           </div>
+          <Select
+            className="w-36"
+            value={archiveFilter}
+            onChange={(e) => setArchiveFilter(e.target.value as "all" | "true" | "false")}
+          >
+            <option value="false">Активные</option>
+            <option value="true">Архивные</option>
+            <option value="all">Все</option>
+          </Select>
           <Dialog open={isOpen} onOpenChange={handleOpenChange}>
             <DialogTrigger asChild>
               <Button>
@@ -335,11 +353,7 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
                 <DialogTitle>{cfg.createTitle}</DialogTitle>
                 <DialogDescription>{cfg.createDescription}</DialogDescription>
               </DialogHeader>
-              {error && (
-                <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded text-sm">
-                  {error}
-                </div>
-              )}
+              {error && <Alert>{error}</Alert>}
               {documentType === "act" && (
                 <div className="pt-2">
                   <Button type="button" variant="outline" size="sm" onClick={handleSyncWithSheet} disabled={sheetSyncing}>
@@ -407,9 +421,8 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
                     <label htmlFor="contractId" className="text-sm font-medium">
                       Договор
                     </label>
-                    <select
+                    <Select
                       id="contractId"
-                      className="w-full border rounded-md px-3 py-2 text-sm bg-background"
                       value={selectedContractId}
                       onChange={(e) => setSelectedContractId(e.target.value)}
                       required
@@ -420,16 +433,15 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
                           {contract.number} • {contract.topic} • {contract.status === "archived" ? "Архив" : "Активен"}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </div>
                 )}
                 <div className="space-y-2">
                   <label htmlFor="serviceId" className="text-sm font-medium">
                     Готовая услуга
                   </label>
-                  <select
+                  <Select
                     id="serviceId"
-                    className="w-full border rounded-md px-3 py-2 text-sm bg-background"
                     value={selectedServiceId}
                     onChange={(e) => setSelectedServiceId(e.target.value)}
                   >
@@ -439,7 +451,7 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
                         {service.name} • {service.price} ₽
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
                 {!selectedServiceId && (
                   <>
@@ -510,9 +522,16 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
             <p className="text-muted-foreground">{cfg.emptyLabel}</p>
           </CardContent>
         </Card>
+      ) : filteredItems.length === 0 ? (
+        <Card>
+          <CardContent className="py-10 text-center">
+            <Search className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
+            <p className="text-muted-foreground">Ничего не найдено по запросу «{search}»</p>
+          </CardContent>
+        </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {fetchItems.map((item) => (
+          {filteredItems.map((item) => (
             <Card key={item.id} className="hover:shadow-lg transition-shadow h-full">
               <Link href={documentType === "act" ? `/${slug}/acts/${item.id}` : `/${slug}/${item.id}`}>
                 <CardHeader>
@@ -556,11 +575,7 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
             <DialogTitle>Удалить {cfg.badgeLabel.toLowerCase()}?</DialogTitle>
             <DialogDescription>Это действие нельзя отменить.</DialogDescription>
           </DialogHeader>
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded text-sm">
-              {error}
-            </div>
-          )}
+          {error && <Alert>{error}</Alert>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setDeleteOpen(false)} disabled={submitting}>
               Отмена

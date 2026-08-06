@@ -6,6 +6,7 @@ import { Loader2, Trash2 } from "lucide-react"
 
 import { customersAPI } from "@/lib/api"
 import { Button } from "@/components/ui/button"
+import { Alert } from "@/components/ui/alert"
 import {
   Dialog,
   DialogContent,
@@ -75,11 +76,7 @@ export default function DeleteCustomerButton({
             «{customerName}» будет удалён без возможности восстановления. Это действие нельзя отменить.
           </DialogDescription>
         </DialogHeader>
-        {error && (
-          <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded text-sm">
-            {error}
-          </div>
-        )}
+        {error && <Alert>{error}</Alert>}
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={deleting}>
             Отмена

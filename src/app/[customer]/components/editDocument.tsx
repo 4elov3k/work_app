@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation"
 import { invoicesAPI, actsAPI } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
+import { Alert } from "@/components/ui/alert"
 import {
   Dialog,
   DialogContent,
@@ -106,15 +108,14 @@ export default function EditDocument({ docType, docId, number, date, status, arc
         <form onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle>Редактировать</DialogTitle>
-            <DialogDescription>
-              {archived ? "Документ в архиве. Можно только вывести из архива." : "Измените параметры документа."}
-            </DialogDescription>
+            <DialogDescription>Измените параметры документа.</DialogDescription>
           </DialogHeader>
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded text-sm">
-              {error}
-            </div>
+          {archived && (
+            <Alert variant="warning">
+              Документ в архиве, поля недоступны для правки. Снимите документ с архива, чтобы редактировать.
+            </Alert>
           )}
+          {error && <Alert>{error}</Alert>}
           <div className="grid gap-4 py-4">
             <div className="space-y-2">
               <label htmlFor="docNumber" className="text-sm font-medium">
@@ -145,9 +146,8 @@ export default function EditDocument({ docType, docId, number, date, status, arc
               <label htmlFor="docStatus" className="text-sm font-medium">
                 Статус
               </label>
-              <select
+              <Select
                 id="docStatus"
-                className="w-full border rounded-md px-3 py-2 text-sm bg-background"
                 value={formStatus}
                 onChange={(e) => setFormStatus(e.target.value)}
                 disabled={archived}
@@ -157,7 +157,7 @@ export default function EditDocument({ docType, docId, number, date, status, arc
                     {opt.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             {!archived && (
               <label className="flex items-center gap-2 text-sm">

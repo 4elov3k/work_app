@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Alert } from "@/components/ui/alert";
 import CreateCustomerDialog from "./components/CreateCustomerDialog";
 import DeleteCustomerButton from "./[customer]/components/deleteCustomerButton";
 
@@ -107,11 +108,7 @@ export default function Home() {
         />
       </div>
 
-      {error && (
-        <div className="mb-6 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {error}
-        </div>
-      )}
+      {error && <Alert className="mb-6">{error}</Alert>}
 
       {loading ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">

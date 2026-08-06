@@ -16,6 +16,8 @@ import {
 } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
+import { Alert } from "@/components/ui/alert"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 function groupKeyForItem(item: RedmineProjectDashboardItem) {
@@ -318,11 +320,7 @@ export default function RedmineProjectPage() {
         </div>
       </div>
 
-      {error && (
-        <div className="mb-6 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {error}
-        </div>
-      )}
+      {error && <Alert className="mb-6">{error}</Alert>}
 
       <Tabs defaultValue="overview" className="space-y-6">
         <TabsList>
@@ -345,8 +343,7 @@ export default function RedmineProjectPage() {
 
           <label className="block space-y-1">
             <span className="text-xs font-medium text-muted-foreground">Задать проектника вручную</span>
-            <select
-              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            <Select
               value={project.manual_manager_name || ""}
               onChange={(event) => updateManager(event.target.value)}
               disabled={saving}
@@ -355,13 +352,12 @@ export default function RedmineProjectPage() {
               {managers.map((manager) => (
                 <option key={manager} value={manager}>{manager}</option>
               ))}
-            </select>
+            </Select>
           </label>
 
           <label className="block space-y-1">
             <span className="text-xs font-medium text-muted-foreground">Статус в work-app</span>
-            <select
-              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            <Select
               value={currentStatus}
               onChange={(event) => updateStatus(event.target.value)}
               disabled={saving}
@@ -370,13 +366,12 @@ export default function RedmineProjectPage() {
               <option value="pause">Пауза</option>
               <option value="done">Завершенный</option>
               <option value="unknown">Не разобран</option>
-            </select>
+            </Select>
           </label>
 
           <label className="block space-y-1">
             <span className="text-xs font-medium text-muted-foreground">Тип проекта</span>
-            <select
-              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            <Select
               value={project.project_type}
               onChange={(event) => updateProjectType(event.target.value as RedmineProjectType)}
               disabled={saving}
@@ -384,7 +379,7 @@ export default function RedmineProjectPage() {
               {PROJECT_TYPES.map((type) => (
                 <option key={type.key || "none"} value={type.key}>{type.label}</option>
               ))}
-            </select>
+            </Select>
           </label>
         </aside>
 
@@ -535,7 +530,7 @@ export default function RedmineProjectPage() {
                         <div className="font-medium">{event.title}</div>
                         <div className="text-xs text-muted-foreground">{event.event_type === "control_cut" ? "Контрольный срез" : "Отчетная дата"}</div>
                       </div>
-                      <div className={event.status === "sent" ? "text-emerald-700" : "text-muted-foreground"}>
+                      <div className={event.status === "sent" ? "text-success" : "text-muted-foreground"}>
                         {eventStatusLabel(event)}
                       </div>
                       {event.status === "planned" ? (
@@ -606,7 +601,7 @@ export default function RedmineProjectPage() {
                         </div>
                         <div className="text-muted-foreground">Договор: {doc.contract_number}</div>
                         <div>{doc.date}</div>
-                        <div className={doc.uploaded_status === "uploaded" ? "text-emerald-700" : "text-muted-foreground"}>
+                        <div className={doc.uploaded_status === "uploaded" ? "text-success" : "text-muted-foreground"}>
                           {doc.uploaded_status === "uploaded" ? "В Redmine" : "Не отправлен"}
                         </div>
                       </Link>

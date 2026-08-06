@@ -5,6 +5,7 @@ import Lists from "./components/lists"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
+import { Alert } from "@/components/ui/alert"
 import { customersAPI, ApiError } from "@/lib/api"
 import RedmineProjectLinkPanel from "./components/redmineProjectLink"
 import DeleteCustomerButton from "./components/deleteCustomerButton"
@@ -66,10 +67,9 @@ export default async function Page({
           </Link>
           
           {loadError && (
-            <div className="mb-4 flex items-center gap-2 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-              <AlertTriangle className="h-4 w-4 shrink-0" />
+            <Alert className="mb-4" icon={<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />}>
               {loadError}
-            </div>
+            </Alert>
           )}
 
           {customer && (

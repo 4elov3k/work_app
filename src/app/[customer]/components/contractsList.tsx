@@ -7,6 +7,8 @@ import { Contract, contractsAPI, documentsAPI } from "@/lib/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
+import { Alert } from "@/components/ui/alert"
 import {
   Dialog,
   DialogContent,
@@ -211,11 +213,7 @@ export default function ContractsList({ slug }: { slug: string }) {
                 <DialogTitle>Создать договор</DialogTitle>
                 <DialogDescription>Заполните данные договора или загрузите скан для распознавания</DialogDescription>
               </DialogHeader>
-              {error && (
-                <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded text-sm">
-                  {error}
-                </div>
-              )}
+              {error && <Alert>{error}</Alert>}
               <div className="pt-2">
                 <input
                   ref={fileInputRef}
@@ -290,23 +288,21 @@ export default function ContractsList({ slug }: { slug: string }) {
                   <label htmlFor="contractStatus" className="text-sm font-medium">
                     Статус
                   </label>
-                  <select
+                  <Select
                     id="contractStatus"
-                    className="w-full border rounded-md px-3 py-2 text-sm bg-background"
                     value={status}
                     onChange={(e) => setStatus(e.target.value)}
                   >
                     <option value="active">Не архив</option>
                     <option value="archived">Архив</option>
-                  </select>
+                  </Select>
                 </div>
                 <div className="space-y-2">
                   <label htmlFor="contractTopic" className="text-sm font-medium">
                     Тематика
                   </label>
-                  <select
+                  <Select
                     id="contractTopic"
-                    className="w-full border rounded-md px-3 py-2 text-sm bg-background"
                     value={topic}
                     onChange={(e) => setTopic(e.target.value)}
                   >
@@ -315,7 +311,7 @@ export default function ContractsList({ slug }: { slug: string }) {
                         {t}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               </div>
               <DialogFooter>
@@ -400,11 +396,7 @@ export default function ContractsList({ slug }: { slug: string }) {
             <DialogTitle>Удалить договор?</DialogTitle>
             <DialogDescription>Это действие нельзя отменить.</DialogDescription>
           </DialogHeader>
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded text-sm">
-              {error}
-            </div>
-          )}
+          {error && <Alert>{error}</Alert>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setDeleteOpen(false)} disabled={submitting}>
               Отмена
