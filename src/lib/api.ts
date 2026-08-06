@@ -1041,3 +1041,65 @@ export const documentsAPI = {
     return handleResponse<SingleResponse<ParsedContractDocument>>(response);
   },
 };
+
+// Звонари: звонки из OnlinePBX + транскрибация/аналитика через Hermes
+
+export interface Caller {
+  id: string;
+  pbx_extension: string;
+  name: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CallerReport {
+  id: string;
+  caller_id: string;
+  period: string;
+  period_start: string;
+  period_end: string;
+  summary_text: string;
+  metrics_json?: unknown;
+  requested_at: string;
+}
+
+export interface SyncCallsResult {
+  callers_synced: number;
+  calls_found: number;
+  calls_new: number;
+  calls_skipped: number;
+  transcribe_errors: number;
+}
+
+export const zvonariAPI = {
+  // Получить список звонарей (синхронизируется из OnlinePBX)
+  getCallers: async (): Promise<SingleResponse<Caller[]>> => {
+    const response = await fetch(`${API_BASE}/zvonari/callers`);
+    return handleResponse<SingleResponse<Caller[]>>(response);
+  },
+
+  // Синхронизировать звонки из OnlinePBX за период (YYYY-MM-DD)
+  sync: async (from: string, to: string): Promise<SingleResponse<SyncCallsResult>> => {
+    const params = new URLSearchParams({ from, to });
+    const response = await fetch(`${API_BASE}/zvonari/sync?${params.toString()}`, { method: 'POST' });
+    return handleResponse<SingleResponse<SyncCallsResult>>(response);
+  },
+
+  // Распределение звонков звонаря по категориям (аналитика Hermes) за период
+  getDistribution: async (callerId: string, from: string, to: string): Promise<SingleResponse<Record<string, number>>> => {
+    const params = new URLSearchParams({ from, to });
+    const response = await fetch(`${API_BASE}/zvonari/callers/${callerId}/distribution?${params.toString()}`);
+    return handleResponse<SingleResponse<Record<string, number>>>(response);
+  },
+
+  // Запросить у Hermes сводный отчёт по звонарю за период
+  requestReport: async (callerId: string, period: string, from: string, to: string): Promise<SingleResponse<CallerReport>> => {
+    const response = await fetch(`${API_BASE}/zvonari/callers/${callerId}/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ period, from, to }),
+    });
+    return handleResponse<SingleResponse<CallerReport>>(response);
+  },
+};

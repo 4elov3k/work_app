@@ -9,12 +9,16 @@ import (
 
 	"github.com/lib/pq"
 
+	"invoices-backend/internal/callreport"
 	"invoices-backend/internal/database"
 	"invoices-backend/internal/docparse"
 	"invoices-backend/internal/models"
+	"invoices-backend/internal/pbx"
 	"invoices-backend/internal/redmine"
 	"invoices-backend/internal/saby"
 	"invoices-backend/internal/sheetsync"
+	"invoices-backend/internal/transcribe"
+	"invoices-backend/internal/zvonari"
 )
 
 // Handlers содержит все HTTP обработчики
@@ -24,16 +28,19 @@ type Handlers struct {
 	saby      *saby.Client
 	docparse  *docparse.Client
 	sheetsync *sheetsync.Client
+	zvonari   *zvonari.Service
 }
 
 // NewHandlers создает новый экземпляр handlers
 func NewHandlers(db *database.DB) *Handlers {
+	zvonariService := zvonari.NewService(db, pbx.NewFromEnv(), transcribe.NewFromEnv(), callreport.NewFromEnv())
 	return &Handlers{
 		db:        db,
 		redmine:   redmine.NewFromEnv(),
 		saby:      saby.NewFromEnv(),
 		docparse:  docparse.NewFromEnv(),
 		sheetsync: sheetsync.NewFromEnv(),
+		zvonari:   zvonariService,
 	}
 }
 

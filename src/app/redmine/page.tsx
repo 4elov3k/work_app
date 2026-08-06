@@ -13,6 +13,7 @@ import {
   Flame,
   Loader2,
   PauseCircle,
+  Phone,
   RefreshCw,
   Search,
   Settings,
@@ -591,6 +592,12 @@ export default function RedmineDashboardPage() {
             <Button variant="outline">
               <ArrowLeft className="mr-2 h-4 w-4" />
               Главная
+            </Button>
+          </Link>
+          <Link href="/zvonari">
+            <Button variant="outline">
+              <Phone className="mr-2 h-4 w-4" />
+              Звонари
             </Button>
           </Link>
           <div>
