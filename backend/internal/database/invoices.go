@@ -248,15 +248,19 @@ func (db *DB) DeleteInvoice(ctx context.Context, id string) error {
 }
 
 // GetNextInvoiceNumber возвращает следующий номер счета для договора
+// GetNextInvoiceNumber возвращает следующий номер счёта. Номера счетов
+// уникальны глобально (across всех договоров и клиентов), а не только в
+// рамках одного договора — поэтому MAX считается по всей таблице. contractID
+// сохранён в сигнатуре ради обратной совместимости вызовов, но в запросе не
+// участвует.
 func (db *DB) GetNextInvoiceNumber(ctx context.Context, contractID string) (int64, error) {
 	query := `
 		SELECT COALESCE(MAX(number::bigint), 2999) + 1
 		FROM invoices
-		WHERE contract_id = $1
-		  AND number ~ '^[0-9]+$'
+		WHERE number ~ '^[0-9]+$'
 	`
 	var next int64
-	if err := db.QueryRowContext(ctx, query, contractID).Scan(&next); err != nil {
+	if err := db.QueryRowContext(ctx, query).Scan(&next); err != nil {
 		return 0, fmt.Errorf("failed to get next invoice number: %w", err)
 	}
 	return next, nil
@@ -452,24 +456,27 @@ func (db *DB) DuplicateInvoice(ctx context.Context, req models.DuplicateInvoiceR
 }
 
 // CheckInvoiceNumberExists проверяет существование номера счета у контрагента
+// CheckInvoiceNumberExists проверяет, занят ли номер счёта. Номера счетов
+// уникальны глобально, поэтому contract_id в условие не входит; contractID
+// сохранён в сигнатуре ради обратной совместимости вызовов.
 func (db *DB) CheckInvoiceNumberExists(ctx context.Context, contractID, number string, excludeID string) (bool, error) {
 	var query string
 	var args []interface{}
 
 	if excludeID == "" {
 		query = `
-			SELECT COUNT(*) 
-			FROM invoices 
-			WHERE contract_id = $1 AND number = $2
+			SELECT COUNT(*)
+			FROM invoices
+			WHERE number = $1
 		`
-		args = []interface{}{contractID, number}
+		args = []interface{}{number}
 	} else {
 		query = `
-			SELECT COUNT(*) 
-			FROM invoices 
-			WHERE contract_id = $1 AND number = $2 AND id != $3
+			SELECT COUNT(*)
+			FROM invoices
+			WHERE number = $1 AND id != $2
 		`
-		args = []interface{}{contractID, number, excludeID}
+		args = []interface{}{number, excludeID}
 	}
 
 	var count int
