@@ -344,7 +344,7 @@ func (h *Handlers) DeleteAct(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.db.DeleteAct(ctx, id); err != nil {
 		if isForeignKeyViolation(err) {
-			respondWithError(w, http.StatusConflict, "Act is linked to invoices and cannot be deleted")
+			respondWithError(w, http.StatusConflict, "У акта есть привязанные счета — сначала отвяжите или удалите их")
 			return
 		}
 		if errors.Is(err, sql.ErrNoRows) {

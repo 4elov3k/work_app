@@ -40,7 +40,7 @@ export default function DeleteCustomerButton({
       if (message.includes("HTTP 409")) {
         setError("Нельзя удалить: у контрагента есть договоры или счета. Сначала удалите их.")
       } else {
-        setError(message)
+        setError(message.replace(/\s*\(HTTP \d+\)$/, ""))
       }
       setDeleting(false)
     }

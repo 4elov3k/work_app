@@ -114,7 +114,7 @@ export default function ContractsList({ slug }: { slug: string }) {
     } catch (err: unknown) {
       console.error("Failed to delete contract:", err)
       const message = err instanceof Error ? err.message : "Ошибка при удалении договора"
-      setError(message)
+      setError(message.replace(/\s*\(HTTP \d+\)$/, ""))
     } finally {
       setSubmitting(false)
     }

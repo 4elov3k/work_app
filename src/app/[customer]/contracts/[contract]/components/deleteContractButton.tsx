@@ -42,7 +42,7 @@ export default function DeleteContractButton({
       if (message.includes("HTTP 409")) {
         setError("Нельзя удалить: у договора есть акты, счета или приложения. Сначала удалите их.")
       } else {
-        setError(message)
+        setError(message.replace(/\s*\(HTTP \d+\)$/, ""))
       }
       setDeleting(false)
     }

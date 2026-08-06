@@ -168,7 +168,7 @@ func (h *Handlers) DeleteContract(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.db.DeleteContract(ctx, id); err != nil {
 		if isForeignKeyViolation(err) {
-			respondWithError(w, http.StatusConflict, "Contract has linked documents and cannot be deleted")
+			respondWithError(w, http.StatusConflict, "У договора есть связанные акты, счета или приложения — сначала удалите их")
 			return
 		}
 		if errors.Is(err, sql.ErrNoRows) {
