@@ -898,6 +898,21 @@ export const actsAPI = {
     });
     return handleResponse<{ status: string }>(response);
   },
+
+  // Следующий номер акта из реального реестра (Google-таблица), не из
+  // внутренней последовательности work_app
+  getNextNumberFromSheet: async (): Promise<{ data: { number: string; row: number } }> => {
+    const response = await fetch(`${API_BASE}/acts/next-number-from-sheet`);
+    return handleResponse<{ data: { number: string; row: number } }>(response);
+  },
+
+  // Дописывает строку в реестр для уже созданного акта
+  registerInSheet: async (id: string): Promise<{ data: { row: number; number: string; updated_cells: number } }> => {
+    const response = await fetch(`${API_BASE}/acts/${id}/register-in-sheet`, {
+      method: 'POST',
+    });
+    return handleResponse<{ data: { row: number; number: string; updated_cells: number } }>(response);
+  },
 };
 
 // API для работы с услугами

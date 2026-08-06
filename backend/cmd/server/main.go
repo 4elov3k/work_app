@@ -128,6 +128,8 @@ func main() {
 		// Acts
 		r.Get("/acts", h.GetActs)
 		r.Post("/acts", h.CreateAct)
+		r.Get("/acts/next-number-from-sheet", h.GetActNumberFromSheet)
+		r.Post("/acts/{id}/register-in-sheet", h.RegisterActInSheet)
 		r.Get("/acts/{id}/services", h.GetActWithServices)
 		r.Get("/acts/{id}/export/upd-xml", h.ExportActUPDXML)
 		r.Get("/acts/{id}", h.GetActByID)

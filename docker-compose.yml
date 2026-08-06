@@ -52,6 +52,8 @@ services:
       REDMINE_API: ${REDMINE_API:-}
       OCR_SERVICE_URL: ${OCR_SERVICE_URL:-http://hermes_ocr_extract:8643}
       OCR_SERVICE_TOKEN: ${OCR_SERVICE_TOKEN:-}
+      SHEETS_SYNC_URL: ${SHEETS_SYNC_URL:-http://hermes_sheets_sync:8644}
+      SHEETS_SYNC_TOKEN: ${SHEETS_SYNC_TOKEN:-}
       SABY_BASE_URL: ${SABY_BASE_URL:-https://online.sbis.ru}
       SABY_ACCESS_TOKEN: ${SABY_ACCESS_TOKEN:-}
       SABY_SESSION_ID: ${SABY_SESSION_ID:-}
