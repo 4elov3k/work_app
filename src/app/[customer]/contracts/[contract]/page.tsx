@@ -1,11 +1,12 @@
 import Link from "next/link"
-import { ArrowLeft, Home, FileCheck, FileText, Folder } from "lucide-react"
+import { ArrowLeft, Home, FileCheck, FileText, FileSpreadsheet, Folder } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import DocumentList from "../../components/documentList"
+import AppendixList from "./components/appendixList"
 import { contractsAPI, customersAPI } from "@/lib/api.server"
 
 export default async function ContractPage({
@@ -70,7 +71,7 @@ export default async function ContractPage({
       <Separator className="my-6" />
 
       <Tabs defaultValue="acts" className="w-full">
-        <TabsList className="grid w-full max-w-md grid-cols-2">
+        <TabsList className="grid w-full max-w-lg grid-cols-3">
           <TabsTrigger value="acts" className="flex items-center gap-2">
             <FileCheck className="h-4 w-4" />
             Акты
@@ -78,6 +79,10 @@ export default async function ContractPage({
           <TabsTrigger value="invoices" className="flex items-center gap-2">
             <FileText className="h-4 w-4" />
             Счета
+          </TabsTrigger>
+          <TabsTrigger value="appendices" className="flex items-center gap-2">
+            <FileSpreadsheet className="h-4 w-4" />
+            Приложения
           </TabsTrigger>
         </TabsList>
 
@@ -87,6 +92,10 @@ export default async function ContractPage({
 
         <TabsContent value="invoices" className="mt-6">
           <DocumentList slug={customerId} documentType="invoice" fixedContractId={contractId} />
+        </TabsContent>
+
+        <TabsContent value="appendices" className="mt-6">
+          <AppendixList customerId={customerId} contractId={contractId} />
         </TabsContent>
       </Tabs>
     </div>

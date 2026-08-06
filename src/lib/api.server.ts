@@ -53,6 +53,35 @@ export interface Contract {
   updated_at: string
 }
 
+export interface ContractAppendixLine {
+  id: string
+  appendix_id: string
+  service_id?: string
+  section: string
+  position: number
+  title: string
+  unit: string
+  price: number
+  qty: number
+  amount: number
+}
+
+export interface ContractAppendix {
+  id: string
+  contract_id: string
+  number: string
+  date: string
+  status: string
+  total_amount: number
+  archived: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface ContractAppendixWithLines extends ContractAppendix {
+  lines: ContractAppendixLine[]
+}
+
 export interface Invoice {
   id: string
   contract_id: string
@@ -157,6 +186,12 @@ export const actsAPI = {
   },
   getWithServices: async (id: string): Promise<SingleResponse<ActWithServices>> => {
     return apiFetch<SingleResponse<ActWithServices>>(`/acts/${id}/services`)
+  },
+}
+
+export const contractAppendicesAPI = {
+  getById: async (id: string): Promise<SingleResponse<ContractAppendixWithLines>> => {
+    return apiFetch<SingleResponse<ContractAppendixWithLines>>(`/contract-appendices/${id}`)
   },
 }
 
