@@ -1072,6 +1072,14 @@ export interface SyncCallsResult {
   transcribe_errors: number;
 }
 
+export interface SyncStatus {
+  running: boolean;
+  started_at?: string;
+  finished_at?: string;
+  result?: SyncCallsResult;
+  error?: string;
+}
+
 export const zvonariAPI = {
   // Получить список звонарей (синхронизируется из OnlinePBX)
   getCallers: async (): Promise<SingleResponse<Caller[]>> => {
@@ -1079,11 +1087,19 @@ export const zvonariAPI = {
     return handleResponse<SingleResponse<Caller[]>>(response);
   },
 
-  // Синхронизировать звонки из OnlinePBX за период (YYYY-MM-DD)
-  sync: async (from: string, to: string): Promise<SingleResponse<SyncCallsResult>> => {
+  // Запустить синхронизацию звонков из OnlinePBX за период (YYYY-MM-DD) —
+  // работает в фоне на бэкенде, эндпоинт сразу возвращает статус запуска.
+  // Прогресс/результат — через getSyncStatus.
+  sync: async (from: string, to: string): Promise<SingleResponse<{ status: string }>> => {
     const params = new URLSearchParams({ from, to });
     const response = await fetch(`${API_BASE}/zvonari/sync?${params.toString()}`, { method: 'POST' });
-    return handleResponse<SingleResponse<SyncCallsResult>>(response);
+    return handleResponse<SingleResponse<{ status: string }>>(response);
+  },
+
+  // Текущий статус фоновой синхронизации (последний запуск/выполняется ли сейчас)
+  getSyncStatus: async (): Promise<SingleResponse<SyncStatus>> => {
+    const response = await fetch(`${API_BASE}/zvonari/sync/status`);
+    return handleResponse<SingleResponse<SyncStatus>>(response);
   },
 
   // Распределение звонков звонаря по категориям (аналитика Hermes) за период

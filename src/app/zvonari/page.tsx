@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, RefreshCw, FileBarChart } from "lucide-react";
 
-import { zvonariAPI, Caller, CallerReport } from "@/lib/api";
+import { zvonariAPI, Caller, CallerReport, ApiError } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -75,8 +75,52 @@ export default function ZvonariPage() {
       .finally(() => setLoadingCallers(false));
   };
 
+  // Синхронизация идёт в фоне на бэкенде (может занимать минуты — сотни
+  // звонков, каждый со своей транскрибацией и анализом), поэтому опрашиваем
+  // статус вместо того, чтобы держать один долгий запрос — иначе прокси/
+  // браузер обрывает соединение раньше, чем бэкенд успевает закончить.
+  const pollSyncStatus = () => {
+    const interval = setInterval(async () => {
+      try {
+        const response = await zvonariAPI.getSyncStatus();
+        const status = response.data;
+        if (!status.running) {
+          clearInterval(interval);
+          setSyncing(false);
+          if (status.error) {
+            setSyncError(status.error);
+          } else if (status.result) {
+            const r = status.result;
+            setSyncMessage(
+              `Найдено звонков: ${r.calls_found}, новых: ${r.calls_new}, пропущено: ${r.calls_skipped}` +
+                (r.transcribe_errors > 0 ? `, ошибок транскрибации: ${r.transcribe_errors}` : "")
+            );
+          }
+          loadCallers();
+        }
+      } catch (err) {
+        console.error("Sync status poll failed:", err);
+        clearInterval(interval);
+        setSyncing(false);
+      }
+    }, 3000);
+  };
+
+  // При открытии страницы проверяем, не идёт ли уже синхронизация (например,
+  // запущенная ранее и не завершившаяся к моменту перезагрузки страницы).
   useEffect(() => {
     loadCallers();
+    zvonariAPI
+      .getSyncStatus()
+      .then((response) => {
+        if (response.data.running) {
+          setSyncing(true);
+          setSyncMessage("Синхронизация уже выполняется...");
+          pollSyncStatus();
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const period = useMemo(() => ({ from, to }), [from, to]);
@@ -84,19 +128,18 @@ export default function ZvonariPage() {
   const handleSync = async () => {
     setSyncing(true);
     setSyncError("");
-    setSyncMessage("");
+    setSyncMessage("Синхронизация запущена, это может занять несколько минут...");
     try {
-      const response = await zvonariAPI.sync(period.from, period.to);
-      const r = response.data;
-      setSyncMessage(
-        `Найдено звонков: ${r.calls_found}, новых: ${r.calls_new}, пропущено: ${r.calls_skipped}` +
-          (r.transcribe_errors > 0 ? `, ошибок транскрибации: ${r.transcribe_errors}` : "")
-      );
-      loadCallers();
+      await zvonariAPI.sync(period.from, period.to);
+      pollSyncStatus();
     } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setSyncMessage("Синхронизация уже выполняется, ожидаем завершения...");
+        pollSyncStatus();
+        return;
+      }
       console.error("Sync failed:", err);
       setSyncError(err instanceof Error ? err.message : "Не удалось синхронизировать звонки");
-    } finally {
       setSyncing(false);
     }
   };
