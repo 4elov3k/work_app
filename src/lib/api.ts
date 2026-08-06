@@ -1128,6 +1128,23 @@ export const zvonariAPI = {
     return handleResponse<SingleResponse<Record<string, number>>>(response);
   },
 
+  // Разбивка звонков по transcript_status на каждого звонаря за период
+  // (done/failed/no_recording/pending/transcribing) — полная статистика вместо голого счётчика.
+  getStatusCounts: async (from: string, to: string): Promise<SingleResponse<Record<string, Record<string, number>>>> => {
+    const params = new URLSearchParams({ from, to });
+    const response = await fetch(`${API_BASE}/zvonari/calls/status-counts?${params.toString()}`);
+    return handleResponse<SingleResponse<Record<string, Record<string, number>>>>(response);
+  },
+
+  // Массово повторить транскрибацию+аналитику для всех звонков за период
+  // со статусом failed/no_recording/pending/transcribing. Тоже фоновая
+  // задача — статус через getSyncStatus.
+  retryFailed: async (from: string, to: string): Promise<SingleResponse<{ status: string }>> => {
+    const params = new URLSearchParams({ from, to });
+    const response = await fetch(`${API_BASE}/zvonari/calls/retry-failed?${params.toString()}`, { method: 'POST' });
+    return handleResponse<SingleResponse<{ status: string }>>(response);
+  },
+
   // Вручную (пере)запустить транскрибацию+аналитику для одного звонка —
   // например, если он застрял в статусе transcribing/failed.
   retranscribeCall: async (callId: string): Promise<SingleResponse<Call>> => {

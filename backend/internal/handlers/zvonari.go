@@ -72,6 +72,49 @@ func (h *Handlers) GetZvonariSyncStatus(w http.ResponseWriter, r *http.Request) 
 	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": status})
 }
 
+// RetryFailedCalls обрабатывает POST /api/zvonari/calls/retry-failed?from=&to=
+// Массово (пере)запускает транскрибацию+аналитику для всех звонков за период
+// со статусом failed/no_recording/pending/transcribing — работает в фоне,
+// как и /sync, статус — тот же GET /api/zvonari/sync/status (это один и тот
+// же "слот" фоновой задачи, синк и повтор не бегут одновременно).
+func (h *Handlers) RetryFailedCalls(w http.ResponseWriter, r *http.Request) {
+	from, to, err := parseRangeParams(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	started := h.zvonari.StartRetryFailed(from, to)
+	if !started {
+		respondWithJSON(w, http.StatusConflict, map[string]interface{}{
+			"data": map[string]string{"status": "already_running"},
+		})
+		return
+	}
+	respondWithJSON(w, http.StatusAccepted, map[string]interface{}{
+		"data": map[string]string{"status": "started"},
+	})
+}
+
+// GetCallStatusCounts обрабатывает GET /api/zvonari/calls/status-counts?from=&to=
+// Разбивка звонков по transcript_status на каждого звонаря за период —
+// сколько реально готово/упало/без записи/в очереди, а не просто общий счётчик.
+func (h *Handlers) GetCallStatusCounts(w http.ResponseWriter, r *http.Request) {
+	from, to, err := parseRangeParams(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	counts, err := h.zvonari.CallStatusCounts(r.Context(), from, to)
+	if err != nil {
+		log.Printf("GetCallStatusCounts failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to get call status counts")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": counts})
+}
+
 // GetCallCounts обрабатывает GET /api/zvonari/calls/count?from=&to=
 // Возвращает число синхронизированных звонков за период по каждому звонарю
 // (map caller_id -> count) — для счётчика на карточках в списке.
