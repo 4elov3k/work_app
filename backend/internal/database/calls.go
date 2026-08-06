@@ -213,6 +213,45 @@ func (db *DB) ListCallsByStatusPeriod(ctx context.Context, statuses []string, fr
 	return calls, nil
 }
 
+// ListCallsNeedingAnalysis returns calls in [from, to) whose transcript is
+// ready (transcript_status='done') but haven't been LLM-classified yet
+// (analytics_json IS NULL) — the queue for the decoupled AnalyzeCalls job.
+func (db *DB) ListCallsNeedingAnalysis(ctx context.Context, from, to time.Time) ([]models.Call, error) {
+	query := `
+		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
+		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json, created_at, updated_at
+		FROM calls
+		WHERE transcript_status = 'done' AND analytics_json IS NULL AND started_at >= $1 AND started_at < $2
+		ORDER BY started_at
+	`
+	rows, err := db.QueryContext(ctx, query, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query calls needing analysis: %w", err)
+	}
+	defer rows.Close()
+
+	var calls []models.Call
+	for rows.Next() {
+		var c models.Call
+		var analytics []byte
+		if err := rows.Scan(
+			&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
+			&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
+			&c.TranscriptText, &analytics, &c.CreatedAt, &c.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan call: %w", err)
+		}
+		if len(analytics) > 0 {
+			c.AnalyticsJSON = json.RawMessage(analytics)
+		}
+		calls = append(calls, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating calls: %w", err)
+	}
+	return calls, nil
+}
+
 func (db *DB) ListCallsByCallerPeriod(ctx context.Context, callerID string, from, to time.Time) ([]models.Call, error) {
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,

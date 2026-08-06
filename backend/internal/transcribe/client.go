@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -21,6 +22,16 @@ type Client struct {
 	baseURL    string
 	token      string
 	httpClient *http.Client
+
+	// Optional: an on-LAN GPU box (see docs — a Windows machine running the
+	// same transcribe_server.py with TRANSCRIBE_DEVICE=cuda), tried first
+	// when configured. It isn't always powered on, so every call falls
+	// straight back to baseURL (the always-on CPU service) on any failure —
+	// there is no manual toggle, and no error is surfaced to the caller
+	// just because the GPU box happened to be off.
+	gpuBaseURL string
+	gpuToken   string
+	gpuClient  *http.Client
 }
 
 // A multi-minute call recording can take a while to transcribe locally with
@@ -31,42 +42,70 @@ type Client struct {
 // still legitimately in progress, not stuck.
 const transcribeTimeout = 6 * time.Minute
 
+// GPU transcription should finish in seconds, not minutes — this timeout
+// exists to fail fast into the CPU fallback if the GPU box is unreachable
+// (network hiccup, not just "powered off": TCP refused/no-route already
+// return almost instantly) or its transcription is unexpectedly hung,
+// without eating into the overall per-call budget.
+const gpuTranscribeTimeout = 90 * time.Second
+
 func NewFromEnv() *Client {
 	baseURL := strings.TrimRight(os.Getenv("TRANSCRIBE_SERVICE_URL"), "/")
+	gpuBaseURL := strings.TrimRight(os.Getenv("TRANSCRIBE_SERVICE_GPU_URL"), "/")
 	return &Client{
 		baseURL:    baseURL,
 		token:      os.Getenv("TRANSCRIBE_SERVICE_TOKEN"),
 		httpClient: &http.Client{Timeout: transcribeTimeout},
+		gpuBaseURL: gpuBaseURL,
+		gpuToken:   os.Getenv("TRANSCRIBE_SERVICE_GPU_TOKEN"),
+		gpuClient:  &http.Client{Timeout: gpuTranscribeTimeout},
 	}
 }
 
 func (c *Client) Configured() bool {
-	return c.baseURL != ""
+	return c.baseURL != "" || c.gpuBaseURL != ""
 }
 
 type Result struct {
 	Text string `json:"text"`
 }
 
-// Transcribe sends raw audio bytes to Hermes and returns the Whisper transcript.
+// Transcribe tries the optional GPU box first (if configured), and falls
+// back to the CPU service on any failure there — including "box is off",
+// which isn't a real error from the caller's point of view.
 func (c *Client) Transcribe(ctx context.Context, filename string, audio []byte) (*Result, error) {
 	if !c.Configured() {
 		return nil, fmt.Errorf("TRANSCRIBE_SERVICE_URL is not configured")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/transcribe", bytes.NewReader(audio))
+	if c.gpuBaseURL != "" {
+		result, err := c.transcribeAt(ctx, c.gpuClient, c.gpuBaseURL, c.gpuToken, filename, audio)
+		if err == nil {
+			return result, nil
+		}
+		if c.baseURL == "" {
+			return nil, err
+		}
+		log.Printf("transcribe: GPU service unavailable, falling back to CPU: %v", err)
+	}
+
+	return c.transcribeAt(ctx, c.httpClient, c.baseURL, c.token, filename, audio)
+}
+
+func (c *Client) transcribeAt(ctx context.Context, client *http.Client, baseURL, token, filename string, audio []byte) (*Result, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/transcribe", bytes.NewReader(audio))
 	if err != nil {
 		return nil, fmt.Errorf("building transcribe request: %w", err)
 	}
 	req.Header.Set("X-Filename", filename)
 	req.Header.Set("Content-Type", "application/octet-stream")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("calling call-transcribe: %w", err)
+		return nil, fmt.Errorf("calling call-transcribe (%s): %w", baseURL, err)
 	}
 	defer resp.Body.Close()
 
@@ -80,9 +119,9 @@ func (c *Client) Transcribe(ctx context.Context, filename string, audio []byte) 
 		}
 		_ = json.Unmarshal(body, &errPayload)
 		if errPayload.Error != "" {
-			return nil, fmt.Errorf("call-transcribe: %s", errPayload.Error)
+			return nil, fmt.Errorf("call-transcribe (%s): %s", baseURL, errPayload.Error)
 		}
-		return nil, fmt.Errorf("call-transcribe returned HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("call-transcribe (%s) returned HTTP %d", baseURL, resp.StatusCode)
 	}
 
 	var result Result

@@ -96,6 +96,30 @@ func (h *Handlers) RetryFailedCalls(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// AnalyzeCalls обрабатывает POST /api/zvonari/calls/analyze?from=&to=
+// Запускает LLM-классификацию для звонков за период, у которых уже есть
+// готовый транскрипт, но ещё нет analytics_json — отдельная фоновая задача
+// от транскрибации (см. transcribeOnly в service.go): может запускаться
+// с задержкой, например через несколько часов после утреннего синка.
+func (h *Handlers) AnalyzeCalls(w http.ResponseWriter, r *http.Request) {
+	from, to, err := parseRangeParams(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	started := h.zvonari.StartAnalyzeCalls(from, to)
+	if !started {
+		respondWithJSON(w, http.StatusConflict, map[string]interface{}{
+			"data": map[string]string{"status": "already_running"},
+		})
+		return
+	}
+	respondWithJSON(w, http.StatusAccepted, map[string]interface{}{
+		"data": map[string]string{"status": "started"},
+	})
+}
+
 // GetCallStatusCounts обрабатывает GET /api/zvonari/calls/status-counts?from=&to=
 // Разбивка звонков по transcript_status на каждого звонаря за период —
 // сколько реально готово/упало/без записи/в очереди, а не просто общий счётчик.
