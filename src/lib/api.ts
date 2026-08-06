@@ -79,8 +79,55 @@ export interface Service {
   price: number;
   qty?: number;
   amount?: number;
+  section?: string;
+  price_per_hour?: number;
+  hours_per_unit?: number;
+  archived?: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface ServiceCatalogSection {
+  section: string;
+  items: Service[];
+}
+
+export interface ContractAppendixLine {
+  id: string;
+  appendix_id: string;
+  service_id?: string;
+  section: string;
+  position: number;
+  title: string;
+  unit: string;
+  price: number;
+  qty: number;
+  amount: number;
+}
+
+export interface ContractAppendix {
+  id: string;
+  contract_id: string;
+  number: string;
+  date: string;
+  status: string;
+  total_amount: number;
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContractAppendixWithLines extends ContractAppendix {
+  lines: ContractAppendixLine[];
+}
+
+export interface ContractAppendixLineInput {
+  service_id?: string;
+  section?: string;
+  title?: string;
+  unit?: string;
+  price?: number;
+  qty?: number;
 }
 
 export interface RedmineProject {
@@ -262,6 +309,17 @@ export interface ErrorResponse {
   code: number;
 }
 
+// Ошибка API-запроса с сохранённым HTTP-статусом, чтобы вызывающий код мог
+// различать «не найдено» (404) и настоящие сбои сервера/сети.
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 // Утилита для обработки ответов
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -279,7 +337,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
     } catch {
       if (rawText) message = rawText;
     }
-    throw new Error(`${message} (HTTP ${response.status})`);
+    throw new ApiError(`${message} (HTTP ${response.status})`, response.status);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -299,26 +357,16 @@ async function handleResponse<T>(response: Response): Promise<T> {
 export const customersAPI = {
   // Получить список всех контрагентов
   getAll: async (page = 1, perPage = 100): Promise<PaginatedResponse<Customer>> => {
-    try {
-      const response = await fetch(`${API_BASE}/customers?page=${page}&per_page=${perPage}`);
-      return handleResponse<PaginatedResponse<Customer>>(response);
-    } catch (err) {
-      console.warn("customersAPI.getAll failed, returning empty list:", err);
-      return { data: [], total: 0, page, per_page: perPage };
-    }
+    const response = await fetch(`${API_BASE}/customers?page=${page}&per_page=${perPage}`);
+    return handleResponse<PaginatedResponse<Customer>>(response);
   },
 
   // Поиск контрагентов
   search: async (query: string, page = 1, perPage = 100): Promise<PaginatedResponse<Customer>> => {
-    try {
-      const response = await fetch(
-        `${API_BASE}/customers?search=${encodeURIComponent(query)}&page=${page}&per_page=${perPage}`
-      );
-      return handleResponse<PaginatedResponse<Customer>>(response);
-    } catch (err) {
-      console.warn("customersAPI.search failed, returning empty list:", err);
-      return { data: [], total: 0, page, per_page: perPage };
-    }
+    const response = await fetch(
+      `${API_BASE}/customers?search=${encodeURIComponent(query)}&page=${page}&per_page=${perPage}`
+    );
+    return handleResponse<PaginatedResponse<Customer>>(response);
   },
 
   // Получить контрагента по ID
@@ -865,6 +913,79 @@ export const servicesAPI = {
 
   delete: async (id: string): Promise<{ status: string }> => {
     const response = await fetch(`${API_BASE}/services/${id}`, {
+      method: 'DELETE',
+    });
+    return handleResponse<{ status: string }>(response);
+  },
+};
+
+// Каталог типовых услуг (стандартный прайс), сгруппированный по разделам
+export const serviceCatalogAPI = {
+  get: async (): Promise<{ data: ServiceCatalogSection[] }> => {
+    const response = await fetch(`${API_BASE}/services/catalog`);
+    return handleResponse<{ data: ServiceCatalogSection[] }>(response);
+  },
+};
+
+// API для работы с приложениями к договору (смета)
+export const contractAppendicesAPI = {
+  getByContract: async (contractId: string): Promise<PaginatedResponse<ContractAppendix>> => {
+    const response = await fetch(`${API_BASE}/contracts/${contractId}/appendices`);
+    return handleResponse<PaginatedResponse<ContractAppendix>>(response);
+  },
+
+  getNextNumber: async (contractId: string): Promise<{ number: string }> => {
+    const response = await fetch(`${API_BASE}/contracts/${contractId}/appendices/next-number`);
+    return handleResponse<{ number: string }>(response);
+  },
+
+  create: async (
+    contractId: string,
+    data: { number: string; date: string; status?: string; lines: ContractAppendixLineInput[] }
+  ): Promise<SingleResponse<ContractAppendixWithLines>> => {
+    const response = await fetch(`${API_BASE}/contracts/${contractId}/appendices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse<SingleResponse<ContractAppendixWithLines>>(response);
+  },
+
+  getById: async (id: string): Promise<SingleResponse<ContractAppendixWithLines>> => {
+    const response = await fetch(`${API_BASE}/contract-appendices/${id}`);
+    return handleResponse<SingleResponse<ContractAppendixWithLines>>(response);
+  },
+
+  update: async (
+    id: string,
+    data: { number?: string; date?: string; status?: string; archived?: boolean }
+  ): Promise<SingleResponse<ContractAppendix>> => {
+    const response = await fetch(`${API_BASE}/contract-appendices/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return handleResponse<SingleResponse<ContractAppendix>>(response);
+  },
+
+  delete: async (id: string): Promise<{ status: string }> => {
+    const response = await fetch(`${API_BASE}/contract-appendices/${id}`, {
+      method: 'DELETE',
+    });
+    return handleResponse<{ status: string }>(response);
+  },
+
+  addLine: async (id: string, line: ContractAppendixLineInput): Promise<{ status: string }> => {
+    const response = await fetch(`${API_BASE}/contract-appendices/${id}/lines`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ line }),
+    });
+    return handleResponse<{ status: string }>(response);
+  },
+
+  deleteLine: async (id: string, lineId: string): Promise<{ status: string }> => {
+    const response = await fetch(`${API_BASE}/contract-appendices/${id}/lines/${lineId}`, {
       method: 'DELETE',
     });
     return handleResponse<{ status: string }>(response);

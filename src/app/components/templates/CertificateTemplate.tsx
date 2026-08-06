@@ -1,5 +1,6 @@
 import * as rubles from "rubles"
 import { Customer, ActWithServices } from "@/lib/api"
+import type { Organization } from "@/lib/api.server"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table"
 import { Card, CardContent } from "@/components/ui/card"
 import EditableServiceLine from "./EditableServiceLine"
@@ -8,6 +9,7 @@ interface CertificateTemplateProps {
   invoice: ActWithServices
   customer: Customer
   docId: string
+  organization: Organization
 }
 
 function formatSignerName(value?: string): string {
@@ -25,12 +27,16 @@ function formatSignerName(value?: string): string {
   return initials ? `${lastName} ${initials}` : lastName
 }
 
-export default function CertificateTemplate({ invoice, customer, docId }: CertificateTemplateProps) {
+export default function CertificateTemplate({ invoice, customer, docId, organization }: CertificateTemplateProps) {
   const services = invoice.services
   const num = invoice.number
   const date = invoice.date
   const customerSignerPosition = customer.contact_position?.trim() || "Директор"
   const customerSignerName = formatSignerName(customer.contact_person)
+  const sellerSignerName = formatSignerName(
+    [organization.signer.last_name, organization.signer.first_name, organization.signer.middle_name].join(" ")
+  )
+  const sellerAddress = organization.legal_address || organization.postal_address || ""
   
   // Вычисляем сумму
   let sum = 0
@@ -63,12 +69,10 @@ export default function CertificateTemplate({ invoice, customer, docId }: Certif
   return (
     <Card className="mx-auto bg-white print:shadow-none print:border-none max-w-[210mm] min-h-[297mm] print:min-h-[297mm]">
       <CardContent data-document-content="true" className="p-6 print:p-8 text-black text-xs relative">
-        {/* Шапка с реквизитами ИП */}
+        {/* Шапка с реквизитами продавца */}
         <div className="text-left mb-3 space-y-0">
-          <p className="text-[10px] font-semibold">ИП Мыленкова Любовь Валерьевна, ИНН 526220116209</p>
-          <p className="text-[10px]">
-            Адрес: 603136, г. Нижний Новгород ул, Маршала Рокоссовского, д. 2к1, кв 135
-          </p>
+          <p className="text-[10px] font-semibold">{organization.full_name}, ИНН {organization.inn}</p>
+          {sellerAddress && <p className="text-[10px]">Адрес: {sellerAddress}</p>}
         </div>
 
         {/* Заголовок акта */}
@@ -90,9 +94,11 @@ export default function CertificateTemplate({ invoice, customer, docId }: Certif
           </div>
         </div>
 
-        <div className="text-[11px] mb-2">
-          <p>Договор: {invoice.contract_number || 'Основной'}</p>
-        </div>
+        {invoice.contract_number && (
+          <div className="text-[11px] mb-2">
+            <p>Договор: № {invoice.contract_number}</p>
+          </div>
+        )}
 
         {/* Таблица работ/услуг */}
         <div className="mb-2">
@@ -165,7 +171,7 @@ export default function CertificateTemplate({ invoice, customer, docId }: Certif
           <div>
             <div className="flex items-start justify-between mb-1">
               <div className="text-[11px] flex-shrink-0">Исполнитель:</div>
-              <div className="text-[11px] text-right">Л. В. Мыленкова</div>
+              <div className="text-[11px] text-right">{sellerSignerName}</div>
             </div>
             <div className="flex items-center gap-2 mt-2">
               <div className="border-b border-black flex-1 h-6"></div>
@@ -177,14 +183,14 @@ export default function CertificateTemplate({ invoice, customer, docId }: Certif
           <div>
             <div className="flex items-start justify-between mb-1">
               <div className="text-[11px] flex-shrink-0">Заказчик:</div>
-              <div className="text-[11px] text-right">{customerSignerPosition}</div>
+              <div className="text-[11px] text-right">{customerSignerName || customerSignerPosition}</div>
             </div>
             <div className="flex items-center gap-2 mt-2">
               <div className="border-b border-black flex-1 h-6"></div>
             </div>
             <div className="flex items-start justify-between gap-3 text-[9px] text-gray-500 mt-1">
               <span>(подпись)</span>
-              {customerSignerName && <span className="text-right text-black">{customerSignerName}</span>}
+              <span className="text-right">{customerSignerPosition}</span>
             </div>
           </div>
         </div>

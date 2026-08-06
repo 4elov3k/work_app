@@ -1,5 +1,6 @@
 import * as rubles from "rubles"
 import { Customer, InvoiceWithServices } from "@/lib/api"
+import type { Organization } from "@/lib/api.server"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table"
 import { Card, CardContent } from "@/components/ui/card"
 import EditableServiceLine from "./EditableServiceLine"
@@ -8,12 +9,32 @@ interface InvoiceTemplateProps {
   invoice: InvoiceWithServices
   customer: Customer
   docId: string
+  organization: Organization
 }
 
-export default function InvoiceTemplate({ invoice, customer, docId }: InvoiceTemplateProps) {
+function formatSignerName(value?: string): string {
+  const parts = (value || "").trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return ""
+  if (parts.length === 1) return parts[0]
+
+  const [lastName, ...names] = parts
+  const initials = names
+    .map((part) => part[0])
+    .filter(Boolean)
+    .map((letter) => `${letter.toUpperCase()}.`)
+    .join(" ")
+
+  return initials ? `${lastName} ${initials}` : lastName
+}
+
+export default function InvoiceTemplate({ invoice, customer, docId, organization }: InvoiceTemplateProps) {
   const services = invoice.services
   const num = invoice.number
   const date = invoice.date
+  const sellerSignerName = formatSignerName(
+    [organization.signer.last_name, organization.signer.first_name, organization.signer.middle_name].join(" ")
+  )
+  const sellerAddress = organization.legal_address || organization.postal_address || ""
   
   // Вычисляем сумму
   let sum = 0
@@ -46,14 +67,12 @@ export default function InvoiceTemplate({ invoice, customer, docId }: InvoiceTem
   return (
     <Card className="mx-auto bg-white print:shadow-none print:border-none max-w-[210mm] min-h-[297mm] print:min-h-[297mm]">
       <CardContent data-document-content="true" className="p-6 print:p-8 text-black text-xs relative">
-        {/* Шапка с реквизитами ИП */}
+        {/* Шапка с реквизитами продавца */}
         <div className="text-center mb-3 space-y-0">
-          <p className="text-[11px] font-semibold">ИП Мыленкова Любовь Валерьевна</p>
-          <p className="text-[10px]">
-            Адрес: 603136, г. Нижний Новгород ул, Маршала Рокоссовского, д. 2к1, кв 135
-          </p>
-          <p className="text-[10px]">тел: 8-905-864445</p>
-          <p className="text-[10px]">ИНН: 526220116209</p>
+          <p className="text-[11px] font-semibold">{organization.full_name}</p>
+          {sellerAddress && <p className="text-[10px]">Адрес: {sellerAddress}</p>}
+          {organization.phone && <p className="text-[10px]">тел: {organization.phone}</p>}
+          <p className="text-[10px]">ИНН: {organization.inn}</p>
         </div>
 
         <div className="border-t border-black my-3"></div>
@@ -65,10 +84,12 @@ export default function InvoiceTemplate({ invoice, customer, docId }: InvoiceTem
 
         {/* Реквизиты получателя */}
         <div className="mb-3 space-y-0 text-[11px]">
-          <p><strong>Получатель:</strong> ИП Мыленкова Любовь Валерьевна</p>
-          <p><strong>Банк получателя:</strong> ООО &quot;Банк Точка&quot;</p>
-          <p>Р/с: 40802810164270001108 БИК: 044525104</p>
-          <p>К/с: 30101810445745251004</p>
+          <p><strong>Получатель:</strong> {organization.full_name}</p>
+          {organization.bank_name && <p><strong>Банк получателя:</strong> {organization.bank_name}</p>}
+          {(organization.bank_account || organization.bank_bik) && (
+            <p>Р/с: {organization.bank_account} БИК: {organization.bank_bik}</p>
+          )}
+          {organization.bank_corr_account && <p>К/с: {organization.bank_corr_account}</p>}
         </div>
 
         <div className="border-t border-black my-3"></div>
@@ -148,12 +169,12 @@ export default function InvoiceTemplate({ invoice, customer, docId }: InvoiceTem
         <div className="mt-6">
           <div className="flex justify-between items-start mb-2">
             <div className="text-[11px]">
-              <p className="mb-3">Руководитель предприятия:</p>
+              <p className="mb-3">{organization.signer.position || "Руководитель предприятия"}:</p>
               <div className="border-b border-black w-48 h-6"></div>
               <p className="text-[9px] text-gray-500 mt-1">(подпись)</p>
             </div>
             <div className="text-[11px] mt-8">
-              Л.В. Мыленкова
+              {sellerSignerName}
             </div>
           </div>
           <p className="text-[11px] mt-6">М.П.</p>
