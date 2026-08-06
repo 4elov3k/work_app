@@ -71,6 +71,17 @@ func New(service *accounting.Service) *mcp.Server {
 		return service.ListContractDocuments(ctx, input)
 	})
 
+	addTool(server, "services.search", "Search the services catalog (standard price list sections plus any ad-hoc services) by name or section. Use this before contract_appendices.prepare_create to find catalog item IDs.", true, false, true, func(ctx context.Context, input accounting.SearchInput) (any, error) {
+		return service.SearchServiceCatalog(ctx, input)
+	})
+
+	addTool(server, "contract_appendices.prepare_create", "Prepare a new Приложение к договору (contract appendix / смета) — a standalone printable document listing catalog and/or ad-hoc work items for a contract, grouped into sections. Use services.search or a services catalog listing to find catalog items first.", true, false, true, func(ctx context.Context, input accounting.CreateContractAppendixInput) (any, error) {
+		return service.PrepareCreateContractAppendix(ctx, input)
+	})
+	addTool(server, "contract_appendices.commit_create", "Commit a prepared contract appendix. Requires confirmation_token and idempotency_key.", false, false, true, func(ctx context.Context, input accounting.CommitInput) (any, error) {
+		return service.CommitCreateContractAppendix(ctx, input)
+	})
+
 	addTool(server, "invoices.search", "Search invoices.", true, false, true, func(ctx context.Context, input accounting.SearchInput) (any, error) {
 		return service.SearchInvoices(ctx, input)
 	})

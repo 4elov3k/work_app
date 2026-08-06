@@ -356,6 +356,36 @@ func (s *Service) SearchCounterparties(ctx context.Context, input SearchInput) (
 	return map[string]any{"data": items, "total": len(items)}, rows.Err()
 }
 
+// SearchServiceCatalog searches the services table (both the reusable price
+// catalog and any ad-hoc services) by name or section, for use when picking
+// items for a contract appendix.
+func (s *Service) SearchServiceCatalog(ctx context.Context, input SearchInput) (map[string]any, error) {
+	limit := boundedLimit(input.Limit, 30)
+	query := strings.TrimSpace(input.Query)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, name, price, unit, section, COALESCE(price_per_hour, 0), COALESCE(hours_per_unit, 0), archived, created_at, updated_at
+		FROM services
+		WHERE NOT archived
+		  AND ($1 = '' OR name ILIKE $2 OR section ILIKE $2)
+		ORDER BY section, created_at
+		LIMIT $3
+	`, query, "%"+query+"%", limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]models.Service, 0)
+	for rows.Next() {
+		var svc models.Service
+		if err := rows.Scan(&svc.ID, &svc.Name, &svc.Price, &svc.Unit, &svc.Section, &svc.PricePerHour, &svc.HoursPerUnit, &svc.Archived, &svc.CreatedAt, &svc.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, svc)
+	}
+	return map[string]any{"data": items, "total": len(items)}, rows.Err()
+}
+
 func (s *Service) GetCounterparty(ctx context.Context, input IDInput) (map[string]any, error) {
 	c, err := s.db.GetCustomerByID(ctx, input.ID)
 	if err != nil {
@@ -559,7 +589,11 @@ func (s *Service) PrepareCreateContract(ctx context.Context, input CreateContrac
 		return nil, err
 	}
 	if input.Number == "" {
-		input.Number = "Основной"
+		next, err := s.db.GetNextContractNumber(ctx, customer.ID)
+		if err != nil {
+			return nil, err
+		}
+		input.Number = strconv.FormatInt(next, 10)
 	}
 	if input.Currency == "" {
 		input.Currency = "RUB"
@@ -605,6 +639,199 @@ func (s *Service) CommitCreateContract(ctx context.Context, input CommitInput) (
 			return nil, err
 		}
 		return map[string]any{"status": "created", "data": c}, nil
+	})
+}
+
+// ContractAppendixLineInput represents one line of a "Приложение к договору"
+// (contract appendix / смета): either a reference to a catalog service
+// (ServiceID), optionally overriding its title/unit/price/section, or a
+// fully ad-hoc line.
+type ContractAppendixLineInput struct {
+	ServiceID string `json:"service_id,omitempty" jsonschema:"existing catalog service id from services.search; omit for an ad-hoc line"`
+	Section   string `json:"section,omitempty" jsonschema:"section label shown on the printed appendix; inherited from the catalog service if omitted"`
+	Title     string `json:"title,omitempty" jsonschema:"line title; required for ad-hoc lines, overrides the catalog name if service_id is set"`
+	Unit      string `json:"unit,omitempty" jsonschema:"unit name, defaults to услуга"`
+	Price     string `json:"price,omitempty" jsonschema:"unit price in rubles, for example 24900.00; overrides the catalog price if service_id is set"`
+	Qty       string `json:"qty,omitempty" jsonschema:"quantity, defaults to 1"`
+}
+
+// CreateContractAppendixInput is the input for preparing a new contract appendix.
+type CreateContractAppendixInput struct {
+	CounterpartyID    string                      `json:"counterparty_id,omitempty"`
+	CounterpartyQuery string                      `json:"counterparty_query,omitempty"`
+	ContractID        string                      `json:"contract_id,omitempty"`
+	ContractNumber    string                      `json:"contract_number,omitempty"`
+	Number            string                      `json:"number,omitempty" jsonschema:"appendix number; auto-assigned per contract if omitted"`
+	Date              string                      `json:"date,omitempty" jsonschema:"DD.MM.YYYY, defaults to today"`
+	Lines             []ContractAppendixLineInput `json:"lines"`
+}
+
+type appendixDBLine struct {
+	ServiceID string
+	Section   string
+	Title     string
+	Unit      string
+	Price     string
+	Qty       string
+	Amount    string
+}
+
+func (s *Service) buildAppendixLinesTx(ctx context.Context, tx *sql.Tx, inputs []ContractAppendixLineInput) ([]appendixDBLine, int64, error) {
+	lines := make([]appendixDBLine, 0, len(inputs))
+	var total int64
+	for _, input := range inputs {
+		title := strings.TrimSpace(input.Title)
+		unit := strings.TrimSpace(input.Unit)
+		price := strings.TrimSpace(input.Price)
+		section := strings.TrimSpace(input.Section)
+		serviceID := strings.TrimSpace(input.ServiceID)
+		qty := strings.TrimSpace(input.Qty)
+		if qty == "" {
+			qty = "1"
+		}
+
+		if serviceID != "" {
+			var catalogName, catalogPrice, catalogUnit, catalogSection string
+			if err := tx.QueryRowContext(ctx, `SELECT name, price::text, unit, section FROM services WHERE id=$1`, serviceID).
+				Scan(&catalogName, &catalogPrice, &catalogUnit, &catalogSection); err != nil {
+				return nil, 0, appError("VALIDATION_ERROR", "Услуга не найдена", true, "Проверьте service_id")
+			}
+			if title == "" {
+				title = catalogName
+			}
+			if price == "" {
+				price = catalogPrice
+			}
+			if unit == "" {
+				unit = catalogUnit
+			}
+			if section == "" {
+				section = catalogSection
+			}
+		}
+		if unit == "" {
+			unit = "услуга"
+		}
+		if title == "" || price == "" {
+			return nil, 0, appError("VALIDATION_ERROR", "У строки должны быть title и price", true, "Исправьте строки приложения")
+		}
+		priceCents, err := parseMoneyCents(price)
+		if err != nil {
+			return nil, 0, appError("VALIDATION_ERROR", "Некорректная цена: "+price, true, "Передайте цену в рублях")
+		}
+		qtyMilli, err := parseQtyMilli(qty)
+		if err != nil || qtyMilli <= 0 {
+			return nil, 0, appError("VALIDATION_ERROR", "Некорректное количество: "+qty, true, "Передайте положительное количество")
+		}
+		amountCents := (priceCents*qtyMilli + 500) / 1000
+		total += amountCents
+		lines = append(lines, appendixDBLine{
+			ServiceID: serviceID, Section: section, Title: title, Unit: unit,
+			Price: decimalFromCents(priceCents), Qty: decimalFromMilli(qtyMilli), Amount: decimalFromCents(amountCents),
+		})
+	}
+	return lines, total, nil
+}
+
+// PrepareCreateContractAppendix prepares a new "Приложение к договору"
+// (contract appendix / смета) — a standalone printable document listing the
+// specific work items (catalog or ad-hoc) agreed for a contract.
+func (s *Service) PrepareCreateContractAppendix(ctx context.Context, input CreateContractAppendixInput) (*ConfirmationResponse, error) {
+	var customer *models.Customer
+	var err error
+	if input.CounterpartyID != "" || input.CounterpartyQuery != "" {
+		customer, err = s.resolveCounterparty(ctx, input.CounterpartyID, input.CounterpartyQuery)
+		if err != nil {
+			return nil, err
+		}
+	}
+	customerID := ""
+	if customer != nil {
+		customerID = customer.ID
+	}
+	contract, err := s.resolveContract(ctx, customerID, input.ContractID, input.ContractNumber)
+	if err != nil {
+		return nil, err
+	}
+	if input.Number == "" {
+		next, err := s.db.GetNextContractAppendixNumber(ctx, contract.ID)
+		if err != nil {
+			return nil, err
+		}
+		input.Number = strconv.FormatInt(next, 10)
+	}
+	if input.Date == "" {
+		input.Date = todayRu()
+	}
+	if _, err := time.Parse("02.01.2006", input.Date); err != nil {
+		return nil, appError("VALIDATION_ERROR", "Дата приложения должна быть в формате DD.MM.YYYY", true, "Исправьте дату")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	lines, totalCents, err := s.buildAppendixLinesTx(ctx, tx, input.Lines)
+	if err != nil {
+		return nil, err
+	}
+	if len(lines) == 0 {
+		return nil, appError("VALIDATION_ERROR", "Нужна хотя бы одна строка приложения", true, "Передайте lines")
+	}
+
+	input.ContractID = contract.ID
+	input.ContractNumber = ""
+	input.CounterpartyID = ""
+	input.CounterpartyQuery = ""
+
+	preview := map[string]any{"contract": contract, "number": input.Number, "date": input.Date, "lines": lines, "total": formatMoney(totalCents)}
+	summary := "Будет создано приложение №" + input.Number + " к договору " + contract.Number + " на " + formatMoney(totalCents)
+	return s.createConfirmation(ctx, "contract_appendices.commit_create", UserFromContext(ctx), map[string]any{"input": input, "total_cents": totalCents}, preview, nil, summary)
+}
+
+// CommitCreateContractAppendix commits a previously prepared contract appendix.
+func (s *Service) CommitCreateContractAppendix(ctx context.Context, input CommitInput) (map[string]any, error) {
+	var payload struct {
+		Input      CreateContractAppendixInput `json:"input"`
+		TotalCents int64                       `json:"total_cents"`
+	}
+	return s.commitWithConfirmation(ctx, "contract_appendices.commit_create", input, &payload, func(tx *sql.Tx) (map[string]any, error) {
+		lines, totalCents, err := s.buildAppendixLinesTx(ctx, tx, payload.Input.Lines)
+		if err != nil {
+			return nil, err
+		}
+		if totalCents != payload.TotalCents {
+			return nil, appError("CONFIRMATION_MISMATCH", "Сумма изменилась после подготовки", true, "Повторите prepare_create")
+		}
+
+		var appendixID string
+		err = tx.QueryRowContext(ctx, `
+			INSERT INTO contract_appendices (contract_id, number, date, status, total_amount)
+			VALUES ($1, $2, $3, 'draft', $4)
+			RETURNING id
+		`, payload.Input.ContractID, payload.Input.Number, payload.Input.Date, decimalFromCents(totalCents)).Scan(&appendixID)
+		if err != nil {
+			if isUniqueViolation(err) {
+				return nil, appError("DOCUMENT_DUPLICATE", "Приложение с таким номером уже существует для этого договора", true, "Выберите другой номер")
+			}
+			if isForeignKeyViolation(err) {
+				return nil, appError("CONTRACT_NOT_FOUND", "Договор не найден", true, "Проверьте contract_id")
+			}
+			return nil, err
+		}
+
+		for i, line := range lines {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO contract_appendix_lines
+					(appendix_id, service_id, section, position, title_snapshot, unit_snapshot, price_snapshot, qty, amount)
+				VALUES ($1, NULLIF($2, '')::uuid, $3, $4, $5, $6, $7::numeric, $8::numeric, $9::numeric)
+			`, appendixID, line.ServiceID, line.Section, i+1, line.Title, line.Unit, line.Price, line.Qty, line.Amount); err != nil {
+				return nil, fmt.Errorf("failed to create appendix line: %w", err)
+			}
+		}
+
+		return map[string]any{"status": "created", "id": appendixID, "number": payload.Input.Number, "total": formatMoney(totalCents)}, nil
 	})
 }
 
@@ -2027,9 +2254,14 @@ func canonicalJSONBytes(value any) ([]byte, error) {
 	return json.Marshal(decoded)
 }
 
+// moscowLocation is a fixed UTC+3 offset rather than IANA's "Europe/Moscow",
+// so it never depends on the tzdata database being installed in the runtime
+// image (Alpine's base image doesn't ship it) — time.LoadLocation silently
+// returns a nil *Location on such a lookup failure, and Time.In(nil) panics.
+var moscowLocation = time.FixedZone("MSK", 3*60*60)
+
 func todayRu() string {
-	loc, _ := time.LoadLocation("Europe/Moscow")
-	return time.Now().In(loc).Format("02.01.2006")
+	return time.Now().In(moscowLocation).Format("02.01.2006")
 }
 
 func boundedLimit(limit, fallback int) int {
