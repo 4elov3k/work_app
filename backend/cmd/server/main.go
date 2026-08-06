@@ -157,6 +157,7 @@ func main() {
 		r.Post("/zvonari/calls/analyze", h.AnalyzeCalls)
 		r.Get("/zvonari/calls/status-counts", h.GetCallStatusCounts)
 		r.Get("/zvonari/calls/count", h.GetCallCounts)
+		r.Get("/zvonari/calls/outcomes", h.GetOutcomeCounts)
 		r.Get("/zvonari/callers/{id}/calls", h.GetCallerCalls)
 		r.Post("/zvonari/calls/{id}/transcribe", h.RetranscribeCall)
 		r.Get("/zvonari/callers/{id}/distribution", h.GetCallerCallDistribution)

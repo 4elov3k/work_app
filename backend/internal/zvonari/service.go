@@ -169,12 +169,12 @@ func callerExtension(rec pbx.CallRecord) string {
 // (startBackgroundJob), чтобы синк/повтор/анализ никогда не бежали
 // одновременно и делили один и тот же прогресс-статус.
 type SyncResult struct {
-	CallersSynced    int
-	CallsFound       int
-	CallsNew         int
-	CallsSkipped     int
-	TranscribeErrors int
-	AnalyzeErrors    int
+	CallersSynced    int `json:"callers_synced"`
+	CallsFound       int `json:"calls_found"`
+	CallsNew         int `json:"calls_new"`
+	CallsSkipped     int `json:"calls_skipped"`
+	TranscribeErrors int `json:"transcribe_errors"`
+	AnalyzeErrors    int `json:"analyze_errors"`
 }
 
 // maxConcurrentProcessing bounds how many calls are transcribed at once.
@@ -507,6 +507,13 @@ func (s *Service) CallStatusCounts(ctx context.Context, from, to time.Time) (map
 // transcript + per-call analytics), for the UI's call-detail breakdown.
 func (s *Service) ListCalls(ctx context.Context, callerID string, from, to time.Time) ([]models.Call, error) {
 	return s.db.ListCallsByCallerPeriod(ctx, callerID, from, to)
+}
+
+// OutcomeCounts returns each caller's Hermes outcome breakdown in [from, to)
+// — one query for all callers, for the table view's per-caller conversion
+// columns without an N+1 fetch.
+func (s *Service) OutcomeCounts(ctx context.Context, from, to time.Time) (map[string]map[string]int, error) {
+	return s.db.CountOutcomesByCaller(ctx, from, to)
 }
 
 // CallDistribution buckets a caller's calls for a period by their Hermes

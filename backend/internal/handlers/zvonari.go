@@ -158,6 +158,26 @@ func (h *Handlers) GetCallCounts(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": counts})
 }
 
+// GetOutcomeCounts обрабатывает GET /api/zvonari/calls/outcomes?from=&to=
+// Разбивка по категориям Hermes-анализа (заинтересован/отказ/...) на
+// каждого звонаря за период — для сортировки/подсветки в таблице звонарей
+// без отдельного запроса на каждого.
+func (h *Handlers) GetOutcomeCounts(w http.ResponseWriter, r *http.Request) {
+	from, to, err := parseRangeParams(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	counts, err := h.zvonari.OutcomeCounts(r.Context(), from, to)
+	if err != nil {
+		log.Printf("GetOutcomeCounts failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to get outcome counts")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": counts})
+}
+
 // GetCallerCalls обрабатывает GET /api/zvonari/callers/{id}/calls?from=&to=
 // Детализация звонков звонаря за период: время, направление, длительность,
 // категория (analytics_json.outcome) и транскрипт по каждому звонку.
