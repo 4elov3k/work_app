@@ -18,9 +18,13 @@ import {
 export default function DeleteCustomerButton({
   customerId,
   customerName,
+  onDeleted,
 }: {
   customerId: string
   customerName: string
+  // По умолчанию (страница контрагента) — переход на главную. В списке на
+  // главной странице передаётся колбэк, чтобы просто убрать карточку.
+  onDeleted?: () => void
 }) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -32,8 +36,12 @@ export default function DeleteCustomerButton({
     setError("")
     try {
       await customersAPI.delete(customerId)
-      router.push("/")
-      router.refresh()
+      if (onDeleted) {
+        onDeleted()
+      } else {
+        router.push("/")
+        router.refresh()
+      }
     } catch (err: unknown) {
       console.error("Failed to delete customer:", err)
       const message = err instanceof Error ? err.message : "Ошибка при удалении контрагента"
@@ -52,7 +60,11 @@ export default function DeleteCustomerButton({
         variant="ghost"
         size="icon"
         className="text-muted-foreground hover:text-destructive"
-        onClick={() => setOpen(true)}
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setOpen(true)
+        }}
       >
         <Trash2 className="h-4 w-4" />
       </Button>
