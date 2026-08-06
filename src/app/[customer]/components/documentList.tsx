@@ -1,7 +1,7 @@
 "use client"
 import React, { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
-import { Plus, FileText, FileCheck, Calendar, Loader2, Trash2 } from "lucide-react"
+import { Plus, FileText, FileCheck, Calendar, Loader2, RefreshCw, Trash2 } from "lucide-react"
 
 import {
   Invoice,
@@ -85,6 +85,9 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
   const [error, setError] = useState<string>("")
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Invoice | Act | null>(null)
+  const [sheetSyncing, setSheetSyncing] = useState(false)
+  const [syncedWithSheet, setSyncedWithSheet] = useState(false)
+  const [sheetNote, setSheetNote] = useState("")
 
   const loadDocuments = useCallback(() => {
     const loader =
@@ -154,6 +157,8 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
     try {
       const res = await contractsAPI.getNextDocNumber(contractID, documentType)
       setNumber(res.number)
+      setSyncedWithSheet(false)
+      setSheetNote("")
     } catch (err: unknown) {
       console.error("Failed to load next number:", err)
       const message = err instanceof Error ? err.message : "Не удалось получить номер"
@@ -175,6 +180,25 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
       loadNextNumber(selectedContractId)
     }
   }, [selectedContractId, manualNumber, loadNextNumber])
+
+  const handleSyncWithSheet = async () => {
+    setSheetSyncing(true)
+    setError("")
+    setSheetNote("")
+    try {
+      const res = await actsAPI.getNextNumberFromSheet()
+      setNumber(res.data.number)
+      setManualNumber(true)
+      setSyncedWithSheet(true)
+      setSheetNote(`Номер ${res.data.number} взят из таблицы (строка ${res.data.row}). При создании акта строка будет дописана автоматически.`)
+    } catch (err: unknown) {
+      console.error("Failed to sync act number with sheet:", err)
+      const message = err instanceof Error ? err.message : "Не удалось синхронизироваться с таблицей"
+      setError(message.replace(/\s*\(HTTP \d+\)$/, ""))
+    } finally {
+      setSheetSyncing(false)
+    }
+  }
 
   const newDate = date.split("-").reverse().join(".")
 
@@ -209,7 +233,7 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
           services: selectedServiceId ? undefined : [{ name: serviceName, price: parseFloat(servicePrice) }],
         })
       } else {
-        await actsAPI.create({
+        const actResponse = await actsAPI.create({
           contract_id: selectedContractId,
           customer_id: slug,
           number: number,
@@ -217,6 +241,16 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
           service_ids: selectedServiceId ? [selectedServiceId] : undefined,
           services: selectedServiceId ? undefined : [{ name: serviceName, price: parseFloat(servicePrice) }],
         })
+
+        if (syncedWithSheet) {
+          try {
+            await actsAPI.registerInSheet(actResponse.data.id)
+          } catch (sheetErr: unknown) {
+            console.error("Failed to register act in sheet:", sheetErr)
+            const sheetMessage = sheetErr instanceof Error ? sheetErr.message : "неизвестная ошибка"
+            window.alert(`Акт создан, но не удалось дописать его в таблицу: ${sheetMessage.replace(/\s*\(HTTP \d+\)$/, "")}`)
+          }
+        }
       }
 
       loadDocuments()
@@ -226,6 +260,8 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
       setServiceName("")
       setServicePrice("")
       setSelectedServiceId("")
+      setSyncedWithSheet(false)
+      setSheetNote("")
       loadRedmineStatuses()
       setIsOpen(false)
     } catch (err: unknown) {
@@ -304,6 +340,24 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
                   {error}
                 </div>
               )}
+              {documentType === "act" && (
+                <div className="pt-2">
+                  <Button type="button" variant="outline" size="sm" onClick={handleSyncWithSheet} disabled={sheetSyncing}>
+                    {sheetSyncing ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Синхронизация...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        Синхронизировать с таблицей
+                      </>
+                    )}
+                  </Button>
+                  {sheetNote && <p className="text-xs text-muted-foreground mt-2">{sheetNote}</p>}
+                </div>
+              )}
               <div className="grid gap-4 py-4">
                 <div className="space-y-2">
                   <label htmlFor="number" className="text-sm font-medium">
@@ -313,7 +367,11 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
                     id="number"
                     placeholder="3000"
                     value={number}
-                    onChange={(e) => setNumber(e.target.value)}
+                    onChange={(e) => {
+                      setNumber(e.target.value)
+                      setSyncedWithSheet(false)
+                      setSheetNote("")
+                    }}
                     required
                     disabled={!manualNumber}
                   />
