@@ -105,7 +105,7 @@ func (h *Handlers) DeleteService(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.db.DeleteService(ctx, id); err != nil {
 		if isForeignKeyViolation(err) {
-			respondWithError(w, http.StatusConflict, "Service is in use and cannot be deleted")
+			respondWithError(w, http.StatusConflict, "Услуга используется в приложениях к договору и не может быть удалена")
 			return
 		}
 		if errors.Is(err, sql.ErrNoRows) {

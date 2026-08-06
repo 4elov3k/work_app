@@ -173,7 +173,7 @@ func (h *Handlers) DeleteContractAppendix(w http.ResponseWriter, r *http.Request
 
 	if err := h.db.DeleteContractAppendix(ctx, id); err != nil {
 		if isForeignKeyViolation(err) {
-			respondWithError(w, http.StatusConflict, "Appendix is in use and cannot be deleted")
+			respondWithError(w, http.StatusConflict, "Приложение используется в других данных и не может быть удалено")
 			return
 		}
 		respondNotFoundOrInternal(w, err, "Contract appendix not found")

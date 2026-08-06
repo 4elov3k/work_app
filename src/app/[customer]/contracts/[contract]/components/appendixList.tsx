@@ -40,6 +40,10 @@ export default function AppendixList({ customerId, contractId }: AppendixListPro
   const [appendices, setAppendices] = useState<ContractAppendix[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<ContractAppendix | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
 
   const [isOpen, setIsOpen] = useState(false)
   const [catalog, setCatalog] = useState<ServiceCatalogSection[]>([])
@@ -69,6 +73,24 @@ export default function AppendixList({ customerId, contractId }: AppendixListPro
   useEffect(() => {
     loadAppendices()
   }, [loadAppendices])
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    setDeleteError("")
+    try {
+      await contractAppendicesAPI.delete(deleteTarget.id)
+      setDeleteOpen(false)
+      setDeleteTarget(null)
+      loadAppendices()
+    } catch (err: unknown) {
+      console.error("Failed to delete appendix:", err)
+      const message = err instanceof Error ? err.message : "Ошибка при удалении приложения"
+      setDeleteError(message.replace(/\s*\(HTTP \d+\)$/, ""))
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   const openDialog = () => {
     setFormError("")
@@ -314,22 +336,68 @@ export default function AppendixList({ customerId, contractId }: AppendixListPro
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           {appendices.map((appendix) => (
-            <Link key={appendix.id} href={`/${customerId}/contracts/${contractId}/appendices/${appendix.id}`}>
-              <Card className="hover:shadow-md transition-shadow cursor-pointer">
-                <CardHeader className="flex flex-row items-center gap-3 py-4">
-                  <FileSpreadsheet className="h-5 w-5 text-primary" />
-                  <div>
+            <Card key={appendix.id} className="hover:shadow-md transition-shadow">
+              <CardHeader className="flex flex-row items-center gap-3 py-4">
+                <Link
+                  href={`/${customerId}/contracts/${contractId}/appendices/${appendix.id}`}
+                  className="flex items-center gap-3 flex-1 min-w-0"
+                >
+                  <FileSpreadsheet className="h-5 w-5 text-primary shrink-0" />
+                  <div className="min-w-0">
                     <CardTitle className="text-base">Приложение № {appendix.number}</CardTitle>
                     <p className="text-sm text-muted-foreground">
                       {appendix.date} • {appendix.total_amount.toLocaleString("ru-RU")} ₽
                     </p>
                   </div>
-                </CardHeader>
-              </Card>
-            </Link>
+                </Link>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-muted-foreground hover:text-destructive shrink-0"
+                  onClick={() => {
+                    setDeleteError("")
+                    setDeleteTarget(appendix)
+                    setDeleteOpen(true)
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </CardHeader>
+            </Card>
           ))}
         </div>
       )}
+
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Удалить приложение?</DialogTitle>
+            <DialogDescription>
+              Приложение № {deleteTarget?.number} будет удалено без возможности восстановления.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError && (
+            <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded text-sm">
+              {deleteError}
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDeleteOpen(false)} disabled={deleting}>
+              Отмена
+            </Button>
+            <Button type="button" variant="destructive" onClick={handleDelete} disabled={deleting}>
+              {deleting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Удаление...
+                </>
+              ) : (
+                "Удалить"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
