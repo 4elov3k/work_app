@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"invoices-backend/internal/contracttopics"
 	"invoices-backend/internal/models"
 )
 
@@ -61,7 +62,7 @@ func (h *Handlers) GetContractByID(w http.ResponseWriter, r *http.Request) {
 
 	contract, err := h.db.GetContractByID(ctx, id)
 	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Contract not found")
+		respondNotFoundOrInternal(w, err, "Contract not found")
 		return
 	}
 
@@ -95,7 +96,12 @@ func (h *Handlers) CreateContract(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, "Contract topic is required")
 		return
 	}
-	req.Topic = normalizeContractTopic(req.Topic)
+	normalizedTopic, err := contracttopics.Normalize(req.Topic)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid contract topic")
+		return
+	}
+	req.Topic = normalizedTopic
 
 	if req.Currency == "" {
 		req.Currency = "RUB"
@@ -116,22 +122,6 @@ func (h *Handlers) CreateContract(w http.ResponseWriter, r *http.Request) {
 	}
 	if !allowedStatus[req.Status] {
 		respondWithError(w, http.StatusBadRequest, "Invalid contract status")
-		return
-	}
-
-	allowedTopics := map[string]bool{
-		"Продвижение сео":      true,
-		"Продвижение контекст": true,
-		"Сео + контекст":       true,
-		"Техподдержка":         true,
-		"Юр услуги":            true,
-		"Разработка":           true,
-		"Соц сети":             true,
-		"Дизайн":               true,
-		"Отзывы":               true,
-	}
-	if !allowedTopics[req.Topic] {
-		respondWithError(w, http.StatusBadRequest, "Invalid contract topic")
 		return
 	}
 
@@ -198,29 +188,6 @@ func swapDateFormat(ddmmyyyy string) string {
 		return ddmmyyyy
 	}
 	return parts[2] + "-" + parts[1] + "-" + parts[0]
-}
-
-func normalizeContractTopic(topic string) string {
-	value := strings.TrimSpace(topic)
-	normalized := strings.ToLower(value)
-	normalized = strings.ReplaceAll(normalized, "ё", "е")
-	normalized = strings.Join(strings.Fields(normalized), " ")
-	switch normalized {
-	case "разработка сайта", "создание сайта", "сайт":
-		return "Разработка"
-	case "seo", "сео", "продвижение seo":
-		return "Продвижение сео"
-	case "контекст":
-		return "Продвижение контекст"
-	case "техническая поддержка":
-		return "Техподдержка"
-	case "юридические услуги":
-		return "Юр услуги"
-	case "социальные сети":
-		return "Соц сети"
-	default:
-		return value
-	}
 }
 
 // GetNextContractNumber обрабатывает GET /api/contracts/next?customer_id=...

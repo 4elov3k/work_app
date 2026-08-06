@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -70,6 +71,17 @@ func New(service *accounting.Service) *mcp.Server {
 		return service.ListContractDocuments(ctx, input)
 	})
 
+	addTool(server, "services.search", "Search the services catalog (standard price list sections plus any ad-hoc services) by name or section. Use this before contract_appendices.prepare_create to find catalog item IDs.", true, false, true, func(ctx context.Context, input accounting.SearchInput) (any, error) {
+		return service.SearchServiceCatalog(ctx, input)
+	})
+
+	addTool(server, "contract_appendices.prepare_create", "Prepare a new Приложение к договору (contract appendix / смета) — a standalone printable document listing catalog and/or ad-hoc work items for a contract, grouped into sections. Use services.search or a services catalog listing to find catalog items first.", true, false, true, func(ctx context.Context, input accounting.CreateContractAppendixInput) (any, error) {
+		return service.PrepareCreateContractAppendix(ctx, input)
+	})
+	addTool(server, "contract_appendices.commit_create", "Commit a prepared contract appendix. Requires confirmation_token and idempotency_key.", false, false, true, func(ctx context.Context, input accounting.CommitInput) (any, error) {
+		return service.CommitCreateContractAppendix(ctx, input)
+	})
+
 	addTool(server, "invoices.search", "Search invoices.", true, false, true, func(ctx context.Context, input accounting.SearchInput) (any, error) {
 		return service.SearchInvoices(ctx, input)
 	})
@@ -103,7 +115,7 @@ func New(service *accounting.Service) *mcp.Server {
 	addTool(server, "invoices.list_unpaid", "List unpaid invoices. Bank confirmation is not inferred.", true, false, true, func(ctx context.Context, input accounting.SearchInput) (any, error) {
 		return service.ListUnpaidInvoices(ctx, input)
 	})
-	addTool(server, "invoices.render_pdf", "Render a server-side PDF file for an invoice.", false, false, true, func(ctx context.Context, input accounting.IDInput) (any, error) {
+	addTool(server, "invoices.render_pdf", "Render a server-side PDF file for an already-created invoice. Idempotent regeneration of an artifact, not a new business document, so it does not go through prepare/commit.", false, false, true, func(ctx context.Context, input accounting.IDInput) (any, error) {
 		return service.RenderPDF(ctx, accounting.RenderFileInput{DocumentType: "invoice", DocumentID: input.ID})
 	})
 	addTool(server, "invoices.get_file", "Get the latest stored invoice file metadata.", true, false, true, func(ctx context.Context, input accounting.IDInput) (any, error) {
@@ -137,10 +149,10 @@ func New(service *accounting.Service) *mcp.Server {
 	addTool(server, "acts.cancel", "Cancel an act. Requires confirmation_token and idempotency_key.", false, true, true, func(ctx context.Context, input accounting.CommitInput) (any, error) {
 		return service.CancelAct(ctx, input)
 	})
-	addTool(server, "acts.render_pdf", "Render a server-side PDF file for an act.", false, false, true, func(ctx context.Context, input accounting.IDInput) (any, error) {
+	addTool(server, "acts.render_pdf", "Render a server-side PDF file for an already-created act. Idempotent regeneration of an artifact, not a new business document, so it does not go through prepare/commit.", false, false, true, func(ctx context.Context, input accounting.IDInput) (any, error) {
 		return service.RenderPDF(ctx, accounting.RenderFileInput{DocumentType: "act", DocumentID: input.ID})
 	})
-	addTool(server, "acts.export_upd_xml", "Generate and store UPD XML 5.03 for an act.", false, false, true, func(ctx context.Context, input accounting.IDInput) (any, error) {
+	addTool(server, "acts.export_upd_xml", "Generate and store UPD XML 5.03 for an already-created act. Idempotent regeneration of an artifact (same storage path, upserted on each call), not a new business document, so it does not go through prepare/commit.", false, false, true, func(ctx context.Context, input accounting.IDInput) (any, error) {
 		return service.ExportActUPDXML(ctx, input)
 	})
 	addTool(server, "acts.validate_upd_xml", "Validate act UPD XML with parser and internal business checks.", true, false, true, func(ctx context.Context, input accounting.IDInput) (any, error) {
@@ -261,6 +273,11 @@ func addPrompts(server *mcp.Server) {
 	}
 }
 
+// errorPayload turns a Go error into the JSON error shape returned to Hermes.
+// Only *accounting.AccountingError carries a message meant for the client;
+// anything else is a bug or an unclassified failure (DB outage, driver error,
+// etc.) and must never reach the assistant as raw Go/Postgres text — it is
+// logged server-side instead and replaced with a safe, generic message.
 func errorPayload(err error) map[string]any {
 	var app *accounting.AccountingError
 	if errors.As(err, &app) {
@@ -272,9 +289,11 @@ func errorPayload(err error) map[string]any {
 			"suggested_action": app.SuggestedAction,
 		}
 	}
+	log.Printf("mcp: unclassified internal error: %v", err)
 	return map[string]any{
-		"code":        "INTERNAL_ERROR",
-		"message":     err.Error(),
-		"recoverable": false,
+		"code":             "INTERNAL_ERROR",
+		"message":          "Внутренняя ошибка сервера. Повторите операцию позже.",
+		"recoverable":      true,
+		"suggested_action": "Повторите запрос через некоторое время или обратитесь к администратору",
 	}
 }

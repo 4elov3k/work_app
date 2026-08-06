@@ -13,18 +13,21 @@ import (
 // BuildInvoiceXML builds a machine-readable XML export for work_app invoices.
 // A payment invoice is not a formalized FNS UPD document, but the export keeps
 // the same counterparty and table structure used by the act XML export.
-func BuildInvoiceXML(invoice models.InvoiceWithServices, customer models.Customer, contract models.Contract) ([]byte, string, error) {
+func BuildInvoiceXML(invoice models.InvoiceWithServices, customer models.Customer, contract models.Contract, seller Seller) ([]byte, string, error) {
 	if strings.TrimSpace(invoice.Number) == "" {
-		return nil, "", fmt.Errorf("invoice number is required")
+		return nil, "", fmt.Errorf("не указан номер счёта")
 	}
 	if strings.TrimSpace(invoice.Date) == "" {
-		return nil, "", fmt.Errorf("invoice date is required")
+		return nil, "", fmt.Errorf("не указана дата счёта")
 	}
 	if err := validateCustomer(customer); err != nil {
 		return nil, "", err
 	}
+	if err := validateSeller(seller); err != nil {
+		return nil, "", err
+	}
 	if len(invoice.Services) == 0 {
-		return nil, "", fmt.Errorf("invoice has no service lines")
+		return nil, "", fmt.Errorf("в счёте нет строк услуг")
 	}
 	tableOptions := sellerActUPDOptions
 	for _, service := range invoice.Services {
@@ -47,7 +50,7 @@ func BuildInvoiceXML(invoice models.InvoiceWithServices, customer models.Custome
 	enc := xml.NewEncoder(&b)
 	enc.Indent("", "  ")
 
-	fileID := invoiceFileID(invoice, customer, docDate)
+	fileID := invoiceFileID(invoice, customer, seller, docDate)
 	root := xml.StartElement{
 		Name: xml.Name{Local: "Файл"},
 		Attr: []xml.Attr{
@@ -59,7 +62,7 @@ func BuildInvoiceXML(invoice models.InvoiceWithServices, customer models.Custome
 	if err := enc.EncodeToken(root); err != nil {
 		return nil, "", err
 	}
-	if err := writeInvoiceDocument(enc, invoice, customer, contract, tableOptions, docDate); err != nil {
+	if err := writeInvoiceDocument(enc, invoice, customer, contract, seller, tableOptions, docDate); err != nil {
 		return nil, "", err
 	}
 	if err := enc.EncodeToken(root.End()); err != nil {
@@ -71,33 +74,33 @@ func BuildInvoiceXML(invoice models.InvoiceWithServices, customer models.Custome
 	return b.Bytes(), invoiceXMLFilename(invoice), nil
 }
 
-func writeInvoiceDocument(enc *xml.Encoder, invoice models.InvoiceWithServices, customer models.Customer, contract models.Contract, tableOptions ActUPDOptions, docDate time.Time) error {
+func writeInvoiceDocument(enc *xml.Encoder, invoice models.InvoiceWithServices, customer models.Customer, contract models.Contract, seller Seller, tableOptions ActUPDOptions, docDate time.Time) error {
 	now := time.Now()
 	doc := xml.StartElement{
 		Name: xml.Name{Local: "Документ"},
 		Attr: []xml.Attr{
 			{Name: xml.Name{Local: "ДатаИнфПр"}, Value: now.Format("02.01.2006")},
 			{Name: xml.Name{Local: "ВремИнфПр"}, Value: now.Format("15.04.05")},
-			{Name: xml.Name{Local: "НаимЭконСубСост"}, Value: sellerFullName},
+			{Name: xml.Name{Local: "НаимЭконСубСост"}, Value: seller.FullName},
 			{Name: xml.Name{Local: "НаимДокОпр"}, Value: "Счет на оплату"},
 		},
 	}
 	if err := enc.EncodeToken(doc); err != nil {
 		return err
 	}
-	if err := writePaymentInvoiceInfo(enc, invoice, customer, contract, docDate); err != nil {
+	if err := writePaymentInvoiceInfo(enc, invoice, customer, contract, seller, docDate); err != nil {
 		return err
 	}
 	if err := writeTable(enc, invoice.Services, tableOptions); err != nil {
 		return err
 	}
-	if err := writeSigner(enc); err != nil {
+	if err := writeSigner(enc, seller); err != nil {
 		return err
 	}
 	return enc.EncodeToken(doc.End())
 }
 
-func writePaymentInvoiceInfo(enc *xml.Encoder, invoice models.InvoiceWithServices, customer models.Customer, contract models.Contract, docDate time.Time) error {
+func writePaymentInvoiceInfo(enc *xml.Encoder, invoice models.InvoiceWithServices, customer models.Customer, contract models.Contract, seller Seller, docDate time.Time) error {
 	start := xml.StartElement{
 		Name: xml.Name{Local: "СвСчет"},
 		Attr: []xml.Attr{
@@ -109,7 +112,7 @@ func writePaymentInvoiceInfo(enc *xml.Encoder, invoice models.InvoiceWithService
 	if err := enc.EncodeToken(start); err != nil {
 		return err
 	}
-	if err := writeSeller(enc); err != nil {
+	if err := writeSeller(enc, seller); err != nil {
 		return err
 	}
 	if err := writeBuyer(enc, customer); err != nil {

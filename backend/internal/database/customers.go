@@ -197,10 +197,6 @@ func (db *DB) CreateCustomer(ctx context.Context, req models.CreateCustomerReque
 		return nil, fmt.Errorf("failed to create customer: %w", err)
 	}
 
-	if err := CreateDefaultContractTx(ctx, tx, customer.ID); err != nil {
-		return nil, err
-	}
-
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}

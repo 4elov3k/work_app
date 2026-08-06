@@ -3,8 +3,8 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/lib/pq"
@@ -69,21 +69,27 @@ func isUniqueViolation(err error) bool {
 	return false
 }
 
-func (h *Handlers) RequireAgentToken(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		expected := os.Getenv("AGENT_API_TOKEN")
-		if expected == "" {
-			respondWithError(w, http.StatusServiceUnavailable, "Agent API token is not configured")
-			return
-		}
+// isRecordNotFoundError reports whether err is the database layer's "X not found"
+// sentinel for a missing row, as opposed to a real database/connection failure.
+// The database package returns a bare "<entity> not found" message for
+// sql.ErrNoRows and wraps everything else (e.g. "failed to get invoice: ...."),
+// so a "not found" suffix reliably distinguishes the two without changing the
+// exact error text other code already matches against.
+func isRecordNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.HasSuffix(err.Error(), "not found")
+}
 
-		auth := r.Header.Get("Authorization")
-		token := strings.TrimPrefix(auth, "Bearer ")
-		if token == "" || token != expected {
-			respondWithError(w, http.StatusUnauthorized, "Invalid agent API token")
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
+// respondNotFoundOrInternal answers a "get by ID" failure as 404 when the
+// database layer reports a missing row, and as 500 (logging the real cause)
+// for anything else — so a database outage is never mistaken for a deleted record.
+func respondNotFoundOrInternal(w http.ResponseWriter, err error, notFoundMessage string) {
+	if isRecordNotFoundError(err) {
+		respondWithError(w, http.StatusNotFound, notFoundMessage)
+		return
+	}
+	log.Printf("internal error: %v", err)
+	respondWithError(w, http.StatusInternalServerError, "Internal server error")
 }

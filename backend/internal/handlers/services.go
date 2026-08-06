@@ -12,6 +12,19 @@ import (
 	"invoices-backend/internal/models"
 )
 
+// GetServiceCatalog обрабатывает GET /api/services/catalog — позиции
+// стандартного прайса, сгруппированные по разделам, для выбора при
+// формировании приложения к договору.
+func (h *Handlers) GetServiceCatalog(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sections, err := h.db.GetServiceCatalog(ctx)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to get service catalog")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, models.ServiceCatalogResponse{Data: sections})
+}
+
 // GetServices обрабатывает GET /api/services
 func (h *Handlers) GetServices(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

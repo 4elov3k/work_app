@@ -65,7 +65,7 @@ func (h *Handlers) GetCustomerByID(w http.ResponseWriter, r *http.Request) {
 
 	customer, err := h.db.GetCustomerByID(ctx, id)
 	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Customer not found")
+		respondNotFoundOrInternal(w, err, "Customer not found")
 		return
 	}
 

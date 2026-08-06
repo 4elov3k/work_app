@@ -30,7 +30,7 @@ func TestBuildInvoiceXMLCenterTTMFixture(t *testing.T) {
 		Number: "Основной № 380 от 02.02.2022 г.",
 	}
 
-	data, filename, err := BuildInvoiceXML(invoice, customer, contract)
+	data, filename, err := BuildInvoiceXML(invoice, customer, contract, testSeller())
 	if err != nil {
 		t.Fatalf("BuildInvoiceXML returned error: %v", err)
 	}

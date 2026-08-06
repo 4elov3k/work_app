@@ -76,7 +76,7 @@ func (h *Handlers) GetActByID(w http.ResponseWriter, r *http.Request) {
 
 	act, err := h.db.GetActByID(ctx, id)
 	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Act not found")
+		respondNotFoundOrInternal(w, err, "Act not found")
 		return
 	}
 
@@ -95,7 +95,7 @@ func (h *Handlers) GetActWithServices(w http.ResponseWriter, r *http.Request) {
 	act, err := h.db.GetActWithServices(ctx, id)
 	if err != nil {
 		log.Printf("Error getting act with services (ID: %s): %v", id, err)
-		respondWithError(w, http.StatusNotFound, "Act not found")
+		respondNotFoundOrInternal(w, err, "Act not found")
 		return
 	}
 
@@ -114,19 +114,29 @@ func (h *Handlers) ExportActUPDXML(w http.ResponseWriter, r *http.Request) {
 	act, err := h.db.GetActWithServices(ctx, id)
 	if err != nil {
 		log.Printf("Error exporting act XML (ID: %s): %v", id, err)
-		respondWithError(w, http.StatusNotFound, "Act not found")
+		respondNotFoundOrInternal(w, err, "Act not found")
 		return
 	}
 
 	customer, err := h.db.GetCustomerByID(ctx, act.CustomerID)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Customer not found for act")
+		if isRecordNotFoundError(err) {
+			respondWithError(w, http.StatusBadRequest, "Customer not found for act")
+			return
+		}
+		log.Printf("Error loading customer for act export (act ID: %s): %v", id, err)
+		respondWithError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 
 	contract, err := h.db.GetContractByID(ctx, act.ContractID)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Contract not found for act")
+		if isRecordNotFoundError(err) {
+			respondWithError(w, http.StatusBadRequest, "Contract not found for act")
+			return
+		}
+		log.Printf("Error loading contract for act export (act ID: %s): %v", id, err)
+		respondWithError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 
@@ -137,7 +147,13 @@ func (h *Handlers) ExportActUPDXML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, filename, err := updxml.BuildActUPDXMLWithSellerEDOID(*act, *customer, *contract, sellerEDOID)
+	org, err := h.db.GetActiveOrganization(ctx)
+	if err != nil {
+		respondNotFoundOrInternal(w, err, "Organization is not configured")
+		return
+	}
+
+	data, filename, err := updxml.BuildActUPDXMLWithSellerEDOID(*act, *customer, *contract, updxml.SellerFromOrganization(*org), sellerEDOID)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, err.Error())
 		return
@@ -163,7 +179,7 @@ func (h *Handlers) resolveActEDOParticipants(ctx context.Context, customer *mode
 	})
 	if err != nil {
 		if cachedCustomerEDOID == "" {
-			return "", fmt.Errorf("failed to lookup customer EDO participant ID in Saby: %w", err)
+			return "", fmt.Errorf("не удалось получить идентификатор ЭДО покупателя через Saby (СБИС) и нет сохранённого значения: %w", err)
 		}
 		log.Printf("Failed to refresh customer Saby EDO ID, using cached value (customer ID: %s): %v", customer.ID, err)
 	} else {
@@ -185,7 +201,7 @@ func (h *Handlers) resolveActEDOParticipants(ctx context.Context, customer *mode
 			if cached := strings.TrimSpace(os.Getenv("SABY_SELLER_EDO_ID")); cached != "" {
 				return cached, nil
 			}
-			return "", fmt.Errorf("failed to lookup seller EDO participant ID in Saby: %w", err)
+			return "", fmt.Errorf("не удалось получить идентификатор ЭДО продавца через Saby (СБИС), и SABY_SELLER_EDO_ID не задан вручную: %w", err)
 		}
 		sellerEDOID = edoID
 	}
@@ -359,7 +375,7 @@ func (h *Handlers) UpdateAct(w http.ResponseWriter, r *http.Request) {
 
 	current, err := h.db.GetActByID(ctx, id)
 	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Act not found")
+		respondNotFoundOrInternal(w, err, "Act not found")
 		return
 	}
 

@@ -39,7 +39,7 @@ func TestBuildActUPDXMLCenterTTMFixture(t *testing.T) {
 	}
 
 	formedAt := time.Date(2026, 8, 3, 12, 8, 33, 0, time.FixedZone("MSK", 3*60*60))
-	data, filename, err := buildActUPDXMLAt(act, customer, contract, sellerActUPDOptions, formedAt)
+	data, filename, err := buildActUPDXMLAt(act, customer, contract, testSeller(), sellerActUPDOptions, formedAt)
 	if err != nil {
 		t.Fatalf("BuildActUPDXML returned error: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestBuildActUPDXMLDzerzhinskieVedomostiFixture(t *testing.T) {
 		StartDate: "2025-12-22",
 	}
 
-	data, _, err := BuildActUPDXML(act, customer, contract)
+	data, _, err := BuildActUPDXML(act, customer, contract, testSeller())
 	if err != nil {
 		t.Fatalf("BuildActUPDXML returned error: %v", err)
 	}
@@ -257,32 +257,32 @@ func TestBuildActUPDXMLWithVATAndInvoiceUsesInvoiceFunction(t *testing.T) {
 
 func TestBuildActUPDXMLRejectsInvoiceFlagInNoVATMode(t *testing.T) {
 	options := ActUPDOptions{DocumentType: DocumentTypeAct, VATMode: VATModeNone, IssueInvoice: true}
-	_, _, err := BuildActUPDXMLWithOptions(testAct(false), testCustomer(), models.Contract{}, options)
+	_, _, err := BuildActUPDXMLWithOptions(testAct(false), testCustomer(), models.Contract{}, testSeller(), options)
 	if err == nil || !strings.Contains(err.Error(), "признак выставления счета-фактуры должен быть выключен") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestBuildActUPDXMLRejectsPartialContract(t *testing.T) {
-	_, _, err := BuildActUPDXML(testAct(false), testCustomer(), models.Contract{Number: "380"})
-	if err == nil || !strings.Contains(err.Error(), "contract number and date must be provided together") {
+	_, _, err := BuildActUPDXML(testAct(false), testCustomer(), models.Contract{Number: "380"}, testSeller())
+	if err == nil || !strings.Contains(err.Error(), "номер и дата договора должны быть указаны вместе") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestBuildActUPDXMLRejectsVATInNoVATMode(t *testing.T) {
-	_, _, err := BuildActUPDXML(testAct(true), testCustomer(), models.Contract{})
-	if err == nil || !strings.Contains(err.Error(), "VAT rate must be zero") {
+	_, _, err := BuildActUPDXML(testAct(true), testCustomer(), models.Contract{}, testSeller())
+	if err == nil || !strings.Contains(err.Error(), "ставка НДС должна быть нулевой") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestBuildActUPDXMLUsesFreshFileID(t *testing.T) {
-	_, first, err := BuildActUPDXML(testAct(false), testCustomer(), models.Contract{})
+	_, first, err := BuildActUPDXML(testAct(false), testCustomer(), models.Contract{}, testSeller())
 	if err != nil {
 		t.Fatalf("first BuildActUPDXML returned error: %v", err)
 	}
-	_, second, err := BuildActUPDXML(testAct(false), testCustomer(), models.Contract{})
+	_, second, err := BuildActUPDXML(testAct(false), testCustomer(), models.Contract{}, testSeller())
 	if err != nil {
 		t.Fatalf("second BuildActUPDXML returned error: %v", err)
 	}
@@ -294,8 +294,8 @@ func TestBuildActUPDXMLUsesFreshFileID(t *testing.T) {
 func TestBuildActUPDXMLRejectsTotalMismatch(t *testing.T) {
 	act := testAct(false)
 	act.TotalAmount = 99
-	_, _, err := BuildActUPDXML(act, testCustomer(), models.Contract{})
-	if err == nil || !strings.Contains(err.Error(), "total amount must equal") {
+	_, _, err := BuildActUPDXML(act, testCustomer(), models.Contract{}, testSeller())
+	if err == nil || !strings.Contains(err.Error(), "итоговая сумма акта должна равняться") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -303,7 +303,7 @@ func TestBuildActUPDXMLRejectsTotalMismatch(t *testing.T) {
 func TestBuildActUPDXMLQuotesSpecialCharacters(t *testing.T) {
 	act := testAct(false)
 	act.Services[0].Name = `SEO & аудит "сайта" <июнь>`
-	data, _, err := BuildActUPDXML(act, testCustomer(), models.Contract{})
+	data, _, err := BuildActUPDXML(act, testCustomer(), models.Contract{}, testSeller())
 	if err != nil {
 		t.Fatalf("BuildActUPDXML returned error: %v", err)
 	}
@@ -319,7 +319,7 @@ func TestBuildActUPDXMLQuotesSpecialCharacters(t *testing.T) {
 func buildTestActXML(t *testing.T, contract models.Contract, options ActUPDOptions) []byte {
 	t.Helper()
 	act := testAct(options.VATMode == VATModeIncluded)
-	data, _, err := buildActUPDXMLAt(act, testCustomer(), contract, options, time.Date(2026, 8, 3, 12, 0, 0, 0, time.FixedZone("MSK", 3*60*60)))
+	data, _, err := buildActUPDXMLAt(act, testCustomer(), contract, testSeller(), options, time.Date(2026, 8, 3, 12, 0, 0, 0, time.FixedZone("MSK", 3*60*60)))
 	if err != nil {
 		t.Fatalf("BuildActUPDXML returned error: %v", err)
 	}
@@ -340,6 +340,24 @@ func testAct(withVAT bool) models.ActWithServices {
 
 func testCustomer() models.Customer {
 	return models.Customer{Name: "ООО «ЦентрТТМ»", Fullname: "Общество с ограниченной ответственностью «ЦентрТТМ»", Address: "Нижний Новгород & область", INN: "5257120323", KPP: "525701001", EDOIDTensor: "2BE812d49a2f4764a9e8155d95b0ba14708"}
+}
+
+func testSeller() Seller {
+	return Seller{
+		FullName:        "Индивидуальный предприниматель Мыленкова Любовь Валерьевна",
+		Address:         "603136, г. Нижний Новгород ул, Маршала Рокоссовского, д. 2к1, кв 135",
+		INN:             "526220116209",
+		OGRNIP:          "312526227100047",
+		Phone:           "8-905-864445",
+		BankAccount:     "40802810164270001108",
+		BankName:        `ООО "Банк Точка"`,
+		BankBIK:         "044525104",
+		BankCorrAccount: "30101810445745251004",
+		Position:        "Индивидуальный предприниматель",
+		LastName:        "Мыленкова",
+		FirstName:       "Любовь",
+		MiddleName:      "Валерьевна",
+	}
 }
 
 func validateActXMLAgainstFNSXSD(t *testing.T, data []byte) {
@@ -427,11 +445,11 @@ func TestBuildActUPDXMLRejectsLineAmountMismatch(t *testing.T) {
 		KPP:      "525701001",
 	}
 
-	_, _, err := BuildActUPDXML(act, customer, models.Contract{})
+	_, _, err := BuildActUPDXML(act, customer, models.Contract{}, testSeller())
 	if err == nil {
 		t.Fatal("expected amount mismatch error")
 	}
-	if !strings.Contains(err.Error(), "amount must equal price multiplied by quantity") {
+	if !strings.Contains(err.Error(), "сумма должна равняться цене, умноженной на количество") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

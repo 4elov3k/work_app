@@ -22,6 +22,7 @@ import (
 
 	"github.com/lib/pq"
 
+	"invoices-backend/internal/contracttopics"
 	"invoices-backend/internal/database"
 	"invoices-backend/internal/export/updxml"
 	"invoices-backend/internal/models"
@@ -110,6 +111,44 @@ type Organization struct {
 	Signer            map[string]any `json:"signer,omitempty"`
 	NumberingSettings map[string]any `json:"numbering_settings,omitempty"`
 	Active            bool           `json:"active"`
+}
+
+// sellerFromOrganization adapts the fetched Organization (whose Signer is a
+// raw JSONB map) into the updxml.Seller shape used for document generation.
+func sellerFromOrganization(org *Organization) updxml.Seller {
+	signerString := func(key string) string {
+		if org.Signer == nil {
+			return ""
+		}
+		if value, ok := org.Signer[key].(string); ok {
+			return value
+		}
+		return ""
+	}
+	return updxml.Seller{
+		FullName:        org.FullName,
+		Address:         firstNonEmptyString(org.LegalAddress, org.PostalAddress),
+		INN:             org.INN,
+		OGRNIP:          org.OGRN,
+		Phone:           org.Phone,
+		BankAccount:     org.BankAccount,
+		BankName:        org.BankName,
+		BankBIK:         org.BankBIK,
+		BankCorrAccount: org.BankCorrAccount,
+		Position:        signerString("position"),
+		LastName:        signerString("last_name"),
+		FirstName:       signerString("first_name"),
+		MiddleName:      signerString("middle_name"),
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 type MoneyLineInput struct {
@@ -267,6 +306,9 @@ func (s *Service) CurrentOrganization(ctx context.Context) (*Organization, error
 		&org.LegalAddress, &org.PostalAddress, &org.Phone, &org.BankAccount, &org.BankName, &org.BankBIK,
 		&org.BankCorrAccount, &org.TaxRegime, &org.VATMode, &org.Timezone, &org.EDOParticipantID,
 		&signerRaw, &numberingRaw, &org.Active); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, appError("ORGANIZATION_NOT_CONFIGURED", "В системе не настроена активная организация-продавец", false, "Обратитесь к администратору для настройки организации")
+		}
 		return nil, fmt.Errorf("failed to get organization: %w", err)
 	}
 	_ = json.Unmarshal(signerRaw, &org.Signer)
@@ -310,6 +352,36 @@ func (s *Service) SearchCounterparties(ctx context.Context, input SearchInput) (
 			return nil, err
 		}
 		items = append(items, c)
+	}
+	return map[string]any{"data": items, "total": len(items)}, rows.Err()
+}
+
+// SearchServiceCatalog searches the services table (both the reusable price
+// catalog and any ad-hoc services) by name or section, for use when picking
+// items for a contract appendix.
+func (s *Service) SearchServiceCatalog(ctx context.Context, input SearchInput) (map[string]any, error) {
+	limit := boundedLimit(input.Limit, 30)
+	query := strings.TrimSpace(input.Query)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, name, price, unit, section, COALESCE(price_per_hour, 0), COALESCE(hours_per_unit, 0), archived, created_at, updated_at
+		FROM services
+		WHERE NOT archived
+		  AND ($1 = '' OR name ILIKE $2 OR section ILIKE $2)
+		ORDER BY section, created_at
+		LIMIT $3
+	`, query, "%"+query+"%", limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]models.Service, 0)
+	for rows.Next() {
+		var svc models.Service
+		if err := rows.Scan(&svc.ID, &svc.Name, &svc.Price, &svc.Unit, &svc.Section, &svc.PricePerHour, &svc.HoursPerUnit, &svc.Archived, &svc.CreatedAt, &svc.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, svc)
 	}
 	return map[string]any{"data": items, "total": len(items)}, rows.Err()
 }
@@ -370,9 +442,6 @@ func (s *Service) CommitCreateCounterparty(ctx context.Context, input CommitInpu
 			payload.Input.Phone, payload.Input.Email, payload.Input.ContactPerson, payload.Input.ContactPosition, payload.Input.Comment).
 			Scan(&c.ID, &c.Name, &c.Fullname, &c.Address, &c.INN, &c.KPP, &c.EDOIDTensor, &c.EDOIDKontur, &c.OKPO, &c.Phone, &c.Email, &c.ContactPerson, &c.ContactPosition, &c.Comment, &c.Status, &c.CreatedAt, &c.UpdatedAt)
 		if err != nil {
-			return nil, err
-		}
-		if err := database.CreateDefaultContractTx(ctx, tx, c.ID); err != nil {
 			return nil, err
 		}
 		return map[string]any{"status": "created", "data": c}, nil
@@ -520,7 +589,11 @@ func (s *Service) PrepareCreateContract(ctx context.Context, input CreateContrac
 		return nil, err
 	}
 	if input.Number == "" {
-		input.Number = "Основной"
+		next, err := s.db.GetNextContractNumber(ctx, customer.ID)
+		if err != nil {
+			return nil, err
+		}
+		input.Number = strconv.FormatInt(next, 10)
 	}
 	if input.Currency == "" {
 		input.Currency = "RUB"
@@ -560,9 +633,205 @@ func (s *Service) CommitCreateContract(ctx context.Context, input CommitInput) (
 			if isUniqueViolation(err) {
 				return nil, appError("DOCUMENT_DUPLICATE", "Договор с таким номером уже существует", true, "Выберите существующий договор или другой номер")
 			}
+			if isForeignKeyViolation(err) {
+				return nil, appError("COUNTERPARTY_NOT_FOUND", "Контрагент для договора не найден", true, "Проверьте counterparty_id")
+			}
 			return nil, err
 		}
 		return map[string]any{"status": "created", "data": c}, nil
+	})
+}
+
+// ContractAppendixLineInput represents one line of a "Приложение к договору"
+// (contract appendix / смета): either a reference to a catalog service
+// (ServiceID), optionally overriding its title/unit/price/section, or a
+// fully ad-hoc line.
+type ContractAppendixLineInput struct {
+	ServiceID string `json:"service_id,omitempty" jsonschema:"existing catalog service id from services.search; omit for an ad-hoc line"`
+	Section   string `json:"section,omitempty" jsonschema:"section label shown on the printed appendix; inherited from the catalog service if omitted"`
+	Title     string `json:"title,omitempty" jsonschema:"line title; required for ad-hoc lines, overrides the catalog name if service_id is set"`
+	Unit      string `json:"unit,omitempty" jsonschema:"unit name, defaults to услуга"`
+	Price     string `json:"price,omitempty" jsonschema:"unit price in rubles, for example 24900.00; overrides the catalog price if service_id is set"`
+	Qty       string `json:"qty,omitempty" jsonschema:"quantity, defaults to 1"`
+}
+
+// CreateContractAppendixInput is the input for preparing a new contract appendix.
+type CreateContractAppendixInput struct {
+	CounterpartyID    string                      `json:"counterparty_id,omitempty"`
+	CounterpartyQuery string                      `json:"counterparty_query,omitempty"`
+	ContractID        string                      `json:"contract_id,omitempty"`
+	ContractNumber    string                      `json:"contract_number,omitempty"`
+	Number            string                      `json:"number,omitempty" jsonschema:"appendix number; auto-assigned per contract if omitted"`
+	Date              string                      `json:"date,omitempty" jsonschema:"DD.MM.YYYY, defaults to today"`
+	Lines             []ContractAppendixLineInput `json:"lines"`
+}
+
+type appendixDBLine struct {
+	ServiceID string
+	Section   string
+	Title     string
+	Unit      string
+	Price     string
+	Qty       string
+	Amount    string
+}
+
+func (s *Service) buildAppendixLinesTx(ctx context.Context, tx *sql.Tx, inputs []ContractAppendixLineInput) ([]appendixDBLine, int64, error) {
+	lines := make([]appendixDBLine, 0, len(inputs))
+	var total int64
+	for _, input := range inputs {
+		title := strings.TrimSpace(input.Title)
+		unit := strings.TrimSpace(input.Unit)
+		price := strings.TrimSpace(input.Price)
+		section := strings.TrimSpace(input.Section)
+		serviceID := strings.TrimSpace(input.ServiceID)
+		qty := strings.TrimSpace(input.Qty)
+		if qty == "" {
+			qty = "1"
+		}
+
+		if serviceID != "" {
+			var catalogName, catalogPrice, catalogUnit, catalogSection string
+			if err := tx.QueryRowContext(ctx, `SELECT name, price::text, unit, section FROM services WHERE id=$1`, serviceID).
+				Scan(&catalogName, &catalogPrice, &catalogUnit, &catalogSection); err != nil {
+				return nil, 0, appError("VALIDATION_ERROR", "Услуга не найдена", true, "Проверьте service_id")
+			}
+			if title == "" {
+				title = catalogName
+			}
+			if price == "" {
+				price = catalogPrice
+			}
+			if unit == "" {
+				unit = catalogUnit
+			}
+			if section == "" {
+				section = catalogSection
+			}
+		}
+		if unit == "" {
+			unit = "услуга"
+		}
+		if title == "" || price == "" {
+			return nil, 0, appError("VALIDATION_ERROR", "У строки должны быть title и price", true, "Исправьте строки приложения")
+		}
+		priceCents, err := parseMoneyCents(price)
+		if err != nil {
+			return nil, 0, appError("VALIDATION_ERROR", "Некорректная цена: "+price, true, "Передайте цену в рублях")
+		}
+		qtyMilli, err := parseQtyMilli(qty)
+		if err != nil || qtyMilli <= 0 {
+			return nil, 0, appError("VALIDATION_ERROR", "Некорректное количество: "+qty, true, "Передайте положительное количество")
+		}
+		amountCents := (priceCents*qtyMilli + 500) / 1000
+		total += amountCents
+		lines = append(lines, appendixDBLine{
+			ServiceID: serviceID, Section: section, Title: title, Unit: unit,
+			Price: decimalFromCents(priceCents), Qty: decimalFromMilli(qtyMilli), Amount: decimalFromCents(amountCents),
+		})
+	}
+	return lines, total, nil
+}
+
+// PrepareCreateContractAppendix prepares a new "Приложение к договору"
+// (contract appendix / смета) — a standalone printable document listing the
+// specific work items (catalog or ad-hoc) agreed for a contract.
+func (s *Service) PrepareCreateContractAppendix(ctx context.Context, input CreateContractAppendixInput) (*ConfirmationResponse, error) {
+	var customer *models.Customer
+	var err error
+	if input.CounterpartyID != "" || input.CounterpartyQuery != "" {
+		customer, err = s.resolveCounterparty(ctx, input.CounterpartyID, input.CounterpartyQuery)
+		if err != nil {
+			return nil, err
+		}
+	}
+	customerID := ""
+	if customer != nil {
+		customerID = customer.ID
+	}
+	contract, err := s.resolveContract(ctx, customerID, input.ContractID, input.ContractNumber)
+	if err != nil {
+		return nil, err
+	}
+	if input.Number == "" {
+		next, err := s.db.GetNextContractAppendixNumber(ctx, contract.ID)
+		if err != nil {
+			return nil, err
+		}
+		input.Number = strconv.FormatInt(next, 10)
+	}
+	if input.Date == "" {
+		input.Date = todayRu()
+	}
+	if _, err := time.Parse("02.01.2006", input.Date); err != nil {
+		return nil, appError("VALIDATION_ERROR", "Дата приложения должна быть в формате DD.MM.YYYY", true, "Исправьте дату")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	lines, totalCents, err := s.buildAppendixLinesTx(ctx, tx, input.Lines)
+	if err != nil {
+		return nil, err
+	}
+	if len(lines) == 0 {
+		return nil, appError("VALIDATION_ERROR", "Нужна хотя бы одна строка приложения", true, "Передайте lines")
+	}
+
+	input.ContractID = contract.ID
+	input.ContractNumber = ""
+	input.CounterpartyID = ""
+	input.CounterpartyQuery = ""
+
+	preview := map[string]any{"contract": contract, "number": input.Number, "date": input.Date, "lines": lines, "total": formatMoney(totalCents)}
+	summary := "Будет создано приложение №" + input.Number + " к договору " + contract.Number + " на " + formatMoney(totalCents)
+	return s.createConfirmation(ctx, "contract_appendices.commit_create", UserFromContext(ctx), map[string]any{"input": input, "total_cents": totalCents}, preview, nil, summary)
+}
+
+// CommitCreateContractAppendix commits a previously prepared contract appendix.
+func (s *Service) CommitCreateContractAppendix(ctx context.Context, input CommitInput) (map[string]any, error) {
+	var payload struct {
+		Input      CreateContractAppendixInput `json:"input"`
+		TotalCents int64                       `json:"total_cents"`
+	}
+	return s.commitWithConfirmation(ctx, "contract_appendices.commit_create", input, &payload, func(tx *sql.Tx) (map[string]any, error) {
+		lines, totalCents, err := s.buildAppendixLinesTx(ctx, tx, payload.Input.Lines)
+		if err != nil {
+			return nil, err
+		}
+		if totalCents != payload.TotalCents {
+			return nil, appError("CONFIRMATION_MISMATCH", "Сумма изменилась после подготовки", true, "Повторите prepare_create")
+		}
+
+		var appendixID string
+		err = tx.QueryRowContext(ctx, `
+			INSERT INTO contract_appendices (contract_id, number, date, status, total_amount)
+			VALUES ($1, $2, $3, 'draft', $4)
+			RETURNING id
+		`, payload.Input.ContractID, payload.Input.Number, payload.Input.Date, decimalFromCents(totalCents)).Scan(&appendixID)
+		if err != nil {
+			if isUniqueViolation(err) {
+				return nil, appError("DOCUMENT_DUPLICATE", "Приложение с таким номером уже существует для этого договора", true, "Выберите другой номер")
+			}
+			if isForeignKeyViolation(err) {
+				return nil, appError("CONTRACT_NOT_FOUND", "Договор не найден", true, "Проверьте contract_id")
+			}
+			return nil, err
+		}
+
+		for i, line := range lines {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO contract_appendix_lines
+					(appendix_id, service_id, section, position, title_snapshot, unit_snapshot, price_snapshot, qty, amount)
+				VALUES ($1, NULLIF($2, '')::uuid, $3, $4, $5, $6, $7::numeric, $8::numeric, $9::numeric)
+			`, appendixID, line.ServiceID, line.Section, i+1, line.Title, line.Unit, line.Price, line.Qty, line.Amount); err != nil {
+				return nil, fmt.Errorf("failed to create appendix line: %w", err)
+			}
+		}
+
+		return map[string]any{"status": "created", "id": appendixID, "number": payload.Input.Number, "total": formatMoney(totalCents)}, nil
 	})
 }
 
@@ -688,6 +957,9 @@ func (s *Service) CommitCreateInvoice(ctx context.Context, input CommitInput) (m
 		`, payload.Input.ContractID, payload.Input.CounterpartyID, strconv.FormatInt(number, 10), payload.Input.Date, payload.Input.Status, decimalFromCents(totalCents), payload.Input.ContractNumber).
 			Scan(&invoice.ID, &invoice.ContractID, &invoice.CustomerID, &invoice.Number, &invoice.Date, &invoice.Status, &invoice.TotalAmount, &invoice.Archived, &invoice.ContractNumber, &invoice.CreatedAt, &invoice.UpdatedAt)
 		if err != nil {
+			if isForeignKeyViolation(err) {
+				return nil, appError("CONTRACT_NOT_FOUND", "Договор или контрагент для счёта не найден", true, "Проверьте contract_id и counterparty_id")
+			}
 			return nil, err
 		}
 		for _, line := range lines {
@@ -881,6 +1153,9 @@ func (s *Service) CommitCreateAct(ctx context.Context, input CommitInput) (map[s
 		`, payload.Input.ContractID, strconv.FormatInt(number, 10), payload.Input.Date, payload.Input.Status, decimalFromCents(totalCents)).
 			Scan(&act.ID, &act.ContractID, &act.Number, &act.Date, &act.Status, &act.TotalAmount, &act.Archived, &act.CreatedAt, &act.UpdatedAt)
 		if err != nil {
+			if isForeignKeyViolation(err) {
+				return nil, appError("CONTRACT_NOT_FOUND", "Договор для акта не найден", true, "Проверьте contract_id")
+			}
 			return nil, err
 		}
 		for _, line := range lines {
@@ -1084,7 +1359,12 @@ func (s *Service) RenderPDF(ctx context.Context, input RenderFileInput) (*FileRe
 	if err := os.WriteFile(path, data, 0o640); err != nil {
 		return nil, err
 	}
-	return s.upsertDocumentFile(ctx, org.ID, docType, input.DocumentID, "pdf", "application/pdf", path, filename, int64(len(data)))
+	result, err := s.upsertDocumentFile(ctx, org.ID, docType, input.DocumentID, "pdf", "application/pdf", path, filename, int64(len(data)))
+	if err != nil {
+		_ = os.Remove(path)
+		return nil, appError("STORAGE_ERROR", "Файл сформирован, но не удалось сохранить запись о нём — повторите запрос", true, "Повторите render_pdf")
+	}
+	return result, nil
 }
 
 func (s *Service) ExportActUPDXML(ctx context.Context, input IDInput) (*FileResult, error) {
@@ -1104,7 +1384,7 @@ func (s *Service) ExportActUPDXML(ctx context.Context, input IDInput) (*FileResu
 	if err != nil {
 		return nil, err
 	}
-	data, filename, err := updxml.BuildActUPDXML(*act, *customer, *contract)
+	data, filename, err := updxml.BuildActUPDXML(*act, *customer, *contract, sellerFromOrganization(org))
 	if err != nil {
 		return nil, appError("XML_VALIDATION_FAILED", err.Error(), true, "Исправьте реквизиты или строки акта")
 	}
@@ -1118,18 +1398,37 @@ func (s *Service) ExportActUPDXML(ctx context.Context, input IDInput) (*FileResu
 	if err := os.WriteFile(path, data, 0o640); err != nil {
 		return nil, err
 	}
-	return s.upsertDocumentFile(ctx, org.ID, "act", input.ID, "upd_xml", "application/xml", path, safeName, int64(len(data)))
+	result, err := s.upsertDocumentFile(ctx, org.ID, "act", input.ID, "upd_xml", "application/xml", path, safeName, int64(len(data)))
+	if err != nil {
+		_ = os.Remove(path)
+		return nil, appError("STORAGE_ERROR", "Файл УПД сформирован, но не удалось сохранить запись о нём — повторите запрос", true, "Повторите acts.export_upd_xml")
+	}
+	return result, nil
 }
 
 func (s *Service) ValidateActUPDXML(ctx context.Context, input IDInput) (*ValidationResult, error) {
-	file, err := s.ExportActUPDXML(ctx, input)
+	org, err := s.CurrentOrganization(ctx)
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(file.StoragePath)
+	act, err := s.db.GetActWithServices(ctx, input.ID)
+	if err != nil {
+		return nil, appError("DOCUMENT_NOT_FOUND", "Акт не найден", true, "Уточните ID")
+	}
+	customer, err := s.db.GetCustomerByID(ctx, act.CustomerID)
 	if err != nil {
 		return nil, err
 	}
+	contract, err := s.db.GetContractByID(ctx, act.ContractID)
+	if err != nil {
+		return nil, err
+	}
+	data, _, err := updxml.BuildActUPDXML(*act, *customer, *contract, sellerFromOrganization(org))
+	if err != nil {
+		return nil, appError("XML_VALIDATION_FAILED", err.Error(), true, "Исправьте реквизиты или строки акта")
+	}
+	// Best-effort reference to a previously stored file, if any — validation never writes.
+	file, _ := s.GetFile(ctx, RenderFileInput{DocumentType: "act", DocumentID: input.ID})
 	if err := xml.Unmarshal(data, new(any)); err != nil {
 		return &ValidationResult{Status: "failed", XMLParse: err.Error(), XSDValidation: "not_run"}, nil
 	}
@@ -1435,6 +1734,18 @@ func (s *Service) commitWithConfirmation(ctx context.Context, action string, inp
 		INSERT INTO accounting_idempotency_keys (action, idempotency_key, payload_hash, result)
 		VALUES ($1, $2, $3, $4::jsonb)
 	`, action, input.IdempotencyKey, payloadHash, string(resultBytes)); err != nil {
+		if isUniqueViolation(err) {
+			// A concurrent commit under a different confirmation_token raced us to the
+			// same idempotency_key and won — our writes above are rolled back with this
+			// transaction, so nothing is duplicated. Fetch the winner's result instead
+			// of surfacing a raw Postgres constraint error.
+			_ = tx.Rollback()
+			existing, lookupErr := s.getIdempotentResultDB(ctx, action, input.IdempotencyKey, payloadHash)
+			if lookupErr == nil && existing != nil {
+				return existing, nil
+			}
+			return nil, appError("IDEMPOTENCY_CONFLICT", "Операция с этим idempotency_key уже обрабатывается или обработана параллельным запросом", true, "Повторите запрос с тем же idempotency_key через несколько секунд")
+		}
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE accounting_confirmation_tokens SET used_at=CURRENT_TIMESTAMP WHERE token=$1`, input.ConfirmationToken); err != nil {
@@ -1444,6 +1755,34 @@ func (s *Service) commitWithConfirmation(ctx context.Context, action string, inp
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	return result, nil
+}
+
+// getIdempotentResultDB is the getIdempotentResultTx equivalent for use after the
+// calling transaction has already been rolled back (e.g. lost the idempotency-key
+// race), when a *sql.Tx can no longer be queried.
+func (s *Service) getIdempotentResultDB(ctx context.Context, action, key, payloadHash string) (map[string]any, error) {
+	var storedHash string
+	var raw []byte
+	err := s.db.QueryRowContext(ctx, `
+		SELECT payload_hash, result
+		FROM accounting_idempotency_keys
+		WHERE action=$1 AND idempotency_key=$2
+	`, action, key).Scan(&storedHash, &raw)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if storedHash != payloadHash {
+		return nil, appError("CONFIRMATION_MISMATCH", "idempotency_key уже использован с другими данными", true, "Передайте новый idempotency_key")
+	}
+	var result map[string]any
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, err
+	}
+	result["idempotent_replay"] = true
 	return result, nil
 }
 
@@ -1476,6 +1815,9 @@ func (s *Service) currentOrganizationTx(ctx context.Context, tx *sql.Tx) (*Organ
 	row := tx.QueryRowContext(ctx, `SELECT id, full_name, short_name, inn, vat_mode, timezone FROM organizations WHERE active=true ORDER BY created_at LIMIT 1`)
 	var org Organization
 	if err := row.Scan(&org.ID, &org.FullName, &org.ShortName, &org.INN, &org.VATMode, &org.Timezone); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, appError("ORGANIZATION_NOT_CONFIGURED", "В системе не настроена активная организация-продавец", false, "Обратитесь к администратору для настройки организации")
+		}
 		return nil, err
 	}
 	return &org, nil
@@ -1526,61 +1868,19 @@ func startNumber(docType string) int64 {
 	return 2999
 }
 
+// normalizeContractTopic delegates to the shared contracttopics package (also
+// used by the REST handlers) so both channels validate and map contract
+// topics identically.
 func normalizeContractTopic(topic string) (string, error) {
-	value := strings.TrimSpace(topic)
-	if value == "" {
-		return "", appError("VALIDATION_ERROR", "Тема договора обязательна", true, "Укажите одну из валидных тем договора")
+	normalized, err := contracttopics.Normalize(topic)
+	if err != nil {
+		return "", appError("VALIDATION_ERROR", err.Error(), true, "Используйте одну из валидных тем: "+strings.Join(allowedContractTopics(), ", "))
 	}
-	normalized := strings.ToLower(value)
-	normalized = strings.ReplaceAll(normalized, "ё", "е")
-	normalized = strings.Join(strings.Fields(normalized), " ")
-
-	aliases := map[string]string{
-		"seo":             "Продвижение сео",
-		"сео":             "Продвижение сео",
-		"продвижение seo": "Продвижение сео",
-		"продвижение сео": "Продвижение сео",
-		"контекст":        "Продвижение контекст",
-		"продвижение контекст":  "Продвижение контекст",
-		"сео + контекст":        "Сео + контекст",
-		"seo + контекст":        "Сео + контекст",
-		"техподдержка":          "Техподдержка",
-		"техническая поддержка": "Техподдержка",
-		"юр услуги":             "Юр услуги",
-		"юридические услуги":    "Юр услуги",
-		"разработка":            "Разработка",
-		"разработка сайта":      "Разработка",
-		"создание сайта":        "Разработка",
-		"сайт":                  "Разработка",
-		"соц сети":              "Соц сети",
-		"социальные сети":       "Соц сети",
-		"дизайн":                "Дизайн",
-		"отзывы":                "Отзывы",
-	}
-	if mapped, ok := aliases[normalized]; ok {
-		return mapped, nil
-	}
-
-	for _, allowed := range allowedContractTopics() {
-		if value == allowed {
-			return value, nil
-		}
-	}
-	return "", appError("VALIDATION_ERROR", "Некорректная тема договора: "+value, true, "Используйте одну из валидных тем: "+strings.Join(allowedContractTopics(), ", "))
+	return normalized, nil
 }
 
 func allowedContractTopics() []string {
-	return []string{
-		"Продвижение сео",
-		"Продвижение контекст",
-		"Сео + контекст",
-		"Техподдержка",
-		"Юр услуги",
-		"Разработка",
-		"Соц сети",
-		"Дизайн",
-		"Отзывы",
-	}
+	return contracttopics.Allowed()
 }
 
 func (s *Service) findCounterpartyDuplicates(ctx context.Context, inn, kpp string) ([]models.Customer, error) {
@@ -1954,9 +2254,14 @@ func canonicalJSONBytes(value any) ([]byte, error) {
 	return json.Marshal(decoded)
 }
 
+// moscowLocation is a fixed UTC+3 offset rather than IANA's "Europe/Moscow",
+// so it never depends on the tzdata database being installed in the runtime
+// image (Alpine's base image doesn't ship it) — time.LoadLocation silently
+// returns a nil *Location on such a lookup failure, and Time.In(nil) panics.
+var moscowLocation = time.FixedZone("MSK", 3*60*60)
+
 func todayRu() string {
-	loc, _ := time.LoadLocation("Europe/Moscow")
-	return time.Now().In(loc).Format("02.01.2006")
+	return time.Now().In(moscowLocation).Format("02.01.2006")
 }
 
 func boundedLimit(limit, fallback int) int {
@@ -2057,6 +2362,11 @@ func pdfEscape(text string) string {
 func isUniqueViolation(err error) bool {
 	var pqErr *pq.Error
 	return errors.As(err, &pqErr) && pqErr.Code == "23505"
+}
+
+func isForeignKeyViolation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23503"
 }
 
 func numericString(value string) bool {
