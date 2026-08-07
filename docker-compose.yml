@@ -46,7 +46,7 @@ services:
     environment:
       DATABASE_URL: postgres://invoices_user:invoices_password@postgres:5432/invoices_db?sslmode=disable
       PORT: 8080
-      CORS_ORIGIN: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://127.0.0.1:3000,http://127.0.0.1:3001,http://127.0.0.1:3002,http://192.168.0.121:3000
+      CORS_ORIGIN: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://127.0.0.1:3000,http://127.0.0.1:3001,http://127.0.0.1:3002,http://192.168.0.121:3000,http://100.64.229.103:3000
       DADATA_API_KEY: ${DADATA_API_KEY:-}
       REDMINE_URL: ${REDMINE_URL:-}
       REDMINE_API: ${REDMINE_API:-}
