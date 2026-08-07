@@ -558,6 +558,10 @@ func (s *Service) CallDistribution(ctx context.Context, callerID string, from, t
 	}
 	dist := map[string]int{}
 	for _, c := range calls {
+		if category := ExtractCategory(c.AnalyticsJSON); category == FraudCategory {
+			dist["автоответчик (фрод)"]++
+			continue
+		}
 		dist[ExtractOutcome(c.AnalyticsJSON)]++
 	}
 	return dist, nil
