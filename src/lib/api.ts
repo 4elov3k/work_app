@@ -1,5 +1,14 @@
-// API Base URL
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8080/api';
+// API Base URL — falls back to the page's own hostname so the same build
+// works over localhost, LAN, and VPN (Tailscale) without rebuilding.
+function resolveApiBase(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== 'undefined') {
+    return `${window.location.protocol}//${window.location.hostname}:8080/api`;
+  }
+  return 'http://127.0.0.1:8080/api';
+}
+
+const API_BASE = resolveApiBase();
 
 // Типы данных
 export interface Customer {
