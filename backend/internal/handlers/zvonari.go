@@ -1,15 +1,18 @@
 package handlers
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"invoices-backend/internal/models"
+	"invoices-backend/internal/zvonari"
 )
 
 // parseRangeParams reads required `from`/`to` YYYY-MM-DD query params and
@@ -260,4 +263,84 @@ func (h *Handlers) RequestCallerReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondWithJSON(w, http.StatusOK, models.CallerReportResponse{Data: *report})
+}
+
+// GetCallerReportHistory обрабатывает GET /api/zvonari/callers/{id}/reports?limit=
+// Прошлые сгенерированные отчёты по звонарю, новые сверху — чтобы уже
+// оплаченный/сформированный анализ оставался доступен, а не терялся
+// после того, как страницу перезагрузили.
+func (h *Handlers) GetCallerReportHistory(w http.ResponseWriter, r *http.Request) {
+	callerID := chi.URLParam(r, "id")
+	limit := 20
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	reports, err := h.zvonari.ListReports(r.Context(), callerID, limit)
+	if err != nil {
+		log.Printf("GetCallerReportHistory failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to get report history")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, models.CallerReportListResponse{Data: reports})
+}
+
+// ExportCallerCallsCSV обрабатывает GET /api/zvonari/callers/{id}/export.csv?from=&to=
+// CSV со звонками звонаря за период (дата, время, направление, длительность,
+// категория, транскрипт) плюс общая оценка за этот период в последней
+// колонке на каждой строке — использует уже сохранённый в БД отчёт для
+// точно этого периода, если такой есть, и генерирует новый только если
+// ещё не запрашивался (см. Service.GetOrGenerateReport).
+func (h *Handlers) ExportCallerCallsCSV(w http.ResponseWriter, r *http.Request) {
+	callerID := chi.URLParam(r, "id")
+	from, to, err := parseRangeParams(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	caller, err := h.db.GetCallerByID(r.Context(), callerID)
+	if err != nil {
+		respondNotFoundOrInternal(w, err, "Caller not found")
+		return
+	}
+
+	calls, err := h.zvonari.ListCalls(r.Context(), callerID, from, to)
+	if err != nil {
+		log.Printf("ExportCallerCallsCSV: listing calls failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to load calls")
+		return
+	}
+
+	var summaryText string
+	if report, err := h.zvonari.GetOrGenerateReport(r.Context(), callerID, "custom", from, to); err != nil {
+		// Экспорт не должен падать целиком из-за недоступной аналитики —
+		// звонки со всё равно ценны сами по себе, просто без итоговой оценки.
+		log.Printf("ExportCallerCallsCSV: report unavailable, exporting without it: %v", err)
+	} else {
+		summaryText = report.SummaryText
+	}
+
+	filename := fmt.Sprintf("zvonari_%s_%s_%s.csv", caller.PBXExtension, from.Format("2006-01-02"), to.Format("2006-01-02"))
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	// UTF-8 BOM so Excel on Windows renders Cyrillic correctly instead of mojibake.
+	w.Write([]byte{0xEF, 0xBB, 0xBF})
+
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{"Дата", "Время", "Направление", "Длительность (сек)", "Категория", "Транскрипт", "Общая оценка за период"})
+	for _, c := range calls {
+		_ = cw.Write([]string{
+			c.StartedAt.Format("2006-01-02"),
+			c.StartedAt.Format("15:04:05"),
+			c.Direction,
+			strconv.Itoa(c.DurationSec),
+			zvonari.ExtractOutcome(c.AnalyticsJSON),
+			c.TranscriptText,
+			summaryText,
+		})
+	}
+	cw.Flush()
 }

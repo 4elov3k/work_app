@@ -1193,4 +1193,19 @@ export const zvonariAPI = {
     });
     return handleResponse<SingleResponse<CallerReport>>(response);
   },
+
+  // Прошлые отчёты по звонарю (новые сверху) — то, что уже сохранено в БД
+  getReportHistory: async (callerId: string, limit = 20): Promise<SingleResponse<CallerReport[]>> => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    const response = await fetch(`${API_BASE}/zvonari/callers/${callerId}/reports?${params.toString()}`);
+    return handleResponse<SingleResponse<CallerReport[]>>(response);
+  },
+
+  // Ссылка на CSV-выгрузку звонков звонаря за период (дата, время,
+  // транскрипт, категория, общая оценка за период) — используется напрямую
+  // как href для скачивания, не через fetch.
+  exportCallsCsvUrl: (callerId: string, from: string, to: string): string => {
+    const params = new URLSearchParams({ from, to });
+    return `${API_BASE}/zvonari/callers/${callerId}/export.csv?${params.toString()}`;
+  },
 };

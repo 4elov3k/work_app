@@ -14,6 +14,8 @@ import {
   ChevronUp,
   ChevronRight,
   Search,
+  Download,
+  History,
 } from "lucide-react";
 
 import { zvonariAPI, Caller, CallerReport, Call, ApiError } from "@/lib/api";
@@ -242,6 +244,8 @@ interface CallerPanelState {
   callsLoading: boolean;
   callsError: string;
   calls: Call[] | null;
+  history: CallerReport[] | null;
+  historyLoading: boolean;
 }
 
 const EMPTY_PANEL: CallerPanelState = {
@@ -253,6 +257,8 @@ const EMPTY_PANEL: CallerPanelState = {
   callsLoading: false,
   callsError: "",
   calls: null,
+  history: null,
+  historyLoading: false,
 };
 
 interface CallerStats {
@@ -456,6 +462,11 @@ export default function ZvonariPage() {
     try {
       const response = await zvonariAPI.requestReport(callerId, "custom", period.from, period.to);
       updatePanel(callerId, { reportLoading: false, report: response.data });
+      // Свежий отчёт только что попал в БД — если история уже была открыта,
+      // подтягиваем её заново, чтобы новый отчёт сразу появился в списке.
+      if (panels[callerId]?.history) {
+        handleLoadHistory(callerId);
+      }
     } catch (err) {
       console.error("Report request failed:", err);
       updatePanel(callerId, {
@@ -463,6 +474,22 @@ export default function ZvonariPage() {
         reportError: err instanceof Error ? err.message : "Не удалось получить отчёт",
       });
     }
+  };
+
+  const handleLoadHistory = async (callerId: string) => {
+    updatePanel(callerId, { historyLoading: true });
+    try {
+      const response = await zvonariAPI.getReportHistory(callerId);
+      updatePanel(callerId, { historyLoading: false, history: response.data || [] });
+    } catch (err) {
+      console.error("Failed to load report history:", err);
+      updatePanel(callerId, { historyLoading: false });
+    }
+  };
+
+  const handleDownloadCsv = (callerId: string) => {
+    const url = zvonariAPI.exportCallsCsvUrl(callerId, period.from, period.to);
+    window.location.href = url;
   };
 
   const handleLoadCalls = async (callerId: string) => {
@@ -751,15 +778,20 @@ export default function ZvonariPage() {
                       <TableCell className="text-right">{outcomes["заинтересован"] ?? 0}</TableCell>
                       <TableCell className="text-right">{outcomes["отказ"] ?? 0}</TableCell>
                       <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleRequestReport(caller.id)}
-                          disabled={panel.reportLoading}
-                        >
-                          <FileBarChart className="mr-2 h-4 w-4" />
-                          {panel.reportLoading ? "Формирование..." : "Отчёт"}
-                        </Button>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleRequestReport(caller.id)}
+                            disabled={panel.reportLoading}
+                          >
+                            <FileBarChart className="mr-2 h-4 w-4" />
+                            {panel.reportLoading ? "Формирование..." : "Отчёт"}
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => handleDownloadCsv(caller.id)}>
+                            <Download className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                     {isExpanded && (
@@ -784,6 +816,42 @@ export default function ZvonariPage() {
                                 </p>
                               </div>
                             )}
+
+                            <div>
+                              {panel.history === null ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleLoadHistory(caller.id)}
+                                  disabled={panel.historyLoading}
+                                >
+                                  {panel.historyLoading ? (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <History className="mr-2 h-4 w-4" />
+                                  )}
+                                  История отчётов
+                                </Button>
+                              ) : panel.history.length === 0 ? (
+                                <p className="text-sm text-muted-foreground">Отчётов по этому звонарю ещё не было</p>
+                              ) : (
+                                <div>
+                                  <h4 className="mb-2 text-sm font-medium">История отчётов ({panel.history.length})</h4>
+                                  <div className="space-y-2">
+                                    {panel.history.map((r) => (
+                                      <details key={r.id} className="rounded border p-2">
+                                        <summary className="cursor-pointer text-sm text-muted-foreground">
+                                          {new Date(r.requested_at).toLocaleString("ru-RU")} — {r.period_start} — {r.period_end}
+                                        </summary>
+                                        <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
+                                          {r.summary_text}
+                                        </p>
+                                      </details>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
 
                             <div>
                               {panel.calls === null ? (
