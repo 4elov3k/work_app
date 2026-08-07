@@ -25,9 +25,12 @@ type Client struct {
 func NewFromEnv() *Client {
 	baseURL := strings.TrimRight(os.Getenv("CALL_ANALYTICS_URL"), "/")
 	return &Client{
-		baseURL:    baseURL,
-		token:      os.Getenv("CALL_ANALYTICS_TOKEN"),
-		httpClient: &http.Client{Timeout: 60 * time.Second},
+		baseURL: baseURL,
+		token:   os.Getenv("CALL_ANALYTICS_TOKEN"),
+		// A batch of 50 calls can take several minutes server-side (see
+		// batch_timeout in call_analytics_server.py) — the client timeout
+		// must clear that with room to spare, not just cover a single call.
+		httpClient: &http.Client{Timeout: 10 * time.Minute},
 	}
 }
 
@@ -51,6 +54,34 @@ type AnalyzeCallResult struct {
 func (c *Client) AnalyzeCall(ctx context.Context, req AnalyzeCallRequest) (*AnalyzeCallResult, error) {
 	var result AnalyzeCallResult
 	if err := c.post(ctx, "/analyze-call", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// AnalyzeCallsBatchRequest — классификация до нескольких десятков звонков
+// одним запросом (один hermes-chat completion вместо одного на звонок) —
+// то, что реально доминирует по времени в пере-анализе, это не сама
+// классификация, а накладные расходы на процесс+сессию на каждый вызов.
+type AnalyzeCallsBatchRequest struct {
+	Calls []AnalyzeCallRequest `json:"calls"`
+}
+
+// AnalyzeCallsBatchResultItem — результат по одному звонку из батча,
+// сопоставленный по call_id (сервис сопоставляет ответ модели по позиции
+// внутри своего запроса и возвращает call_id и analytics обратно).
+type AnalyzeCallsBatchResultItem struct {
+	CallID        string          `json:"call_id"`
+	AnalyticsJSON json.RawMessage `json:"analytics"`
+}
+
+type AnalyzeCallsBatchResult struct {
+	Results []AnalyzeCallsBatchResultItem `json:"results"`
+}
+
+func (c *Client) AnalyzeCallsBatch(ctx context.Context, calls []AnalyzeCallRequest) (*AnalyzeCallsBatchResult, error) {
+	var result AnalyzeCallsBatchResult
+	if err := c.post(ctx, "/analyze-calls-batch", AnalyzeCallsBatchRequest{Calls: calls}, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

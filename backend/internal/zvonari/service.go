@@ -368,6 +368,14 @@ func (s *Service) transcribeOnly(ctx context.Context, call *models.Call, pbxUUID
 // each — decoupled from transcription (see transcribeOnly), so it can run
 // on its own schedule (e.g. a few hours after the morning transcription
 // batch) without either job blocking the other.
+// analyzeBatchSize caps how many calls go into one call-analytics batch
+// request. Larger batches mean fewer `hermes chat` subprocess round-trips
+// (the actual bottleneck, not the classification itself), but also a bigger
+// prompt/response and more to lose if the whole request errors — 50 is
+// where call_analytics_server.py's batch_timeout still stays well under the
+// Go client's 10-minute timeout.
+const analyzeBatchSize = 50
+
 func (s *Service) AnalyzeCalls(ctx context.Context, from, to time.Time) (*SyncResult, error) {
 	if !s.callreport.Configured() {
 		return nil, fmt.Errorf("аналитика недоступна (не настроен CALL_ANALYTICS_URL)")
@@ -384,19 +392,48 @@ func (s *Service) AnalyzeCalls(ctx context.Context, from, to time.Time) (*SyncRe
 	s.syncStatus.Processed = 0
 	s.syncMu.Unlock()
 
-	for i := range calls {
-		call := &calls[i]
-		analysis, err := s.callreport.AnalyzeCall(ctx, callreport.AnalyzeCallRequest{CallID: call.ID, Transcript: call.TranscriptText})
-		if err != nil {
-			log.Printf("zvonari: call analysis failed for call %s: %v", call.PBXUUID, err)
-			result.AnalyzeErrors++
-		} else if err := s.db.SetCallAnalytics(ctx, call.ID, analysis.AnalyticsJSON); err != nil {
-			log.Printf("zvonari: saving analytics failed for call %s: %v", call.PBXUUID, err)
-			result.AnalyzeErrors++
+	for start := 0; start < len(calls); start += analyzeBatchSize {
+		end := start + analyzeBatchSize
+		if end > len(calls) {
+			end = len(calls)
 		}
-		s.syncMu.Lock()
-		s.syncStatus.Processed++
-		s.syncMu.Unlock()
+		batch := calls[start:end]
+
+		reqs := make([]callreport.AnalyzeCallRequest, len(batch))
+		for i, c := range batch {
+			reqs[i] = callreport.AnalyzeCallRequest{CallID: c.ID, Transcript: c.TranscriptText}
+		}
+
+		batchResult, err := s.callreport.AnalyzeCallsBatch(ctx, reqs)
+		if err != nil {
+			// Whole-batch failure (timeout, service down) — every call in it
+			// stays without analytics_json, so the next AnalyzeCalls run
+			// picks them all back up via ListCallsNeedingAnalysis.
+			log.Printf("zvonari: batch analysis failed for %d calls: %v", len(batch), err)
+			result.AnalyzeErrors += len(batch)
+			s.syncMu.Lock()
+			s.syncStatus.Processed += len(batch)
+			s.syncMu.Unlock()
+			continue
+		}
+
+		byID := make(map[string]json.RawMessage, len(batchResult.Results))
+		for _, r := range batchResult.Results {
+			byID[r.CallID] = r.AnalyticsJSON
+		}
+		for _, call := range batch {
+			analytics, ok := byID[call.ID]
+			if !ok || len(analytics) == 0 {
+				log.Printf("zvonari: no analysis result for call %s in batch response", call.PBXUUID)
+				result.AnalyzeErrors++
+			} else if err := s.db.SetCallAnalytics(ctx, call.ID, analytics); err != nil {
+				log.Printf("zvonari: saving analytics failed for call %s: %v", call.PBXUUID, err)
+				result.AnalyzeErrors++
+			}
+			s.syncMu.Lock()
+			s.syncStatus.Processed++
+			s.syncMu.Unlock()
+		}
 	}
 
 	return result, nil
