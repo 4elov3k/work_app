@@ -181,6 +181,27 @@ func (h *Handlers) GetOutcomeCounts(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": counts})
 }
 
+// GetCategoryCounts обрабатывает GET /api/zvonari/calls/categories?from=&to=
+// Разбивка по глобальным категориям звонка ("не сброшенный автоответчик
+// (фрод)" / "работа по скрипту") на каждого звонаря за период — для
+// выявления АФК-прослушивания автоответчика без отдельного запроса на
+// каждого звонаря.
+func (h *Handlers) GetCategoryCounts(w http.ResponseWriter, r *http.Request) {
+	from, to, err := parseRangeParams(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	counts, err := h.zvonari.CategoryCounts(r.Context(), from, to)
+	if err != nil {
+		log.Printf("GetCategoryCounts failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to get category counts")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": counts})
+}
+
 // GetCallerCalls обрабатывает GET /api/zvonari/callers/{id}/calls?from=&to=
 // Детализация звонков звонаря за период: время, направление, длительность,
 // категория (analytics_json.outcome) и транскрипт по каждому звонку.
@@ -330,13 +351,14 @@ func (h *Handlers) ExportCallerCallsCSV(w http.ResponseWriter, r *http.Request) 
 	w.Write([]byte{0xEF, 0xBB, 0xBF})
 
 	cw := csv.NewWriter(w)
-	_ = cw.Write([]string{"Дата", "Время", "Направление", "Длительность (сек)", "Категория", "Транскрипт", "Общая оценка за период"})
+	_ = cw.Write([]string{"Дата", "Время", "Направление", "Длительность (сек)", "Тип звонка", "Исход", "Транскрипт", "Общая оценка за период"})
 	for _, c := range calls {
 		_ = cw.Write([]string{
 			c.StartedAt.Format("2006-01-02"),
 			c.StartedAt.Format("15:04:05"),
 			c.Direction,
 			strconv.Itoa(c.DurationSec),
+			zvonari.ExtractCategory(c.AnalyticsJSON),
 			zvonari.ExtractOutcome(c.AnalyticsJSON),
 			c.TranscriptText,
 			summaryText,

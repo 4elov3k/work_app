@@ -212,6 +212,43 @@ func (db *DB) CountOutcomesByCaller(ctx context.Context, from, to time.Time) (ma
 	return counts, nil
 }
 
+// CountCategoriesByCaller returns, for every caller with calls in [from, to),
+// a breakdown of their Hermes global call-category classification
+// (analytics_json.category) — one query across all callers, mirroring
+// CountOutcomesByCaller, for surfacing "не сброшенный автоответчик (фрод)"
+// vs "работа по скрипту" counts without an N+1 fetch. Calls without a
+// category yet bucket under "не проанализировано".
+func (db *DB) CountCategoriesByCaller(ctx context.Context, from, to time.Time) (map[string]map[string]int, error) {
+	query := `
+		SELECT caller_id, COALESCE(analytics_json->>'category', 'не проанализировано'), count(*)
+		FROM calls
+		WHERE caller_id IS NOT NULL AND started_at >= $1 AND started_at < $2
+		GROUP BY caller_id, COALESCE(analytics_json->>'category', 'не проанализировано')
+	`
+	rows, err := db.QueryContext(ctx, query, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count categories by caller: %w", err)
+	}
+	defer rows.Close()
+
+	counts := map[string]map[string]int{}
+	for rows.Next() {
+		var callerID, category string
+		var count int
+		if err := rows.Scan(&callerID, &category, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan category count: %w", err)
+		}
+		if counts[callerID] == nil {
+			counts[callerID] = map[string]int{}
+		}
+		counts[callerID][category] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating category counts: %w", err)
+	}
+	return counts, nil
+}
+
 // ListCallsByStatusPeriod returns all calls (any caller) in [from, to)
 // whose transcript_status is one of the given values — for a bulk "retry
 // everything that didn't finish processing" job.

@@ -53,6 +53,13 @@ const STATUS_LABELS: Record<string, string> = {
 
 const STATUS_ORDER = ["done", "transcribing", "pending", "failed", "no_recording"];
 
+// Глобальная категория звонка — не сброшенный вовремя автоответчик
+// (подозрение на АФК-накрутку времени на линии), в отличие от outcome,
+// который классифицирует только реальные разговоры. Должно совпадать с
+// FRAUD_CATEGORY в backend/internal/zvonari/service.go и FRAUD_CATEGORY в
+// hermes/services/call_analytics_server.py.
+const FRAUD_CATEGORY = "не сброшенный автоответчик (фрод)";
+
 // Порог, начиная с которого звонарь помечается как "требует внимания" —
 // доля ошибок/без записи от всех его звонков за период. Игнорируем совсем
 // маленькие выборки (<5 звонков), чтобы один неудачный звонок не красил
@@ -89,16 +96,18 @@ function DistributionBars({ distribution }: { distribution: Record<string, numbe
 
 interface CallFilters {
   status: string;
+  category: string;
   outcome: string;
   direction: string;
   search: string;
 }
 
-const EMPTY_FILTERS: CallFilters = { status: "", outcome: "", direction: "", search: "" };
+const EMPTY_FILTERS: CallFilters = { status: "", category: "", outcome: "", direction: "", search: "" };
 
 function filterCalls(calls: Call[], filters: CallFilters): Call[] {
   return calls.filter((call) => {
     if (filters.status && call.transcript_status !== filters.status) return false;
+    if (filters.category && (call.analytics_json?.category || "") !== filters.category) return false;
     if (filters.outcome && (call.analytics_json?.outcome || "") !== filters.outcome) return false;
     if (filters.direction && call.direction !== filters.direction) return false;
     if (filters.search) {
@@ -126,6 +135,12 @@ function CallDetailList({
   const outcomes = useMemo(() => {
     const set = new Set<string>();
     calls.forEach((c) => c.analytics_json?.outcome && set.add(c.analytics_json.outcome));
+    return Array.from(set).sort();
+  }, [calls]);
+
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    calls.forEach((c) => c.analytics_json?.category && set.add(c.analytics_json.category));
     return Array.from(set).sort();
   }, [calls]);
 
@@ -158,11 +173,23 @@ function CallDetailList({
           ))}
         </select>
         <select
+          value={filters.category}
+          onChange={(e) => setFilters((f) => ({ ...f, category: e.target.value }))}
+          className="h-8 rounded-md border border-input bg-transparent px-2 text-sm"
+        >
+          <option value="">Все типы звонков</option>
+          {categories.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        <select
           value={filters.outcome}
           onChange={(e) => setFilters((f) => ({ ...f, outcome: e.target.value }))}
           className="h-8 rounded-md border border-input bg-transparent px-2 text-sm"
         >
-          <option value="">Все категории</option>
+          <option value="">Все исходы</option>
           {outcomes.map((o) => (
             <option key={o} value={o}>
               {o}
@@ -181,7 +208,7 @@ function CallDetailList({
             </option>
           ))}
         </select>
-        {(filters.status || filters.outcome || filters.direction || filters.search) && (
+        {(filters.status || filters.category || filters.outcome || filters.direction || filters.search) && (
           <Button variant="ghost" size="sm" className="h-8" onClick={() => setFilters(EMPTY_FILTERS)}>
             Сбросить
           </Button>
@@ -203,6 +230,11 @@ function CallDetailList({
                   <span className="text-muted-foreground">{new Date(call.started_at).toLocaleString("ru-RU")}</span>
                   <Badge variant="outline">{DIRECTION_LABELS[call.direction] || call.direction}</Badge>
                   <span className="text-muted-foreground">{formatDuration(call.duration_sec)}</span>
+                  {call.analytics_json?.category && (
+                    <Badge variant={call.analytics_json.category === FRAUD_CATEGORY ? "destructive" : "outline"}>
+                      {call.analytics_json.category}
+                    </Badge>
+                  )}
                   {call.analytics_json?.outcome && <Badge variant="secondary">{call.analytics_json.outcome}</Badge>}
                   <span
                     className={`text-xs ${call.transcript_status === "done" ? "text-muted-foreground" : "text-amber-600"}`}
@@ -301,6 +333,7 @@ export default function ZvonariPage() {
   const [callCounts, setCallCounts] = useState<Record<string, number>>({});
   const [statusCounts, setStatusCounts] = useState<Record<string, Record<string, number>>>({});
   const [outcomeCounts, setOutcomeCounts] = useState<Record<string, Record<string, number>>>({});
+  const [categoryCounts, setCategoryCounts] = useState<Record<string, Record<string, number>>>({});
 
   const [panels, setPanels] = useState<Record<string, CallerPanelState>>({});
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -339,6 +372,10 @@ export default function ZvonariPage() {
       .getOutcomeCounts(periodFrom, periodTo)
       .then((response) => setOutcomeCounts(response.data || {}))
       .catch((err) => console.error("Failed to load outcome counts:", err));
+    zvonariAPI
+      .getCategoryCounts(periodFrom, periodTo)
+      .then((response) => setCategoryCounts(response.data || {}))
+      .catch((err) => console.error("Failed to load category counts:", err));
   };
 
   // Синхронизация/анализ/повтор идут в фоне на бэкенде (могут занимать
@@ -593,8 +630,9 @@ export default function ZvonariPage() {
     const totalInterested = Object.values(outcomeCounts).reduce((sum, o) => sum + (o["заинтересован"] ?? 0), 0);
     const totalRefused = Object.values(outcomeCounts).reduce((sum, o) => sum + (o["отказ"] ?? 0), 0);
     const totalUnanalyzed = Object.values(outcomeCounts).reduce((sum, o) => sum + (o["не проанализировано"] ?? 0), 0);
-    return { totalCalls, totalDone, totalInterested, totalRefused, totalUnanalyzed };
-  }, [callCounts, statusCounts, outcomeCounts]);
+    const totalFraud = Object.values(categoryCounts).reduce((sum, c) => sum + (c[FRAUD_CATEGORY] ?? 0), 0);
+    return { totalCalls, totalDone, totalInterested, totalRefused, totalUnanalyzed, totalFraud };
+  }, [callCounts, statusCounts, outcomeCounts, categoryCounts]);
 
   return (
     <div className="container mx-auto py-8 px-4 max-w-6xl">
@@ -682,7 +720,7 @@ export default function ZvonariPage() {
       </Card>
 
       {callers.length > 0 && (
-        <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
+        <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-6">
           <KpiCard label="Всего звонков" value={String(kpi.totalCalls)} />
           <KpiCard
             label="Готово"
@@ -691,6 +729,11 @@ export default function ZvonariPage() {
           />
           <KpiCard label="Заинтересован" value={String(kpi.totalInterested)} />
           <KpiCard label="Отказ" value={String(kpi.totalRefused)} />
+          <KpiCard
+            label="Автоответчик (фрод)"
+            value={String(kpi.totalFraud)}
+            hint={kpi.totalFraud > 0 ? "не сброшен вовремя" : undefined}
+          />
           <KpiCard
             label="Не проанализировано"
             value={String(kpi.totalUnanalyzed)}

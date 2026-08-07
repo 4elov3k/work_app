@@ -1085,7 +1085,7 @@ export interface Call {
   hangup_cause: string;
   transcript_status: string;
   transcript_text?: string;
-  analytics_json?: { outcome?: string; note?: string };
+  analytics_json?: { category?: string; outcome?: string; note?: string };
   created_at: string;
   updated_at: string;
 }
@@ -1169,6 +1169,16 @@ export const zvonariAPI = {
   getOutcomeCounts: async (from: string, to: string): Promise<SingleResponse<Record<string, Record<string, number>>>> => {
     const params = new URLSearchParams({ from, to });
     const response = await fetch(`${API_BASE}/zvonari/calls/outcomes?${params.toString()}`);
+    return handleResponse<SingleResponse<Record<string, Record<string, number>>>>(response);
+  },
+
+  // Разбивка по глобальным категориям звонка ("не сброшенный автоответчик
+  // (фрод)" / "работа по скрипту") на каждого звонаря за период — для
+  // выявления АФК-прослушивания автоответчика без отдельного запроса на
+  // каждого звонаря.
+  getCategoryCounts: async (from: string, to: string): Promise<SingleResponse<Record<string, Record<string, number>>>> => {
+    const params = new URLSearchParams({ from, to });
+    const response = await fetch(`${API_BASE}/zvonari/calls/categories?${params.toString()}`);
     return handleResponse<SingleResponse<Record<string, Record<string, number>>>>(response);
   },
 

@@ -539,6 +539,14 @@ func (s *Service) OutcomeCounts(ctx context.Context, from, to time.Time) (map[st
 	return s.db.CountOutcomesByCaller(ctx, from, to)
 }
 
+// CategoryCounts returns each caller's global call-category breakdown
+// ("не сброшенный автоответчик (фрод)" vs "работа по скрипту") in
+// [from, to) — the fraud-detection counterpart to OutcomeCounts, one query
+// for all callers.
+func (s *Service) CategoryCounts(ctx context.Context, from, to time.Time) (map[string]map[string]int, error) {
+	return s.db.CountCategoriesByCaller(ctx, from, to)
+}
+
 // CallDistribution buckets a caller's calls for a period by their Hermes
 // outcome classification (analytics_json.outcome) — the UI's "brief
 // distribution" view. No Hermes call needed: it aggregates analysis that
@@ -566,4 +574,25 @@ func ExtractOutcome(raw json.RawMessage) string {
 		return "не проанализировано"
 	}
 	return parsed.Outcome
+}
+
+// FraudCategory is Hermes' global call-category label for a call where the
+// operator hit an answering machine/voicemail and didn't hang up promptly
+// — must match FRAUD_CATEGORY in hermes/services/call_analytics_server.py.
+const FraudCategory = "не сброшенный автоответчик (фрод)"
+
+// ExtractCategory reads analytics_json.category — Hermes' global
+// classification (fraud vs. real "работа по скрипту" call), independent of
+// outcome (which only applies to real conversations).
+func ExtractCategory(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return "не проанализировано"
+	}
+	var parsed struct {
+		Category string `json:"category"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil || parsed.Category == "" {
+		return "не проанализировано"
+	}
+	return parsed.Category
 }
