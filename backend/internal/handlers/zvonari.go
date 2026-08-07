@@ -330,14 +330,25 @@ func (h *Handlers) ExportCallerCallsCSV(w http.ResponseWriter, r *http.Request) 
 	w.Write([]byte{0xEF, 0xBB, 0xBF})
 
 	cw := csv.NewWriter(w)
-	_ = cw.Write([]string{"Дата", "Время", "Направление", "Длительность (сек)", "Категория", "Транскрипт", "Общая оценка за период"})
+	_ = cw.Write([]string{"Дата", "Время", "Направление", "Длительность звонка (сек)", "Время разговора (сек)", "Тип звонка", "Итог", "Транскрипт", "Общая оценка за период"})
 	for _, c := range calls {
+		category := zvonari.ExtractCategory(c.AnalyticsJSON)
+		outcome := zvonari.ExtractOutcome(c.AnalyticsJSON)
+		if category == "" {
+			category = "не проанализировано"
+		} else if outcome == "не проанализировано" {
+			// Fraud calls have outcome=null by design (nothing to assess), не
+			// путать с реально непроанализированным звонком.
+			outcome = "—"
+		}
 		_ = cw.Write([]string{
 			c.StartedAt.Format("2006-01-02"),
 			c.StartedAt.Format("15:04:05"),
 			c.Direction,
 			strconv.Itoa(c.DurationSec),
-			zvonari.ExtractOutcome(c.AnalyticsJSON),
+			strconv.Itoa(c.TalkTimeSec),
+			category,
+			outcome,
 			c.TranscriptText,
 			summaryText,
 		})

@@ -593,7 +593,8 @@ export default function ZvonariPage() {
     const totalInterested = Object.values(outcomeCounts).reduce((sum, o) => sum + (o["заинтересован"] ?? 0), 0);
     const totalRefused = Object.values(outcomeCounts).reduce((sum, o) => sum + (o["отказ"] ?? 0), 0);
     const totalUnanalyzed = Object.values(outcomeCounts).reduce((sum, o) => sum + (o["не проанализировано"] ?? 0), 0);
-    return { totalCalls, totalDone, totalInterested, totalRefused, totalUnanalyzed };
+    const totalFraud = Object.values(outcomeCounts).reduce((sum, o) => sum + (o["автоответчик (фрод)"] ?? 0), 0);
+    return { totalCalls, totalDone, totalInterested, totalRefused, totalUnanalyzed, totalFraud };
   }, [callCounts, statusCounts, outcomeCounts]);
 
   return (
@@ -682,7 +683,7 @@ export default function ZvonariPage() {
       </Card>
 
       {callers.length > 0 && (
-        <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
+        <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-6">
           <KpiCard label="Всего звонков" value={String(kpi.totalCalls)} />
           <KpiCard
             label="Готово"
@@ -691,6 +692,11 @@ export default function ZvonariPage() {
           />
           <KpiCard label="Заинтересован" value={String(kpi.totalInterested)} />
           <KpiCard label="Отказ" value={String(kpi.totalRefused)} />
+          <KpiCard
+            label="Автоответчик (фрод)"
+            value={String(kpi.totalFraud)}
+            hint={kpi.totalFraud > 0 ? "не сброшенная голосовая почта/IVR" : undefined}
+          />
           <KpiCard
             label="Не проанализировано"
             value={String(kpi.totalUnanalyzed)}

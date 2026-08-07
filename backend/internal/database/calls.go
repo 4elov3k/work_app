@@ -180,13 +180,22 @@ func (db *DB) CountCallsByCallerAndStatus(ctx context.Context, from, to time.Tim
 // conversion (e.g. % отказ) without an N+1 fetch per caller. Calls without
 // an outcome yet (not analyzed, or analysis failed) bucket under "не
 // проанализировано", matching CallDistribution's client-facing label for a
-// single caller.
+// single caller. Fraud calls (analytics_json.category = FRAUD_CATEGORY in
+// call_analytics_server.py) have outcome=null by design — those bucket
+// separately as "автоответчик (фрод)" instead of falling into "не
+// проанализировано", otherwise the UI can't distinguish "never analyzed"
+// from "analyzed, turned out to be a voicemail/IVR".
 func (db *DB) CountOutcomesByCaller(ctx context.Context, from, to time.Time) (map[string]map[string]int, error) {
 	query := `
-		SELECT caller_id, COALESCE(analytics_json->>'outcome', 'не проанализировано'), count(*)
+		SELECT caller_id,
+		       CASE
+		           WHEN analytics_json->>'category' = 'не сброшенный автоответчик (фрод)' THEN 'автоответчик (фрод)'
+		           ELSE COALESCE(analytics_json->>'outcome', 'не проанализировано')
+		       END AS bucket,
+		       count(*)
 		FROM calls
 		WHERE caller_id IS NOT NULL AND started_at >= $1 AND started_at < $2
-		GROUP BY caller_id, COALESCE(analytics_json->>'outcome', 'не проанализировано')
+		GROUP BY caller_id, bucket
 	`
 	rows, err := db.QueryContext(ctx, query, from, to)
 	if err != nil {
@@ -253,13 +262,17 @@ func (db *DB) ListCallsByStatusPeriod(ctx context.Context, statuses []string, fr
 
 // ListCallsNeedingAnalysis returns calls in [from, to) whose transcript is
 // ready (transcript_status='done') but haven't been LLM-classified yet
-// (analytics_json IS NULL) — the queue for the decoupled AnalyzeCalls job.
+// (analytics_json IS NULL), or were classified before the fraud/script
+// "category" split was added to the prompt (analytics_json missing the
+// "category" key) — the queue for the decoupled AnalyzeCalls job.
 func (db *DB) ListCallsNeedingAnalysis(ctx context.Context, from, to time.Time) ([]models.Call, error) {
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
 		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json, created_at, updated_at
 		FROM calls
-		WHERE transcript_status = 'done' AND analytics_json IS NULL AND started_at >= $1 AND started_at < $2
+		WHERE transcript_status = 'done'
+		  AND (analytics_json IS NULL OR NOT (analytics_json ? 'category'))
+		  AND started_at >= $1 AND started_at < $2
 		ORDER BY started_at
 	`
 	rows, err := db.QueryContext(ctx, query, from, to)

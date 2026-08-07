@@ -550,9 +550,35 @@ func (s *Service) CallDistribution(ctx context.Context, callerID string, from, t
 	}
 	dist := map[string]int{}
 	for _, c := range calls {
+		if category := ExtractCategory(c.AnalyticsJSON); category == FraudCategory {
+			dist["автоответчик (фрод)"]++
+			continue
+		}
 		dist[ExtractOutcome(c.AnalyticsJSON)]++
 	}
 	return dist, nil
+}
+
+// FraudCategory mirrors FRAUD_CATEGORY in hermes/services/call_analytics_server.py —
+// the top-level classification for calls where only a voicemail/IVR/carrier
+// message was heard, no real conversation with a person.
+const FraudCategory = "не сброшенный автоответчик (фрод)"
+
+// ExtractCategory returns the top-level fraud/script classification
+// (analytics_json.category), separate from ExtractOutcome which only reads
+// the outcome field. Calls analyzed before the category split was added to
+// the prompt have no "category" key and return "".
+func ExtractCategory(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var parsed struct {
+		Category string `json:"category"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return ""
+	}
+	return parsed.Category
 }
 
 func ExtractOutcome(raw json.RawMessage) string {
