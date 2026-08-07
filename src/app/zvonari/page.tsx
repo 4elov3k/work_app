@@ -1,5 +1,5 @@
 "use client"
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -344,6 +344,22 @@ export default function ZvonariPage() {
 
   const period = useMemo(() => ({ from, to }), [from, to]);
 
+  // pollSyncStatus's setInterval closure is created once per background job
+  // and would otherwise see stale from/to/expandedId/panels — refs give it a
+  // way to read the live values on every tick without re-subscribing.
+  const periodRef = useRef(period);
+  useEffect(() => {
+    periodRef.current = period;
+  }, [period]);
+  const expandedIdRef = useRef(expandedId);
+  useEffect(() => {
+    expandedIdRef.current = expandedId;
+  }, [expandedId]);
+  const panelsRef = useRef(panels);
+  useEffect(() => {
+    panelsRef.current = panels;
+  }, [panels]);
+
   const loadCallers = () => {
     setLoadingCallers(true);
     zvonariAPI
@@ -378,6 +394,27 @@ export default function ZvonariPage() {
       .catch((err) => console.error("Failed to load category counts:", err));
   };
 
+  // Обновляет цифры без перезагрузки страницы и без спиннеров/сброса того,
+  // что уже открыто — вызывается на каждый тик поллинга, пока идёт
+  // синхронизация/анализ, чтобы видеть прогресс на живых данных, а не только
+  // после завершения задачи.
+  const refreshLiveData = () => {
+    const { from: liveFrom, to: liveTo } = periodRef.current;
+    loadAggregates(liveFrom, liveTo);
+    const openId = expandedIdRef.current;
+    if (!openId) return;
+    zvonariAPI
+      .getDistribution(openId, liveFrom, liveTo)
+      .then((response) => updatePanel(openId, { distribution: response.data }))
+      .catch(() => {});
+    if (panelsRef.current[openId]?.calls) {
+      zvonariAPI
+        .getCalls(openId, liveFrom, liveTo)
+        .then((response) => updatePanel(openId, { calls: response.data || [] }))
+        .catch(() => {});
+    }
+  };
+
   // Синхронизация/анализ/повтор идут в фоне на бэкенде (могут занимать
   // минуты — сотни звонков), поэтому опрашиваем статус вместо того, чтобы
   // держать один долгий запрос — иначе прокси/браузер обрывает соединение
@@ -390,6 +427,7 @@ export default function ZvonariPage() {
         if (status.total_to_process) {
           setSyncProgress({ total: status.total_to_process, processed: status.processed ?? 0 });
         }
+        refreshLiveData();
         if (!status.running) {
           clearInterval(interval);
           setSyncing(false);
@@ -406,7 +444,6 @@ export default function ZvonariPage() {
             setSyncMessage(parts.join(", "));
           }
           loadCallers();
-          loadAggregates(from, to);
         }
       } catch (err) {
         console.error("Sync status poll failed:", err);
