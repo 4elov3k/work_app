@@ -184,6 +184,18 @@ function CallDetailList({
             </option>
           ))}
         </select>
+        {categories.includes(FRAUD_CATEGORY) && (
+          <Button
+            variant={filters.category === FRAUD_CATEGORY ? "destructive" : "outline"}
+            size="sm"
+            className="h-8"
+            onClick={() =>
+              setFilters((f) => ({ ...f, category: f.category === FRAUD_CATEGORY ? "" : FRAUD_CATEGORY }))
+            }
+          >
+            Только фрод
+          </Button>
+        )}
         <select
           value={filters.outcome}
           onChange={(e) => setFilters((f) => ({ ...f, outcome: e.target.value }))}
@@ -299,11 +311,12 @@ interface CallerStats {
   done: number;
   donePct: number;
   outcomes: Record<string, number>;
+  fraudCount: number;
   problemRatio: number;
   isProblem: boolean;
 }
 
-type SortKey = "name" | "total" | "donePct" | "заинтересован" | "отказ" | "problem";
+type SortKey = "name" | "total" | "donePct" | "заинтересован" | "отказ" | "fraud" | "problem";
 
 function KpiCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -606,6 +619,7 @@ export default function ZvonariPage() {
       const total = callCounts[caller.id] ?? 0;
       const statuses = statusCounts[caller.id] ?? {};
       const outcomes = outcomeCounts[caller.id] ?? {};
+      const categories = categoryCounts[caller.id] ?? {};
       const done = statuses.done ?? 0;
       const problems = (statuses.failed ?? 0) + (statuses.no_recording ?? 0);
       const problemRatio = total > 0 ? problems / total : 0;
@@ -615,11 +629,12 @@ export default function ZvonariPage() {
         done,
         donePct: total > 0 ? Math.round((done / total) * 100) : 0,
         outcomes,
+        fraudCount: categories[FRAUD_CATEGORY] ?? 0,
         problemRatio,
         isProblem: total >= PROBLEM_MIN_CALLS && problemRatio >= PROBLEM_RATIO_THRESHOLD,
       };
     });
-  }, [callers, callCounts, statusCounts, outcomeCounts]);
+  }, [callers, callCounts, statusCounts, outcomeCounts, categoryCounts]);
 
   const sortedStats = useMemo(() => {
     const sorted = [...callerStats].sort((a, b) => {
@@ -637,6 +652,9 @@ export default function ZvonariPage() {
         case "заинтересован":
         case "отказ":
           cmp = (a.outcomes[sortKey] ?? 0) - (b.outcomes[sortKey] ?? 0);
+          break;
+        case "fraud":
+          cmp = a.fraudCount - b.fraudCount;
           break;
         case "problem":
           cmp = a.problemRatio - b.problemRatio;
@@ -815,11 +833,15 @@ export default function ZvonariPage() {
                   Отказ
                   <SortIcon column="отказ" />
                 </TableHead>
+                <TableHead className="cursor-pointer select-none text-right" onClick={() => handleSort("fraud")}>
+                  Фрод
+                  <SortIcon column="fraud" />
+                </TableHead>
                 <TableHead className="text-right">Действия</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sortedStats.map(({ caller, total, donePct, outcomes, isProblem }) => {
+              {sortedStats.map(({ caller, total, donePct, outcomes, fraudCount, isProblem }) => {
                 const panel = panels[caller.id] || EMPTY_PANEL;
                 const isExpanded = expandedId === caller.id;
                 return (
@@ -857,6 +879,15 @@ export default function ZvonariPage() {
                       <TableCell className="text-right">{total > 0 ? `${donePct}%` : "—"}</TableCell>
                       <TableCell className="text-right">{outcomes["заинтересован"] ?? 0}</TableCell>
                       <TableCell className="text-right">{outcomes["отказ"] ?? 0}</TableCell>
+                      <TableCell className="text-right">
+                        {fraudCount > 0 ? (
+                          <Badge variant="destructive" className="font-normal">
+                            {fraudCount}
+                          </Badge>
+                        ) : (
+                          0
+                        )}
+                      </TableCell>
                       <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end gap-2">
                           <Button
@@ -876,7 +907,7 @@ export default function ZvonariPage() {
                     </TableRow>
                     {isExpanded && (
                       <TableRow>
-                        <TableCell colSpan={7} className="bg-muted/30">
+                        <TableCell colSpan={8} className="bg-muted/30">
                           <div className="space-y-4 py-2">
                             {panel.distributionLoading ? (
                               <p className="text-sm text-muted-foreground">Загрузка распределения...</p>
