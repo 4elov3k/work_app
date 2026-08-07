@@ -88,11 +88,39 @@
 @layer base {
   * {
     @apply border-border;
- 
+
   }
   body {
     @apply bg-background text-foreground;
- 
+
   }
- 
+
+}
+
+/* Светло-зелёная тема для страницы "Звонари" — переопределяет переменные
+   темы только внутри .zvonari-theme, остальные страницы не затрагивает. */
+.zvonari-theme {
+  --background: 152 45% 97%;
+  --foreground: 165 35% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 165 35% 12%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 165 35% 12%;
+  --primary: 162 72% 28%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 152 40% 93%;
+  --secondary-foreground: 162 50% 20%;
+  --muted: 150 30% 94%;
+  --muted-foreground: 160 12% 40%;
+  --accent: 149 50% 89%;
+  --accent-foreground: 162 60% 20%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 98%;
+  --success: 158 64% 30%;
+  --success-foreground: 0 0% 98%;
+  --warning: 32 95% 38%;
+  --warning-foreground: 0 0% 98%;
+  --border: 150 25% 88%;
+  --input: 150 25% 88%;
+  --ring: 162 72% 28%;
 }

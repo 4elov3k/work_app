@@ -1,5 +1,5 @@
 "use client"
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -16,6 +16,11 @@ import {
   Search,
   Download,
   History,
+  ListChecks,
+  ThumbsUp,
+  ThumbsDown,
+  ShieldAlert,
+  HelpCircle,
 } from "lucide-react";
 
 import { zvonariAPI, Caller, CallerReport, Call, ApiError } from "@/lib/api";
@@ -148,22 +153,25 @@ function CallDetailList({
     return <p className="text-sm text-muted-foreground">Нет звонков за этот период</p>;
   }
 
+  const selectClass =
+    "h-8 rounded-md border border-input bg-card px-2 text-sm transition-colors hover:border-ring/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-muted/40 p-2">
         <div className="relative">
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Поиск по тексту или номеру"
             value={filters.search}
             onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
-            className="h-8 w-56 pl-7 text-sm"
+            className="h-8 w-56 bg-card pl-7 text-sm"
           />
         </div>
         <select
           value={filters.status}
           onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
-          className="h-8 rounded-md border border-input bg-transparent px-2 text-sm"
+          className={selectClass}
         >
           <option value="">Все статусы</option>
           {STATUS_ORDER.map((s) => (
@@ -175,7 +183,7 @@ function CallDetailList({
         <select
           value={filters.category}
           onChange={(e) => setFilters((f) => ({ ...f, category: e.target.value }))}
-          className="h-8 rounded-md border border-input bg-transparent px-2 text-sm"
+          className={selectClass}
         >
           <option value="">Все типы звонков</option>
           {categories.map((c) => (
@@ -188,18 +196,19 @@ function CallDetailList({
           <Button
             variant={filters.category === FRAUD_CATEGORY ? "destructive" : "outline"}
             size="sm"
-            className="h-8"
+            className="h-8 gap-1.5 bg-card transition-transform active:scale-95"
             onClick={() =>
               setFilters((f) => ({ ...f, category: f.category === FRAUD_CATEGORY ? "" : FRAUD_CATEGORY }))
             }
           >
+            <ShieldAlert className="h-3.5 w-3.5" />
             Только фрод
           </Button>
         )}
         <select
           value={filters.outcome}
           onChange={(e) => setFilters((f) => ({ ...f, outcome: e.target.value }))}
-          className="h-8 rounded-md border border-input bg-transparent px-2 text-sm"
+          className={selectClass}
         >
           <option value="">Все исходы</option>
           {outcomes.map((o) => (
@@ -211,7 +220,7 @@ function CallDetailList({
         <select
           value={filters.direction}
           onChange={(e) => setFilters((f) => ({ ...f, direction: e.target.value }))}
-          className="h-8 rounded-md border border-input bg-transparent px-2 text-sm"
+          className={selectClass}
         >
           <option value="">Все направления</option>
           {Object.entries(DIRECTION_LABELS).map(([key, label]) => (
@@ -221,11 +230,16 @@ function CallDetailList({
           ))}
         </select>
         {(filters.status || filters.category || filters.outcome || filters.direction || filters.search) && (
-          <Button variant="ghost" size="sm" className="h-8" onClick={() => setFilters(EMPTY_FILTERS)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-muted-foreground transition-colors hover:text-foreground"
+            onClick={() => setFilters(EMPTY_FILTERS)}
+          >
             Сбросить
           </Button>
         )}
-        <span className="text-xs text-muted-foreground">
+        <span className="ml-auto text-xs text-muted-foreground">
           {filtered.length} из {calls.length}
         </span>
       </div>
@@ -236,27 +250,34 @@ function CallDetailList({
         <div className="space-y-2">
           {filtered.map((call) => {
             const isRetranscribing = retranscribingIds.has(call.id);
+            const isFraud = call.analytics_json?.category === FRAUD_CATEGORY;
             return (
-              <details key={call.id} className="rounded border p-2">
+              <details
+                key={call.id}
+                className={`group rounded-md border p-2 transition-colors hover:bg-accent/40 ${
+                  isFraud ? "border-l-4 border-l-destructive" : ""
+                }`}
+              >
                 <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-sm">
                   <span className="text-muted-foreground">{new Date(call.started_at).toLocaleString("ru-RU")}</span>
                   <Badge variant="outline">{DIRECTION_LABELS[call.direction] || call.direction}</Badge>
                   <span className="text-muted-foreground">{formatDuration(call.duration_sec)}</span>
                   {call.analytics_json?.category && (
-                    <Badge variant={call.analytics_json.category === FRAUD_CATEGORY ? "destructive" : "outline"}>
+                    <Badge variant={isFraud ? "destructive" : "outline"} className="gap-1">
+                      {isFraud && <ShieldAlert className="h-3 w-3" />}
                       {call.analytics_json.category}
                     </Badge>
                   )}
                   {call.analytics_json?.outcome && <Badge variant="secondary">{call.analytics_json.outcome}</Badge>}
                   <span
-                    className={`text-xs ${call.transcript_status === "done" ? "text-muted-foreground" : "text-amber-600"}`}
+                    className={`text-xs ${call.transcript_status === "done" ? "text-muted-foreground" : "text-warning"}`}
                   >
                     {STATUS_LABELS[call.transcript_status] || call.transcript_status}
                   </span>
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="ml-auto h-7 px-2"
+                    className="ml-auto h-7 px-2 transition-transform active:scale-95"
                     disabled={isRetranscribing}
                     onClick={(e) => {
                       e.preventDefault();
@@ -267,7 +288,7 @@ function CallDetailList({
                     <span className="ml-1">Транскрибировать</span>
                   </Button>
                 </summary>
-                <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
+                <p className="mt-2 whitespace-pre-wrap rounded-md bg-muted/50 p-2 text-sm text-muted-foreground">
                   {call.transcript_text || "Транскрипт недоступен"}
                 </p>
               </details>
@@ -318,12 +339,39 @@ interface CallerStats {
 
 type SortKey = "name" | "total" | "donePct" | "заинтересован" | "отказ" | "fraud" | "problem";
 
-function KpiCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
+const KPI_ACCENTS = {
+  neutral: "border-l-border",
+  primary: "border-l-primary",
+  positive: "border-l-success",
+  negative: "border-l-destructive",
+  warning: "border-l-warning",
+} as const;
+
+function KpiCard({
+  label,
+  value,
+  hint,
+  icon,
+  accent = "neutral",
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  icon?: ReactNode;
+  accent?: keyof typeof KPI_ACCENTS;
+}) {
   return (
-    <Card>
+    <Card
+      className={`border-l-4 ${KPI_ACCENTS[accent]} shadow-sm transition-shadow hover:shadow-md`}
+    >
       <CardContent className="pt-6">
-        <div className="text-2xl font-bold tracking-tight">{value}</div>
-        <div className="text-sm text-muted-foreground">{label}</div>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <div className="text-2xl font-bold tracking-tight">{value}</div>
+            <div className="text-sm text-muted-foreground">{label}</div>
+          </div>
+          {icon && <span className="text-muted-foreground/60">{icon}</span>}
+        </div>
         {hint && <div className="mt-1 text-xs text-muted-foreground">{hint}</div>}
       </CardContent>
     </Card>
@@ -690,150 +738,235 @@ export default function ZvonariPage() {
   }, [callCounts, statusCounts, outcomeCounts, categoryCounts]);
 
   return (
-    <div className="container mx-auto py-8 px-4 max-w-6xl">
-      <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div>
-          <div className="mb-2">
-            <Link href="/">
-              <Button variant="outline">
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Главная
-              </Button>
-            </Link>
-          </div>
-          <h1 className="text-4xl font-bold tracking-tight mb-2">Звонари</h1>
-          <p className="text-muted-foreground">
-            Звонки из OnlinePBX, транскрибация (Whisper локально) и аналитика по запросу через Hermes
-          </p>
-        </div>
-      </div>
-
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle className="text-lg">Синхронизация и анализ</CardTitle>
-          <CardDescription>Период для загрузки CDR, транскрибации и классификации звонков</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label className="mb-1 block text-sm text-muted-foreground">С</label>
-              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-40" />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm text-muted-foreground">По</label>
-              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" />
-            </div>
-            <div className="flex gap-1">
-              {PERIOD_PRESETS.map((preset) => (
-                <Button
-                  key={preset.label}
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setFrom(preset.from());
-                    setTo(preset.to());
-                  }}
-                >
-                  {preset.label}
+    <div className="zvonari-theme min-h-screen bg-background">
+      <div className="container mx-auto max-w-6xl px-4 py-8">
+        <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div>
+            <div className="mb-3">
+              <Link href="/">
+                <Button variant="outline" size="sm" className="transition-colors">
+                  <ArrowLeft className="mr-2 h-4 w-4" />
+                  Главная
                 </Button>
-              ))}
+              </Link>
             </div>
-            <div className="ml-auto flex flex-wrap gap-2">
-              <Button onClick={handleSync} disabled={syncing}>
-                <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-                Синхронизировать
-              </Button>
-              <Button variant="outline" onClick={handleAnalyze} disabled={syncing}>
-                <Sparkles className="mr-2 h-4 w-4" />
-                Анализировать
-              </Button>
-              <Button variant="outline" onClick={handleRetryFailed} disabled={syncing}>
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Повторить неудачные
-              </Button>
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <Phone className="h-5 w-5" />
+              </span>
+              <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Звонари</h1>
             </div>
+            <p className="mt-2 text-muted-foreground">
+              Звонки из OnlinePBX, транскрибация (Whisper локально) и аналитика по запросу через Hermes
+            </p>
           </div>
-          {syncing && syncProgress && syncProgress.total > 0 && (
-            <div className="mt-3">
-              <div className="mb-1 flex justify-between text-xs text-muted-foreground">
-                <span>Обработка звонков</span>
-                <span>
-                  {syncProgress.processed} / {syncProgress.total}
-                </span>
-              </div>
-              <div className="h-2 rounded bg-muted overflow-hidden">
-                <div
-                  className="h-full bg-primary transition-all"
-                  style={{ width: `${Math.min(100, (syncProgress.processed / syncProgress.total) * 100)}%` }}
+        </div>
+
+        <Card className="mb-6 border-border/70 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-lg">Синхронизация и анализ</CardTitle>
+            <CardDescription>Период для загрузки CDR, транскрибации и классификации звонков</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="mb-1 block text-sm text-muted-foreground">С</label>
+                <Input
+                  type="date"
+                  value={from}
+                  onChange={(e) => setFrom(e.target.value)}
+                  className="w-40 transition-shadow focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
+              <div>
+                <label className="mb-1 block text-sm text-muted-foreground">По</label>
+                <Input
+                  type="date"
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                  className="w-40 transition-shadow focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+              <div className="flex gap-1 rounded-lg bg-muted p-1">
+                {PERIOD_PRESETS.map((preset) => {
+                  const active = from === preset.from() && to === preset.to();
+                  return (
+                    <Button
+                      key={preset.label}
+                      variant={active ? "default" : "ghost"}
+                      size="sm"
+                      className={`transition-colors ${active ? "" : "hover:bg-background"}`}
+                      onClick={() => {
+                        setFrom(preset.from());
+                        setTo(preset.to());
+                      }}
+                    >
+                      {preset.label}
+                    </Button>
+                  );
+                })}
+              </div>
+              <div className="ml-auto flex flex-wrap gap-2">
+                <Button onClick={handleSync} disabled={syncing} className="transition-transform active:scale-95">
+                  <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+                  Синхронизировать
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleAnalyze}
+                  disabled={syncing}
+                  className="transition-transform active:scale-95"
+                >
+                  <Sparkles className="mr-2 h-4 w-4" />
+                  Анализировать
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={handleRetryFailed}
+                  disabled={syncing}
+                  className="text-muted-foreground transition-transform hover:text-foreground active:scale-95"
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Повторить неудачные
+                </Button>
+              </div>
             </div>
-          )}
-          {syncError && <p className="mt-3 text-sm text-destructive">{syncError}</p>}
-          {syncMessage && <p className="mt-3 text-sm text-muted-foreground">{syncMessage}</p>}
-        </CardContent>
-      </Card>
+            {syncing && (
+              <div className="mt-4">
+                <div className="mb-1 flex justify-between text-xs text-muted-foreground">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Обработка звонков
+                  </span>
+                  {syncProgress && syncProgress.total > 0 && (
+                    <span>
+                      {syncProgress.processed} / {syncProgress.total} (
+                      {Math.min(100, Math.round((syncProgress.processed / syncProgress.total) * 100))}%)
+                    </span>
+                  )}
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className={`h-full rounded-full bg-primary transition-all duration-500 ${
+                      !syncProgress || syncProgress.total === 0 ? "w-1/3 animate-pulse" : ""
+                    }`}
+                    style={
+                      syncProgress && syncProgress.total > 0
+                        ? { width: `${Math.min(100, (syncProgress.processed / syncProgress.total) * 100)}%` }
+                        : undefined
+                    }
+                  />
+                </div>
+              </div>
+            )}
+            {syncError && (
+              <p className="mt-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{syncError}</p>
+            )}
+            {syncMessage && !syncing && <p className="mt-3 text-sm text-muted-foreground">{syncMessage}</p>}
+          </CardContent>
+        </Card>
 
       {callers.length > 0 && (
         <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-6">
-          <KpiCard label="Всего звонков" value={String(kpi.totalCalls)} />
+          <KpiCard
+            label="Всего звонков"
+            value={String(kpi.totalCalls)}
+            icon={<Phone className="h-5 w-5" />}
+            accent="primary"
+          />
           <KpiCard
             label="Готово"
             value={kpi.totalCalls > 0 ? `${Math.round((kpi.totalDone / kpi.totalCalls) * 100)}%` : "—"}
             hint={`${kpi.totalDone} из ${kpi.totalCalls}`}
+            icon={<ListChecks className="h-5 w-5" />}
+            accent="primary"
           />
-          <KpiCard label="Заинтересован" value={String(kpi.totalInterested)} />
-          <KpiCard label="Отказ" value={String(kpi.totalRefused)} />
+          <KpiCard
+            label="Заинтересован"
+            value={String(kpi.totalInterested)}
+            icon={<ThumbsUp className="h-5 w-5" />}
+            accent="positive"
+          />
+          <KpiCard
+            label="Отказ"
+            value={String(kpi.totalRefused)}
+            icon={<ThumbsDown className="h-5 w-5" />}
+            accent="warning"
+          />
           <KpiCard
             label="Автоответчик (фрод)"
             value={String(kpi.totalFraud)}
             hint={kpi.totalFraud > 0 ? "не сброшен вовремя" : undefined}
+            icon={<ShieldAlert className="h-5 w-5" />}
+            accent="negative"
           />
           <KpiCard
             label="Не проанализировано"
             value={String(kpi.totalUnanalyzed)}
             hint={kpi.totalUnanalyzed > 0 ? "нажмите «Анализировать»" : undefined}
+            icon={<HelpCircle className="h-5 w-5" />}
+            accent="neutral"
           />
         </div>
       )}
 
-      {listError && <p className="mb-4 text-sm text-destructive">{listError}</p>}
+      {listError && (
+        <p className="mb-4 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{listError}</p>
+      )}
       {loadingCallers ? (
-        <p className="text-muted-foreground">Загрузка...</p>
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Загрузка...
+        </div>
       ) : callers.length === 0 ? (
         <p className="text-muted-foreground">
           Звонарей пока нет — нажмите «Синхронизировать», чтобы подтянуть список из OnlinePBX.
         </p>
       ) : (
-        <Card>
+        <Card className="overflow-hidden border-border/70 shadow-sm">
           <Table>
             <TableHeader>
-              <TableRow>
+              <TableRow className="hover:bg-transparent">
                 <TableHead className="w-8" />
-                <TableHead className="cursor-pointer select-none" onClick={() => handleSort("name")}>
+                <TableHead
+                  className="cursor-pointer select-none transition-colors hover:text-foreground"
+                  onClick={() => handleSort("name")}
+                >
                   Звонарь
                   <SortIcon column="name" />
                 </TableHead>
-                <TableHead className="cursor-pointer select-none text-right" onClick={() => handleSort("total")}>
+                <TableHead
+                  className="cursor-pointer select-none text-right transition-colors hover:text-foreground"
+                  onClick={() => handleSort("total")}
+                >
                   Звонков
                   <SortIcon column="total" />
                 </TableHead>
-                <TableHead className="cursor-pointer select-none text-right" onClick={() => handleSort("donePct")}>
+                <TableHead
+                  className="cursor-pointer select-none text-right transition-colors hover:text-foreground"
+                  onClick={() => handleSort("donePct")}
+                >
                   Готово
                   <SortIcon column="donePct" />
                 </TableHead>
                 <TableHead
-                  className="cursor-pointer select-none text-right"
+                  className="cursor-pointer select-none text-right transition-colors hover:text-foreground"
                   onClick={() => handleSort("заинтересован")}
                 >
                   Заинтересован
                   <SortIcon column="заинтересован" />
                 </TableHead>
-                <TableHead className="cursor-pointer select-none text-right" onClick={() => handleSort("отказ")}>
+                <TableHead
+                  className="cursor-pointer select-none text-right transition-colors hover:text-foreground"
+                  onClick={() => handleSort("отказ")}
+                >
                   Отказ
                   <SortIcon column="отказ" />
                 </TableHead>
-                <TableHead className="cursor-pointer select-none text-right" onClick={() => handleSort("fraud")}>
+                <TableHead
+                  className="cursor-pointer select-none text-right transition-colors hover:text-foreground"
+                  onClick={() => handleSort("fraud")}
+                >
                   Фрод
                   <SortIcon column="fraud" />
                 </TableHead>
@@ -847,11 +980,17 @@ export default function ZvonariPage() {
                 return (
                   <Fragment key={caller.id}>
                     <TableRow
-                      className="cursor-pointer"
+                      className={`cursor-pointer transition-colors hover:bg-accent/60 ${
+                        isExpanded ? "bg-accent/40" : ""
+                      }`}
                       onClick={() => toggleExpand(caller.id)}
                     >
                       <TableCell>
-                        <ChevronRight className={`h-4 w-4 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                        <ChevronRight
+                          className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${
+                            isExpanded ? "rotate-90 text-primary" : ""
+                          }`}
+                        />
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
@@ -876,16 +1015,21 @@ export default function ZvonariPage() {
                           {total}
                         </span>
                       </TableCell>
-                      <TableCell className="text-right">{total > 0 ? `${donePct}%` : "—"}</TableCell>
-                      <TableCell className="text-right">{outcomes["заинтересован"] ?? 0}</TableCell>
-                      <TableCell className="text-right">{outcomes["отказ"] ?? 0}</TableCell>
+                      <TableCell className="text-right tabular-nums">{total > 0 ? `${donePct}%` : "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums text-success">
+                        {outcomes["заинтересован"] ?? 0}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">
+                        {outcomes["отказ"] ?? 0}
+                      </TableCell>
                       <TableCell className="text-right">
                         {fraudCount > 0 ? (
-                          <Badge variant="destructive" className="font-normal">
+                          <Badge variant="destructive" className="gap-1 font-normal">
+                            <ShieldAlert className="h-3 w-3" />
                             {fraudCount}
                           </Badge>
                         ) : (
-                          0
+                          <span className="text-muted-foreground">0</span>
                         )}
                       </TableCell>
                       <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
@@ -895,33 +1039,57 @@ export default function ZvonariPage() {
                             size="sm"
                             onClick={() => handleRequestReport(caller.id)}
                             disabled={panel.reportLoading}
+                            className="transition-transform active:scale-95"
                           >
-                            <FileBarChart className="mr-2 h-4 w-4" />
+                            {panel.reportLoading ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <FileBarChart className="mr-2 h-4 w-4" />
+                            )}
                             {panel.reportLoading ? "Формирование..." : "Отчёт"}
                           </Button>
-                          <Button variant="ghost" size="sm" onClick={() => handleDownloadCsv(caller.id)}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDownloadCsv(caller.id)}
+                            className="transition-transform hover:text-primary active:scale-95"
+                            title="Скачать CSV"
+                          >
                             <Download className="h-4 w-4" />
                           </Button>
                         </div>
                       </TableCell>
                     </TableRow>
                     {isExpanded && (
-                      <TableRow>
-                        <TableCell colSpan={8} className="bg-muted/30">
-                          <div className="space-y-4 py-2">
+                      <TableRow className="hover:bg-transparent">
+                        <TableCell colSpan={8} className="bg-accent/20">
+                          <div className="space-y-3 py-3">
                             {panel.distributionLoading ? (
-                              <p className="text-sm text-muted-foreground">Загрузка распределения...</p>
+                              <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-card p-3 text-sm text-muted-foreground">
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Загрузка распределения...
+                              </div>
                             ) : panel.distribution ? (
-                              <div>
-                                <h4 className="mb-2 text-sm font-medium">Распределение звонков за период</h4>
+                              <div className="rounded-lg border border-border/70 bg-card p-3">
+                                <h4 className="mb-2 flex items-center gap-1.5 text-sm font-medium">
+                                  <ListChecks className="h-4 w-4 text-primary" />
+                                  Распределение звонков за период
+                                </h4>
                                 <DistributionBars distribution={panel.distribution} />
                               </div>
                             ) : null}
 
-                            {panel.reportError && <p className="text-sm text-destructive">{panel.reportError}</p>}
+                            {panel.reportError && (
+                              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                                {panel.reportError}
+                              </p>
+                            )}
                             {panel.report && (
-                              <div>
-                                <h4 className="mb-2 text-sm font-medium">Анализ за период</h4>
+                              <div className="rounded-lg border border-border/70 bg-card p-3">
+                                <h4 className="mb-2 flex items-center gap-1.5 text-sm font-medium">
+                                  <FileBarChart className="h-4 w-4 text-primary" />
+                                  Анализ за период
+                                </h4>
                                 <p className="whitespace-pre-wrap text-sm text-muted-foreground">
                                   {panel.report.summary_text}
                                 </p>
@@ -935,6 +1103,7 @@ export default function ZvonariPage() {
                                   size="sm"
                                   onClick={() => handleLoadHistory(caller.id)}
                                   disabled={panel.historyLoading}
+                                  className="transition-transform active:scale-95"
                                 >
                                   {panel.historyLoading ? (
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -946,12 +1115,18 @@ export default function ZvonariPage() {
                               ) : panel.history.length === 0 ? (
                                 <p className="text-sm text-muted-foreground">Отчётов по этому звонарю ещё не было</p>
                               ) : (
-                                <div>
-                                  <h4 className="mb-2 text-sm font-medium">История отчётов ({panel.history.length})</h4>
+                                <div className="rounded-lg border border-border/70 bg-card p-3">
+                                  <h4 className="mb-2 flex items-center gap-1.5 text-sm font-medium">
+                                    <History className="h-4 w-4 text-primary" />
+                                    История отчётов ({panel.history.length})
+                                  </h4>
                                   <div className="space-y-2">
                                     {panel.history.map((r) => (
-                                      <details key={r.id} className="rounded border p-2">
-                                        <summary className="cursor-pointer text-sm text-muted-foreground">
+                                      <details
+                                        key={r.id}
+                                        className="group rounded-md border border-border/70 p-2 transition-colors hover:bg-accent/40"
+                                      >
+                                        <summary className="cursor-pointer text-sm text-muted-foreground group-open:text-foreground">
                                           {new Date(r.requested_at).toLocaleString("ru-RU")} — {r.period_start} — {r.period_end}
                                         </summary>
                                         <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
@@ -971,6 +1146,7 @@ export default function ZvonariPage() {
                                   size="sm"
                                   onClick={() => handleLoadCalls(caller.id)}
                                   disabled={panel.callsLoading}
+                                  className="transition-transform active:scale-95"
                                 >
                                   {panel.callsLoading ? (
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -980,9 +1156,16 @@ export default function ZvonariPage() {
                                   Показать звонки
                                 </Button>
                               ) : (
-                                <div>
-                                  <h4 className="mb-2 text-sm font-medium">Детализация по звонкам ({panel.calls.length})</h4>
-                                  {panel.callsError && <p className="mb-2 text-sm text-destructive">{panel.callsError}</p>}
+                                <div className="rounded-lg border border-border/70 bg-card p-3">
+                                  <h4 className="mb-2 flex items-center gap-1.5 text-sm font-medium">
+                                    <Phone className="h-4 w-4 text-primary" />
+                                    Детализация по звонкам ({panel.calls.length})
+                                  </h4>
+                                  {panel.callsError && (
+                                    <p className="mb-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                                      {panel.callsError}
+                                    </p>
+                                  )}
                                   <CallDetailList
                                     calls={panel.calls}
                                     retranscribingIds={retranscribingIds}
@@ -1002,6 +1185,7 @@ export default function ZvonariPage() {
           </Table>
         </Card>
       )}
+      </div>
     </div>
   );
 }
