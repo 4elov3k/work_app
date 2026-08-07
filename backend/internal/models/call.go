@@ -50,6 +50,11 @@ type CallerReportResponse struct {
 	Data CallerReport `json:"data"`
 }
 
+// CallerReportListResponse представляет ответ со списком прошлых отчётов по звонарю
+type CallerReportListResponse struct {
+	Data []CallerReport `json:"data"`
+}
+
 // CallDistributionResponse представляет распределение звонков по категориям
 // (аналитика от Hermes) за запрошенный период
 type CallDistributionResponse struct {

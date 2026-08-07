@@ -488,6 +488,29 @@ func (s *Service) RequestCallerReport(ctx context.Context, callerID, period stri
 	return report, nil
 }
 
+// GetOrGenerateReport reuses an existing report for the exact same
+// caller+period if one is already in the DB, generating a fresh one via
+// Hermes only when none exists — so an export/background read never
+// re-pays the LLM cost for a period someone already analyzed. The explicit
+// "Отчёт" button in the UI calls RequestCallerReport directly instead
+// (always fresh), since a deliberate click implies "give me the current
+// picture," not "reuse whatever's cached."
+func (s *Service) GetOrGenerateReport(ctx context.Context, callerID, period string, from, to time.Time) (*models.CallerReport, error) {
+	periodStart := from.Format("2006-01-02")
+	periodEnd := to.Format("2006-01-02")
+	if existing, err := s.db.GetLatestCallerReport(ctx, callerID, periodStart, periodEnd); err == nil && existing != nil {
+		return existing, nil
+	}
+	return s.RequestCallerReport(ctx, callerID, period, from, to)
+}
+
+// ListReports returns a caller's past reports, most recent first — the
+// history view so previously generated analyses stay reachable instead of
+// only existing as rows nobody reads back.
+func (s *Service) ListReports(ctx context.Context, callerID string, limit int) ([]models.CallerReport, error) {
+	return s.db.ListCallerReports(ctx, callerID, limit)
+}
+
 // CallCounts returns how many synced calls each caller has in [from, to) —
 // one query for all callers, for the caller-list UI to show a count badge
 // per card without a request per caller.
@@ -527,12 +550,12 @@ func (s *Service) CallDistribution(ctx context.Context, callerID string, from, t
 	}
 	dist := map[string]int{}
 	for _, c := range calls {
-		dist[extractOutcome(c.AnalyticsJSON)]++
+		dist[ExtractOutcome(c.AnalyticsJSON)]++
 	}
 	return dist, nil
 }
 
-func extractOutcome(raw json.RawMessage) string {
+func ExtractOutcome(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return "не проанализировано"
 	}

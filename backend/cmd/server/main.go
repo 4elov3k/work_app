@@ -162,6 +162,8 @@ func main() {
 		r.Post("/zvonari/calls/{id}/transcribe", h.RetranscribeCall)
 		r.Get("/zvonari/callers/{id}/distribution", h.GetCallerCallDistribution)
 		r.Post("/zvonari/callers/{id}/report", h.RequestCallerReport)
+		r.Get("/zvonari/callers/{id}/reports", h.GetCallerReportHistory)
+		r.Get("/zvonari/callers/{id}/export.csv", h.ExportCallerCallsCSV)
 	})
 
 	// Запуск сервера
