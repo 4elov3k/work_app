@@ -366,11 +366,11 @@ function KpiCard({
     >
       <CardContent className="pt-6">
         <div className="flex items-start justify-between gap-2">
-          <div>
+          <div className="min-w-0">
             <div className="text-2xl font-bold tracking-tight">{value}</div>
-            <div className="text-sm text-muted-foreground">{label}</div>
+            <div className="break-words text-sm text-muted-foreground">{label}</div>
           </div>
-          {icon && <span className="text-muted-foreground/60">{icon}</span>}
+          {icon && <span className="shrink-0 text-muted-foreground/60">{icon}</span>}
         </div>
         {hint && <div className="mt-1 text-xs text-muted-foreground">{hint}</div>}
       </CardContent>
