@@ -1101,6 +1101,7 @@ export interface SyncCallsResult {
 
 export interface SyncStatus {
   running: boolean;
+  paused: boolean;
   started_at?: string;
   finished_at?: string;
   total_to_process?: number;
@@ -1128,6 +1129,19 @@ export const zvonariAPI = {
   // Текущий статус фоновой синхронизации (последний запуск/выполняется ли сейчас)
   getSyncStatus: async (): Promise<SingleResponse<SyncStatus>> => {
     const response = await fetch(`${API_BASE}/zvonari/sync/status`);
+    return handleResponse<SingleResponse<SyncStatus>>(response);
+  },
+
+  // Приостановить текущую фоновую задачу перед следующим звонком/батчем —
+  // прогресс не теряется, можно продолжить с того же места через resumeSync.
+  pauseSync: async (): Promise<SingleResponse<SyncStatus>> => {
+    const response = await fetch(`${API_BASE}/zvonari/sync/pause`, { method: 'POST' });
+    return handleResponse<SingleResponse<SyncStatus>>(response);
+  },
+
+  // Снять паузу — задача продолжает с того же места.
+  resumeSync: async (): Promise<SingleResponse<SyncStatus>> => {
+    const response = await fetch(`${API_BASE}/zvonari/sync/resume`, { method: 'POST' });
     return handleResponse<SingleResponse<SyncStatus>>(response);
   },
 

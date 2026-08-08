@@ -21,6 +21,8 @@ import {
   ThumbsDown,
   ShieldAlert,
   HelpCircle,
+  Pause,
+  Play,
 } from "lucide-react";
 
 import { zvonariAPI, Caller, CallerReport, Call, ApiError } from "@/lib/api";
@@ -387,6 +389,8 @@ export default function ZvonariPage() {
   const [to, setTo] = useState(todayISO());
 
   const [syncing, setSyncing] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [pausing, setPausing] = useState(false);
   const [syncError, setSyncError] = useState("");
   const [syncMessage, setSyncMessage] = useState("");
   const [syncProgress, setSyncProgress] = useState<{ total: number; processed: number } | null>(null);
@@ -488,10 +492,12 @@ export default function ZvonariPage() {
         if (status.total_to_process) {
           setSyncProgress({ total: status.total_to_process, processed: status.processed ?? 0 });
         }
+        setPaused(status.paused ?? false);
         refreshLiveData();
         if (!status.running) {
           clearInterval(interval);
           setSyncing(false);
+          setPaused(false);
           setSyncProgress(null);
           if (status.error) {
             setSyncError(status.error);
@@ -540,6 +546,7 @@ export default function ZvonariPage() {
     startMessage: string
   ) => {
     setSyncing(true);
+    setPaused(false);
     setSyncError("");
     setSyncMessage(startMessage);
     try {
@@ -572,6 +579,25 @@ export default function ZvonariPage() {
       () => zvonariAPI.analyzeCalls(period.from, period.to),
       "Анализ запущен — классифицируем готовые транскрипты..."
     );
+
+  const handlePauseResume = async () => {
+    setPausing(true);
+    try {
+      if (paused) {
+        const response = await zvonariAPI.resumeSync();
+        setPaused(response.data.paused);
+        setSyncMessage("Продолжаем...");
+      } else {
+        const response = await zvonariAPI.pauseSync();
+        setPaused(response.data.paused);
+        setSyncMessage("Приостановлено — прогресс сохранён, можно продолжить в любой момент.");
+      }
+    } catch (err) {
+      console.error("Pause/resume failed:", err);
+    } finally {
+      setPausing(false);
+    }
+  };
 
   const updatePanel = (callerId: string, patch: Partial<CallerPanelState>) => {
     setPanels((current) => ({ ...current, [callerId]: { ...(current[callerId] || EMPTY_PANEL), ...patch } }));
@@ -807,10 +833,30 @@ export default function ZvonariPage() {
                 })}
               </div>
               <div className="ml-auto flex flex-wrap gap-2">
-                <Button onClick={handleSync} disabled={syncing} className="transition-transform active:scale-95">
-                  <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-                  Синхронизировать
-                </Button>
+                {syncing ? (
+                  <Button
+                    onClick={handlePauseResume}
+                    disabled={pausing}
+                    variant={paused ? "default" : "outline"}
+                    className={`transition-transform active:scale-95 ${
+                      paused ? "" : "border-warning text-warning hover:bg-warning/10 hover:text-warning"
+                    }`}
+                  >
+                    {pausing ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : paused ? (
+                      <Play className="mr-2 h-4 w-4" />
+                    ) : (
+                      <Pause className="mr-2 h-4 w-4" />
+                    )}
+                    {paused ? "Продолжить" : "Пауза"}
+                  </Button>
+                ) : (
+                  <Button onClick={handleSync} className="transition-transform active:scale-95">
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                    Синхронизировать
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   onClick={handleAnalyze}
@@ -834,9 +880,9 @@ export default function ZvonariPage() {
             {syncing && (
               <div className="mt-4">
                 <div className="mb-1 flex justify-between text-xs text-muted-foreground">
-                  <span className="inline-flex items-center gap-1.5">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Обработка звонков
+                  <span className={`inline-flex items-center gap-1.5 ${paused ? "text-warning" : ""}`}>
+                    {paused ? <Pause className="h-3 w-3" /> : <Loader2 className="h-3 w-3 animate-spin" />}
+                    {paused ? "На паузе" : "Обработка звонков"}
                   </span>
                   {syncProgress && syncProgress.total > 0 && (
                     <span>
@@ -847,9 +893,9 @@ export default function ZvonariPage() {
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-muted">
                   <div
-                    className={`h-full rounded-full bg-primary transition-all duration-500 ${
-                      !syncProgress || syncProgress.total === 0 ? "w-1/3 animate-pulse" : ""
-                    }`}
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      paused ? "bg-warning" : "bg-primary"
+                    } ${!syncProgress || syncProgress.total === 0 ? "w-1/3 animate-pulse" : ""}`}
                     style={
                       syncProgress && syncProgress.total > 0
                         ? { width: `${Math.min(100, (syncProgress.processed / syncProgress.total) * 100)}%` }

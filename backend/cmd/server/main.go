@@ -153,6 +153,8 @@ func main() {
 		r.Get("/zvonari/callers", h.GetCallers)
 		r.Post("/zvonari/sync", h.SyncZvonariCalls)
 		r.Get("/zvonari/sync/status", h.GetZvonariSyncStatus)
+		r.Post("/zvonari/sync/pause", h.PauseZvonariSync)
+		r.Post("/zvonari/sync/resume", h.ResumeZvonariSync)
 		r.Post("/zvonari/calls/retry-failed", h.RetryFailedCalls)
 		r.Post("/zvonari/calls/analyze", h.AnalyzeCalls)
 		r.Get("/zvonari/calls/status-counts", h.GetCallStatusCounts)

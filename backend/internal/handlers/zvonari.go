@@ -75,6 +75,21 @@ func (h *Handlers) GetZvonariSyncStatus(w http.ResponseWriter, r *http.Request) 
 	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": status})
 }
 
+// PauseZvonariSync обрабатывает POST /api/zvonari/sync/pause — приостанавливает
+// текущую фоновую задачу (синк/повтор/анализ) перед следующим звонком/батчем,
+// не теряя уже сделанный прогресс.
+func (h *Handlers) PauseZvonariSync(w http.ResponseWriter, r *http.Request) {
+	h.zvonari.Pause()
+	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": h.zvonari.GetSyncStatus()})
+}
+
+// ResumeZvonariSync обрабатывает POST /api/zvonari/sync/resume — снимает паузу,
+// задача продолжает с того звонка/батча, на котором остановилась.
+func (h *Handlers) ResumeZvonariSync(w http.ResponseWriter, r *http.Request) {
+	h.zvonari.Resume()
+	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": h.zvonari.GetSyncStatus()})
+}
+
 // RetryFailedCalls обрабатывает POST /api/zvonari/calls/retry-failed?from=&to=
 // Массово (пере)запускает транскрибацию+аналитику для всех звонков за период
 // со статусом failed/no_recording/pending/transcribing — работает в фоне,

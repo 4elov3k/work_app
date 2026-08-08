@@ -28,6 +28,15 @@ type Service struct {
 
 	syncMu     sync.Mutex
 	syncStatus SyncStatus
+
+	// Pause state for the currently running background job — separate lock
+	// from syncMu so GetSyncStatus never has to take both at once. Pausing
+	// doesn't cancel anything in flight (maxConcurrentProcessing is 1
+	// anyway); it just stops the loop from starting the *next* call/batch
+	// until resumed, via a blocking receive on resumeCh.
+	pauseMu  sync.Mutex
+	paused   bool
+	resumeCh chan struct{}
 }
 
 func NewService(db *database.DB, pbxClient *pbx.Client, transcribeClient *transcribe.Client, callreportClient *callreport.Client) *Service {
@@ -46,6 +55,7 @@ func (s *Service) Configured() bool {
 // (Processed==0 vs >0) is all the UI needs.
 type SyncStatus struct {
 	Running        bool        `json:"running"`
+	Paused         bool        `json:"paused"`
 	StartedAt      *time.Time  `json:"started_at,omitempty"`
 	FinishedAt     *time.Time  `json:"finished_at,omitempty"`
 	TotalToProcess int         `json:"total_to_process,omitempty"`
@@ -70,6 +80,10 @@ func (s *Service) startBackgroundJob(job func(ctx context.Context) (*SyncResult,
 	startedAt := time.Now()
 	s.syncStatus = SyncStatus{Running: true, StartedAt: &startedAt}
 	s.syncMu.Unlock()
+
+	s.pauseMu.Lock()
+	s.paused = false
+	s.pauseMu.Unlock()
 
 	go func() {
 		result, err := job(context.Background())
@@ -112,8 +126,59 @@ func (s *Service) StartRetryFailed(from, to time.Time) bool {
 // GetSyncStatus returns a snapshot of the current/last sync run.
 func (s *Service) GetSyncStatus() SyncStatus {
 	s.syncMu.Lock()
-	defer s.syncMu.Unlock()
-	return s.syncStatus
+	status := s.syncStatus
+	s.syncMu.Unlock()
+	status.Paused = s.IsPaused()
+	return status
+}
+
+// Pause stops the running background job (sync/retry/analyze) from starting
+// its next call or batch, without cancelling anything already in flight or
+// losing progress — each call/batch is already durably written to the DB as
+// it completes, so pausing between iterations is always safe to resume from.
+func (s *Service) Pause() {
+	s.pauseMu.Lock()
+	defer s.pauseMu.Unlock()
+	if !s.paused {
+		s.paused = true
+		s.resumeCh = make(chan struct{})
+	}
+}
+
+// Resume releases a paused job to continue from where it left off.
+func (s *Service) Resume() {
+	s.pauseMu.Lock()
+	defer s.pauseMu.Unlock()
+	if s.paused {
+		s.paused = false
+		close(s.resumeCh)
+	}
+}
+
+func (s *Service) IsPaused() bool {
+	s.pauseMu.Lock()
+	defer s.pauseMu.Unlock()
+	return s.paused
+}
+
+// waitIfPaused blocks the calling goroutine while the job is paused, called
+// between iterations of a processing loop (per call, per analyze batch).
+func (s *Service) waitIfPaused(ctx context.Context) {
+	for {
+		s.pauseMu.Lock()
+		if !s.paused {
+			s.pauseMu.Unlock()
+			return
+		}
+		ch := s.resumeCh
+		s.pauseMu.Unlock()
+
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // cancelledHangupCause is OnlinePBX's hangup_cause for a call the originating
@@ -298,6 +363,7 @@ func (s *Service) processConcurrently(ctx context.Context, toProcess []pending, 
 	var mu sync.Mutex
 	sem := make(chan struct{}, maxConcurrentProcessing)
 	for _, p := range toProcess {
+		s.waitIfPaused(ctx)
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(call *models.Call, uuid string) {
@@ -393,6 +459,7 @@ func (s *Service) AnalyzeCalls(ctx context.Context, from, to time.Time) (*SyncRe
 	s.syncMu.Unlock()
 
 	for start := 0; start < len(calls); start += analyzeBatchSize {
+		s.waitIfPaused(ctx)
 		end := start + analyzeBatchSize
 		if end > len(calls) {
 			end = len(calls)
