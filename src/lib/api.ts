@@ -1073,6 +1073,82 @@ export interface CallerReport {
   requested_at: string;
 }
 
+// CallStepStatus — статусы шагов 1/2/3/5/6 по регламенту IQ-200 v1.2
+// ("Частично" запрещён для шагов 1, 5 и 6 — см. baza_znaniy_ocenka_zvonkov_po_skriptu_IQ200_v1.2.md).
+export type CallStepStatus =
+  | "Выполнен"
+  | "Частично"
+  | "Не выполнен"
+  | "Выполнен вне последовательности"
+  | "Не применим"
+  | "Не оценивается / недостаточно данных"
+  | "Корректная остановка";
+
+export type CallStep4Status = "Использован" | "Не использован" | "Не применим";
+
+// CallOutcome — закрытый список из 13 значений (регламент §11). Значение
+// "" покрывает legacy-записи, проанализированные до перехода на этот
+// регламент (плоский формат {category, outcome}), и записи, для которых
+// анализ ещё не запускался.
+export type CallOutcome =
+  | ""
+  | "Технический / содержательный диалог не состоялся"
+  | "Срыв на шаге 1"
+  | "Шаг 1 выполнен"
+  | "Срыв на шаге 2"
+  | "Шаг 2 выполнен"
+  | "Шаг 3 выполнен вне последовательности"
+  | "Шаг 3 выполнен"
+  | "Корректно выявлено отсутствие потребности"
+  | "Согласован конкретный повторный контакт"
+  | "Встреча согласована, шаг 5 не выполнен"
+  | "Скрипт пройден до шага 6"
+  | "Корректная ранняя остановка"
+  | "Недостаточно данных для оценки";
+
+export interface CallStepResult {
+  status: CallStepStatus;
+  evidence?: string;
+  missing?: string;
+  // step3-специфичные поля
+  branch?: "А" | "Б" | null;
+  identified_need?: string | null;
+  // step5-специфичные поля
+  situation_review_mentioned?: boolean;
+  plan_mentioned?: boolean;
+  // step6-специфичные поля
+  date?: string | null;
+  time?: string | null;
+  format?: string | null;
+  channel_or_address?: string | null;
+  final_confirmation?: boolean;
+}
+
+export interface CallAnalytics {
+  call_type?: "технический" | "содержательный" | "недостаточно_данных";
+  fraud_suspected?: boolean;
+  counterpart_role?: string;
+  lpr_confirmed?: "да" | "нет" | "неясно";
+  lpr_name?: string | null;
+  steps?: {
+    step1?: CallStepResult;
+    step2?: CallStepResult;
+    step3?: CallStepResult;
+    step4?: { status: CallStep4Status };
+    step5?: CallStepResult;
+    step6?: CallStepResult;
+  };
+  max_step_reached?: number | null;
+  break_point?: string;
+  outcome?: CallOutcome;
+  recommendation?: string;
+  confidence?: "высокая" | "средняя" | "низкая";
+  note?: string;
+  // Legacy-поля до перехода на регламент IQ-200 v1.2 — оставлены как есть,
+  // без бэкфилла (см. решение "leave as-is" при переходе на новый формат).
+  category?: string;
+}
+
 export interface Call {
   id: string;
   pbx_uuid: string;
@@ -1085,7 +1161,7 @@ export interface Call {
   hangup_cause: string;
   transcript_status: string;
   transcript_text?: string;
-  analytics_json?: { category?: string; outcome?: string; note?: string };
+  analytics_json?: CallAnalytics;
   created_at: string;
   updated_at: string;
 }
@@ -1169,8 +1245,8 @@ export const zvonariAPI = {
     return handleResponse<SingleResponse<{ status: string }>>(response);
   },
 
-  // Запустить LLM-классификацию (заинтересован/отказ/...) для звонков за
-  // период, у которых уже готов транскрипт, но ещё нет категории —
+  // Запустить LLM-оценку по скрипту IQ-200 (регламент v1.2) для звонков за
+  // период, у которых уже готов транскрипт, но ещё нет анализа —
   // отдельный шаг от синхронизации/транскрибации. Тоже фоновая задача.
   analyzeCalls: async (from: string, to: string): Promise<SingleResponse<{ status: string }>> => {
     const params = new URLSearchParams({ from, to });
@@ -1178,22 +1254,22 @@ export const zvonariAPI = {
     return handleResponse<SingleResponse<{ status: string }>>(response);
   },
 
-  // Разбивка по категориям (заинтересован/отказ/...) на каждого звонаря за
-  // период одним запросом — для таблицы звонарей без N+1.
+  // Разбивка по итогам оценки скрипта (закрытый список из 13 значений,
+  // регламент IQ-200 v1.2) на каждого звонаря за период одним запросом —
+  // для таблицы звонарей без N+1.
   getOutcomeCounts: async (from: string, to: string): Promise<SingleResponse<Record<string, Record<string, number>>>> => {
     const params = new URLSearchParams({ from, to });
     const response = await fetch(`${API_BASE}/zvonari/calls/outcomes?${params.toString()}`);
     return handleResponse<SingleResponse<Record<string, Record<string, number>>>>(response);
   },
 
-  // Разбивка по глобальным категориям звонка ("не сброшенный автоответчик
-  // (фрод)" / "работа по скрипту") на каждого звонаря за период — для
-  // выявления АФК-прослушивания автоответчика без отдельного запроса на
-  // каждого звонаря.
-  getCategoryCounts: async (from: string, to: string): Promise<SingleResponse<Record<string, Record<string, number>>>> => {
+  // Число звонков с fraud_suspected=true (не сброшенный вовремя
+  // автоответчик) на каждого звонаря за период — для выявления
+  // АФК-прослушивания автоответчика без отдельного запроса на каждого звонаря.
+  getFraudCounts: async (from: string, to: string): Promise<SingleResponse<Record<string, number>>> => {
     const params = new URLSearchParams({ from, to });
-    const response = await fetch(`${API_BASE}/zvonari/calls/categories?${params.toString()}`);
-    return handleResponse<SingleResponse<Record<string, Record<string, number>>>>(response);
+    const response = await fetch(`${API_BASE}/zvonari/calls/fraud-counts?${params.toString()}`);
+    return handleResponse<SingleResponse<Record<string, number>>>(response);
   },
 
   // Вручную (пере)запустить транскрибацию+аналитику для одного звонка —

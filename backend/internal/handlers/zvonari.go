@@ -177,7 +177,8 @@ func (h *Handlers) GetCallCounts(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetOutcomeCounts обрабатывает GET /api/zvonari/calls/outcomes?from=&to=
-// Разбивка по категориям Hermes-анализа (заинтересован/отказ/...) на
+// Разбивка по итогам оценки скрипта IQ-200 (регламент v1.2, закрытый список
+// из 13 значений — "Скрипт пройден до шага 6", "Срыв на шаге 1" и т.д.) на
 // каждого звонаря за период — для сортировки/подсветки в таблице звонарей
 // без отдельного запроса на каждого.
 func (h *Handlers) GetOutcomeCounts(w http.ResponseWriter, r *http.Request) {
@@ -196,22 +197,21 @@ func (h *Handlers) GetOutcomeCounts(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": counts})
 }
 
-// GetCategoryCounts обрабатывает GET /api/zvonari/calls/categories?from=&to=
-// Разбивка по глобальным категориям звонка ("не сброшенный автоответчик
-// (фрод)" / "работа по скрипту") на каждого звонаря за период — для
-// выявления АФК-прослушивания автоответчика без отдельного запроса на
-// каждого звонаря.
-func (h *Handlers) GetCategoryCounts(w http.ResponseWriter, r *http.Request) {
+// GetFraudCounts обрабатывает GET /api/zvonari/calls/fraud-counts?from=&to=
+// Число звонков с fraud_suspected=true (не сброшенный вовремя автоответчик)
+// на каждого звонаря за период — для выявления АФК-прослушивания
+// автоответчика без отдельного запроса на каждого звонаря.
+func (h *Handlers) GetFraudCounts(w http.ResponseWriter, r *http.Request) {
 	from, to, err := parseRangeParams(r)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	counts, err := h.zvonari.CategoryCounts(r.Context(), from, to)
+	counts, err := h.zvonari.FraudCounts(r.Context(), from, to)
 	if err != nil {
-		log.Printf("GetCategoryCounts failed: %v", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to get category counts")
+		log.Printf("GetFraudCounts failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to get fraud counts")
 		return
 	}
 	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": counts})
@@ -219,7 +219,7 @@ func (h *Handlers) GetCategoryCounts(w http.ResponseWriter, r *http.Request) {
 
 // GetCallerCalls обрабатывает GET /api/zvonari/callers/{id}/calls?from=&to=
 // Детализация звонков звонаря за период: время, направление, длительность,
-// категория (analytics_json.outcome) и транскрипт по каждому звонку.
+// полный разбор по шагам скрипта (analytics_json) и транскрипт по каждому звонку.
 func (h *Handlers) GetCallerCalls(w http.ResponseWriter, r *http.Request) {
 	callerID := chi.URLParam(r, "id")
 	from, to, err := parseRangeParams(r)
@@ -366,16 +366,21 @@ func (h *Handlers) ExportCallerCallsCSV(w http.ResponseWriter, r *http.Request) 
 	w.Write([]byte{0xEF, 0xBB, 0xBF})
 
 	cw := csv.NewWriter(w)
-	_ = cw.Write([]string{"Дата", "Время", "Направление", "Длительность звонка (сек)", "Время разговора (сек)", "Тип звонка", "Исход", "Транскрипт", "Общая оценка за период"})
+	_ = cw.Write([]string{"Дата", "Время", "Направление", "Длительность звонка (сек)", "Время разговора (сек)", "Тип звонка", "Исход", "Фрод (не сброшен автоответчик)", "Транскрипт", "Общая оценка за период"})
 	for _, c := range calls {
+		fraud := ""
+		if zvonari.ExtractFraudSuspected(c.AnalyticsJSON) {
+			fraud = "да"
+		}
 		_ = cw.Write([]string{
 			c.StartedAt.Format("2006-01-02"),
 			c.StartedAt.Format("15:04:05"),
 			c.Direction,
 			strconv.Itoa(c.DurationSec),
 			strconv.Itoa(c.TalkTimeSec),
-			zvonari.ExtractCategory(c.AnalyticsJSON),
+			zvonari.ExtractCallType(c.AnalyticsJSON),
 			zvonari.ExtractOutcome(c.AnalyticsJSON),
+			fraud,
 			c.TranscriptText,
 			summaryText,
 		})

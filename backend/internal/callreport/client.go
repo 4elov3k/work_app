@@ -44,9 +44,12 @@ type AnalyzeCallRequest struct {
 	Transcript string `json:"transcript"`
 }
 
-// AnalyzeCallResult — результат классификации; поле "outcome" в AnalyticsJSON
-// (например заинтересован/нейтрально/отказ/жалоба/перезвонить) — это ось, по
-// которой UI строит распределение звонков за период.
+// AnalyzeCallResult — результат оценки звонка по скрипту IQ-200 (регламент
+// v1.2); поле "outcome" в AnalyticsJSON — одно из 13 значений закрытого
+// списка (например "Скрипт пройден до шага 6", "Срыв на шаге 1") — это ось,
+// по которой UI строит распределение звонков за период. AnalyticsJSON также
+// несёт разбор по шагам (steps), fraud_suspected и другие поля — см. схему
+// в hermes/services/call_analytics_server.py.
 type AnalyzeCallResult struct {
 	AnalyticsJSON json.RawMessage `json:"analytics"`
 }

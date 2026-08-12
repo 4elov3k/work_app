@@ -17,15 +17,19 @@ import {
   Download,
   History,
   ListChecks,
-  ThumbsUp,
-  ThumbsDown,
+  Target,
+  Ban,
   ShieldAlert,
   HelpCircle,
   Pause,
   Play,
+  CheckCircle2,
+  XCircle,
+  CircleDashed,
+  CornerDownRight,
 } from "lucide-react";
 
-import { zvonariAPI, Caller, CallerReport, Call, ApiError } from "@/lib/api";
+import { zvonariAPI, Caller, CallerReport, Call, CallAnalytics, ApiError } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -60,12 +64,116 @@ const STATUS_LABELS: Record<string, string> = {
 
 const STATUS_ORDER = ["done", "transcribing", "pending", "failed", "no_recording"];
 
-// Глобальная категория звонка — не сброшенный вовремя автоответчик
-// (подозрение на АФК-накрутку времени на линии), в отличие от outcome,
-// который классифицирует только реальные разговоры. Должно совпадать с
-// FRAUD_CATEGORY в backend/internal/zvonari/service.go и FRAUD_CATEGORY в
-// hermes/services/call_analytics_server.py.
-const FRAUD_CATEGORY = "не сброшенный автоответчик (фрод)";
+// Итог "Скрипт пройден до шага 6" — полное прохождение обязательных шагов
+// скрипта (регламент IQ-200 v1.2, §11) — и "Срыв на шаге 1" — самый ранний
+// возможный срыв — используются как headline-метрики звонаря, аналогично
+// прежним "заинтересован"/"отказ", но привязаны к самому скрипту, а не к
+// эмоциональной реакции клиента.
+const OUTCOME_SCRIPT_COMPLETED = "Скрипт пройден до шага 6";
+const OUTCOME_STEP1_BROKEN = "Срыв на шаге 1";
+
+const CALL_TYPE_LABELS: Record<string, string> = {
+  "технический": "технический",
+  "содержательный": "содержательный",
+  "недостаточно_данных": "недостаточно данных",
+};
+
+const STEP_LABELS: Record<string, string> = {
+  step1: "Шаг 1 — выход на ЛПР",
+  step2: "Шаг 2 — знакомство",
+  step3: "Шаг 3 — первичная потребность",
+  step4: "Шаг 4 — вилка времени",
+  step5: "Шаг 5 — предмет встречи",
+  step6: "Шаг 6 — фиксация встречи",
+};
+
+const STEP_KEYS: (keyof NonNullable<CallAnalytics["steps"]>)[] = [
+  "step1",
+  "step2",
+  "step3",
+  "step4",
+  "step5",
+  "step6",
+];
+
+// Визуальное представление статуса шага (регламент §3) — иконка и цвет,
+// единые для всех мест, где отображается статус шага.
+function stepStatusMeta(status: string | undefined): { icon: ReactNode; className: string } {
+  switch (status) {
+    case "Выполнен":
+      return { icon: <CheckCircle2 className="h-3.5 w-3.5" />, className: "text-success" };
+    case "Использован":
+      return { icon: <CheckCircle2 className="h-3.5 w-3.5" />, className: "text-success" };
+    case "Частично":
+      return { icon: <CircleDashed className="h-3.5 w-3.5" />, className: "text-warning" };
+    case "Не выполнен":
+    case "Не использован":
+      return { icon: <XCircle className="h-3.5 w-3.5" />, className: "text-destructive" };
+    case "Выполнен вне последовательности":
+      return { icon: <CornerDownRight className="h-3.5 w-3.5" />, className: "text-warning" };
+    case "Корректная остановка":
+      return { icon: <CheckCircle2 className="h-3.5 w-3.5" />, className: "text-muted-foreground" };
+    case "Не применим":
+      return { icon: <Ban className="h-3.5 w-3.5" />, className: "text-muted-foreground" };
+    default:
+      return { icon: <HelpCircle className="h-3.5 w-3.5" />, className: "text-muted-foreground" };
+  }
+}
+
+function StepBreakdown({ analytics }: { analytics: CallAnalytics }) {
+  const steps = analytics.steps;
+  if (!steps) return null;
+  return (
+    <div className="mt-2 space-y-2 rounded-md border border-border/70 bg-card p-2">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        {analytics.counterpart_role && <span>Собеседник: {analytics.counterpart_role}</span>}
+        {analytics.lpr_confirmed && <span>ЛПР подтверждён: {analytics.lpr_confirmed}</span>}
+        {analytics.lpr_name && <span>Имя ЛПР: {analytics.lpr_name}</span>}
+        {typeof analytics.max_step_reached === "number" && (
+          <span className="inline-flex items-center gap-1">
+            <Target className="h-3 w-3" />
+            Макс. пройденный шаг: {analytics.max_step_reached}/6
+          </span>
+        )}
+        {analytics.confidence && <span>Уверенность: {analytics.confidence}</span>}
+      </div>
+      <div className="space-y-1.5">
+        {STEP_KEYS.map((key) => {
+          const step = steps[key];
+          if (!step) return null;
+          const meta = stepStatusMeta(step.status);
+          return (
+            <div key={key} className="flex flex-col gap-0.5 border-t border-border/50 pt-1.5 text-sm first:border-t-0 first:pt-0">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className={`inline-flex items-center gap-1 font-medium ${meta.className}`}>
+                  {meta.icon}
+                  {STEP_LABELS[key]}
+                </span>
+                <span className={`text-xs ${meta.className}`}>{step.status}</span>
+              </div>
+              {"evidence" in step && step.evidence && (
+                <p className="text-xs text-muted-foreground">Доказательство: {step.evidence}</p>
+              )}
+              {"missing" in step && step.missing && step.status !== "Выполнен" && (
+                <p className="text-xs text-muted-foreground">Чего не хватило: {step.missing}</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {(analytics.break_point || analytics.recommendation) && (
+        <div className="space-y-1 border-t border-border/50 pt-1.5 text-xs">
+          {analytics.break_point && (
+            <p className="text-muted-foreground">Место срыва: {analytics.break_point}</p>
+          )}
+          {analytics.recommendation && (
+            <p className="text-foreground">Рекомендация: {analytics.recommendation}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Порог, начиная с которого звонарь помечается как "требует внимания" —
 // доля ошибок/без записи от всех его звонков за период. Игнорируем совсем
@@ -103,19 +211,21 @@ function DistributionBars({ distribution }: { distribution: Record<string, numbe
 
 interface CallFilters {
   status: string;
-  category: string;
+  callType: string;
   outcome: string;
   direction: string;
   search: string;
+  fraudOnly: boolean;
 }
 
-const EMPTY_FILTERS: CallFilters = { status: "", category: "", outcome: "", direction: "", search: "" };
+const EMPTY_FILTERS: CallFilters = { status: "", callType: "", outcome: "", direction: "", search: "", fraudOnly: false };
 
 function filterCalls(calls: Call[], filters: CallFilters): Call[] {
   return calls.filter((call) => {
     if (filters.status && call.transcript_status !== filters.status) return false;
-    if (filters.category && (call.analytics_json?.category || "") !== filters.category) return false;
+    if (filters.callType && (call.analytics_json?.call_type || "") !== filters.callType) return false;
     if (filters.outcome && (call.analytics_json?.outcome || "") !== filters.outcome) return false;
+    if (filters.fraudOnly && !call.analytics_json?.fraud_suspected) return false;
     if (filters.direction && call.direction !== filters.direction) return false;
     if (filters.search) {
       const q = filters.search.toLowerCase();
@@ -145,11 +255,13 @@ function CallDetailList({
     return Array.from(set).sort();
   }, [calls]);
 
-  const categories = useMemo(() => {
+  const callTypes = useMemo(() => {
     const set = new Set<string>();
-    calls.forEach((c) => c.analytics_json?.category && set.add(c.analytics_json.category));
+    calls.forEach((c) => c.analytics_json?.call_type && set.add(c.analytics_json.call_type));
     return Array.from(set).sort();
   }, [calls]);
+
+  const hasFraudSuspected = useMemo(() => calls.some((c) => c.analytics_json?.fraud_suspected), [calls]);
 
   if (calls.length === 0) {
     return <p className="text-sm text-muted-foreground">Нет звонков за этот период</p>;
@@ -183,25 +295,23 @@ function CallDetailList({
           ))}
         </select>
         <select
-          value={filters.category}
-          onChange={(e) => setFilters((f) => ({ ...f, category: e.target.value }))}
+          value={filters.callType}
+          onChange={(e) => setFilters((f) => ({ ...f, callType: e.target.value }))}
           className={selectClass}
         >
           <option value="">Все типы звонков</option>
-          {categories.map((c) => (
+          {callTypes.map((c) => (
             <option key={c} value={c}>
-              {c}
+              {CALL_TYPE_LABELS[c] || c}
             </option>
           ))}
         </select>
-        {categories.includes(FRAUD_CATEGORY) && (
+        {hasFraudSuspected && (
           <Button
-            variant={filters.category === FRAUD_CATEGORY ? "destructive" : "outline"}
+            variant={filters.fraudOnly ? "destructive" : "outline"}
             size="sm"
             className="h-8 gap-1.5 bg-card transition-transform active:scale-95"
-            onClick={() =>
-              setFilters((f) => ({ ...f, category: f.category === FRAUD_CATEGORY ? "" : FRAUD_CATEGORY }))
-            }
+            onClick={() => setFilters((f) => ({ ...f, fraudOnly: !f.fraudOnly }))}
           >
             <ShieldAlert className="h-3.5 w-3.5" />
             Только фрод
@@ -231,7 +341,7 @@ function CallDetailList({
             </option>
           ))}
         </select>
-        {(filters.status || filters.category || filters.outcome || filters.direction || filters.search) && (
+        {(filters.status || filters.callType || filters.outcome || filters.direction || filters.search || filters.fraudOnly) && (
           <Button
             variant="ghost"
             size="sm"
@@ -252,7 +362,8 @@ function CallDetailList({
         <div className="space-y-2">
           {filtered.map((call) => {
             const isRetranscribing = retranscribingIds.has(call.id);
-            const isFraud = call.analytics_json?.category === FRAUD_CATEGORY;
+            const analytics = call.analytics_json;
+            const isFraud = !!analytics?.fraud_suspected;
             return (
               <details
                 key={call.id}
@@ -264,13 +375,21 @@ function CallDetailList({
                   <span className="text-muted-foreground">{new Date(call.started_at).toLocaleString("ru-RU")}</span>
                   <Badge variant="outline">{DIRECTION_LABELS[call.direction] || call.direction}</Badge>
                   <span className="text-muted-foreground">{formatDuration(call.duration_sec)}</span>
-                  {call.analytics_json?.category && (
-                    <Badge variant={isFraud ? "destructive" : "outline"} className="gap-1">
-                      {isFraud && <ShieldAlert className="h-3 w-3" />}
-                      {call.analytics_json.category}
+                  {analytics?.call_type && (
+                    <Badge variant="outline">{CALL_TYPE_LABELS[analytics.call_type] || analytics.call_type}</Badge>
+                  )}
+                  {isFraud && (
+                    <Badge variant="destructive" className="gap-1">
+                      <ShieldAlert className="h-3 w-3" />
+                      фрод
                     </Badge>
                   )}
-                  {call.analytics_json?.outcome && <Badge variant="secondary">{call.analytics_json.outcome}</Badge>}
+                  {analytics?.outcome && <Badge variant="secondary">{analytics.outcome}</Badge>}
+                  {analytics?.confidence && analytics.confidence !== "высокая" && (
+                    <Badge variant="outline" className="text-xs text-muted-foreground">
+                      уверенность: {analytics.confidence}
+                    </Badge>
+                  )}
                   <span
                     className={`text-xs ${call.transcript_status === "done" ? "text-muted-foreground" : "text-warning"}`}
                   >
@@ -290,6 +409,7 @@ function CallDetailList({
                     <span className="ml-1">Транскрибировать</span>
                   </Button>
                 </summary>
+                {analytics?.steps && <StepBreakdown analytics={analytics} />}
                 <p className="mt-2 whitespace-pre-wrap rounded-md bg-muted/50 p-2 text-sm text-muted-foreground">
                   {call.transcript_text || "Транскрипт недоступен"}
                 </p>
@@ -339,7 +459,7 @@ interface CallerStats {
   isProblem: boolean;
 }
 
-type SortKey = "name" | "total" | "donePct" | "заинтересован" | "отказ" | "fraud" | "problem";
+type SortKey = "name" | "total" | "donePct" | "scriptCompleted" | "step1Broken" | "fraud" | "problem";
 
 const KPI_ACCENTS = {
   neutral: "border-l-border",
@@ -398,7 +518,7 @@ export default function ZvonariPage() {
   const [callCounts, setCallCounts] = useState<Record<string, number>>({});
   const [statusCounts, setStatusCounts] = useState<Record<string, Record<string, number>>>({});
   const [outcomeCounts, setOutcomeCounts] = useState<Record<string, Record<string, number>>>({});
-  const [categoryCounts, setCategoryCounts] = useState<Record<string, Record<string, number>>>({});
+  const [fraudCounts, setFraudCounts] = useState<Record<string, number>>({});
 
   const [panels, setPanels] = useState<Record<string, CallerPanelState>>({});
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -454,9 +574,9 @@ export default function ZvonariPage() {
       .then((response) => setOutcomeCounts(response.data || {}))
       .catch((err) => console.error("Failed to load outcome counts:", err));
     zvonariAPI
-      .getCategoryCounts(periodFrom, periodTo)
-      .then((response) => setCategoryCounts(response.data || {}))
-      .catch((err) => console.error("Failed to load category counts:", err));
+      .getFraudCounts(periodFrom, periodTo)
+      .then((response) => setFraudCounts(response.data || {}))
+      .catch((err) => console.error("Failed to load fraud counts:", err));
   };
 
   // Обновляет цифры без перезагрузки страницы и без спиннеров/сброса того,
@@ -693,7 +813,6 @@ export default function ZvonariPage() {
       const total = callCounts[caller.id] ?? 0;
       const statuses = statusCounts[caller.id] ?? {};
       const outcomes = outcomeCounts[caller.id] ?? {};
-      const categories = categoryCounts[caller.id] ?? {};
       const done = statuses.done ?? 0;
       const problems = (statuses.failed ?? 0) + (statuses.no_recording ?? 0);
       const problemRatio = total > 0 ? problems / total : 0;
@@ -703,12 +822,12 @@ export default function ZvonariPage() {
         done,
         donePct: total > 0 ? Math.round((done / total) * 100) : 0,
         outcomes,
-        fraudCount: categories[FRAUD_CATEGORY] ?? 0,
+        fraudCount: fraudCounts[caller.id] ?? 0,
         problemRatio,
         isProblem: total >= PROBLEM_MIN_CALLS && problemRatio >= PROBLEM_RATIO_THRESHOLD,
       };
     });
-  }, [callers, callCounts, statusCounts, outcomeCounts, categoryCounts]);
+  }, [callers, callCounts, statusCounts, outcomeCounts, fraudCounts]);
 
   const sortedStats = useMemo(() => {
     const sorted = [...callerStats].sort((a, b) => {
@@ -723,9 +842,11 @@ export default function ZvonariPage() {
         case "donePct":
           cmp = a.donePct - b.donePct;
           break;
-        case "заинтересован":
-        case "отказ":
-          cmp = (a.outcomes[sortKey] ?? 0) - (b.outcomes[sortKey] ?? 0);
+        case "scriptCompleted":
+          cmp = (a.outcomes[OUTCOME_SCRIPT_COMPLETED] ?? 0) - (b.outcomes[OUTCOME_SCRIPT_COMPLETED] ?? 0);
+          break;
+        case "step1Broken":
+          cmp = (a.outcomes[OUTCOME_STEP1_BROKEN] ?? 0) - (b.outcomes[OUTCOME_STEP1_BROKEN] ?? 0);
           break;
         case "fraud":
           cmp = a.fraudCount - b.fraudCount;
@@ -756,12 +877,15 @@ export default function ZvonariPage() {
   const kpi = useMemo(() => {
     const totalCalls = Object.values(callCounts).reduce((a, b) => a + b, 0);
     const totalDone = Object.values(statusCounts).reduce((sum, s) => sum + (s.done ?? 0), 0);
-    const totalInterested = Object.values(outcomeCounts).reduce((sum, o) => sum + (o["заинтересован"] ?? 0), 0);
-    const totalRefused = Object.values(outcomeCounts).reduce((sum, o) => sum + (o["отказ"] ?? 0), 0);
+    const totalScriptCompleted = Object.values(outcomeCounts).reduce(
+      (sum, o) => sum + (o[OUTCOME_SCRIPT_COMPLETED] ?? 0),
+      0
+    );
+    const totalStep1Broken = Object.values(outcomeCounts).reduce((sum, o) => sum + (o[OUTCOME_STEP1_BROKEN] ?? 0), 0);
     const totalUnanalyzed = Object.values(outcomeCounts).reduce((sum, o) => sum + (o["не проанализировано"] ?? 0), 0);
-    const totalFraud = Object.values(categoryCounts).reduce((sum, c) => sum + (c[FRAUD_CATEGORY] ?? 0), 0);
-    return { totalCalls, totalDone, totalInterested, totalRefused, totalUnanalyzed, totalFraud };
-  }, [callCounts, statusCounts, outcomeCounts, categoryCounts]);
+    const totalFraud = Object.values(fraudCounts).reduce((a, b) => a + b, 0);
+    return { totalCalls, totalDone, totalScriptCompleted, totalStep1Broken, totalUnanalyzed, totalFraud };
+  }, [callCounts, statusCounts, outcomeCounts, fraudCounts]);
 
   return (
     <div className="zvonari-theme min-h-screen bg-background">
@@ -928,15 +1052,15 @@ export default function ZvonariPage() {
             accent="primary"
           />
           <KpiCard
-            label="Заинтересован"
-            value={String(kpi.totalInterested)}
-            icon={<ThumbsUp className="h-5 w-5" />}
+            label="Скрипт пройден до шага 6"
+            value={String(kpi.totalScriptCompleted)}
+            icon={<CheckCircle2 className="h-5 w-5" />}
             accent="positive"
           />
           <KpiCard
-            label="Отказ"
-            value={String(kpi.totalRefused)}
-            icon={<ThumbsDown className="h-5 w-5" />}
+            label="Срыв на шаге 1"
+            value={String(kpi.totalStep1Broken)}
+            icon={<XCircle className="h-5 w-5" />}
             accent="warning"
           />
           <KpiCard
@@ -997,17 +1121,17 @@ export default function ZvonariPage() {
                 </TableHead>
                 <TableHead
                   className="cursor-pointer select-none text-right transition-colors hover:text-foreground"
-                  onClick={() => handleSort("заинтересован")}
+                  onClick={() => handleSort("scriptCompleted")}
                 >
-                  Заинтересован
-                  <SortIcon column="заинтересован" />
+                  Скрипт до конца
+                  <SortIcon column="scriptCompleted" />
                 </TableHead>
                 <TableHead
                   className="cursor-pointer select-none text-right transition-colors hover:text-foreground"
-                  onClick={() => handleSort("отказ")}
+                  onClick={() => handleSort("step1Broken")}
                 >
-                  Отказ
-                  <SortIcon column="отказ" />
+                  Срыв на шаге 1
+                  <SortIcon column="step1Broken" />
                 </TableHead>
                 <TableHead
                   className="cursor-pointer select-none text-right transition-colors hover:text-foreground"
@@ -1063,10 +1187,10 @@ export default function ZvonariPage() {
                       </TableCell>
                       <TableCell className="text-right tabular-nums">{total > 0 ? `${donePct}%` : "—"}</TableCell>
                       <TableCell className="text-right tabular-nums text-success">
-                        {outcomes["заинтересован"] ?? 0}
+                        {outcomes[OUTCOME_SCRIPT_COMPLETED] ?? 0}
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-muted-foreground">
-                        {outcomes["отказ"] ?? 0}
+                        {outcomes[OUTCOME_STEP1_BROKEN] ?? 0}
                       </TableCell>
                       <TableCell className="text-right">
                         {fraudCount > 0 ? (

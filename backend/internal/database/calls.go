@@ -177,14 +177,15 @@ func (db *DB) CountCallsByCallerAndStatus(ctx context.Context, from, to time.Tim
 // CountOutcomesByCaller returns, for every caller with calls in [from, to),
 // a breakdown of their Hermes outcome classification (analytics_json.outcome)
 // — one query across all callers, so the caller table can sort/highlight by
-// conversion (e.g. % отказ) without an N+1 fetch per caller. Calls without
-// an outcome yet (not analyzed, or analysis failed) bucket under "не
-// проанализировано", matching CallDistribution's client-facing label for a
-// single caller. Fraud calls (analytics_json.category = FRAUD_CATEGORY in
-// call_analytics_server.py) have outcome=null by design — those bucket
-// separately as "автоответчик (фрод)" instead of falling into "не
-// проанализировано", otherwise the UI can't distinguish "never analyzed"
-// from "analyzed, turned out to be a voicemail/IVR".
+// script-compliance (e.g. how many reached "Скрипт пройден до шага 6" vs
+// "Срыв на шаге 1") without an N+1 fetch per caller. `outcome` always holds
+// one of the 13 closed-list values (§11 of the IQ-200 v1.2 regulation) once
+// analyzed, including for technical/fraud-suspected calls — fraud_suspected
+// is a separate boolean axis (see CountFraudSuspectedByCaller), not an
+// outcome value. Calls without an outcome yet (not analyzed, analysis
+// failed, or still in the pre-rubric legacy {category, outcome} shape)
+// bucket under "не проанализировано", matching CallDistribution's
+// client-facing label for a single caller.
 func (db *DB) CountOutcomesByCaller(ctx context.Context, from, to time.Time) (map[string]map[string]int, error) {
 	query := `
 		SELECT caller_id, COALESCE(analytics_json->>'outcome', 'не проанализировано'), count(*)
@@ -216,39 +217,40 @@ func (db *DB) CountOutcomesByCaller(ctx context.Context, from, to time.Time) (ma
 	return counts, nil
 }
 
-// CountCategoriesByCaller returns, for every caller with calls in [from, to),
-// a breakdown of their Hermes global call-category classification
-// (analytics_json.category) — one query across all callers, mirroring
-// CountOutcomesByCaller, for surfacing "не сброшенный автоответчик (фрод)"
-// vs "работа по скрипту" counts without an N+1 fetch. Calls without a
-// category yet bucket under "не проанализировано".
-func (db *DB) CountCategoriesByCaller(ctx context.Context, from, to time.Time) (map[string]map[string]int, error) {
+// CountFraudSuspectedByCaller returns, for every caller with calls in
+// [from, to), how many of their calls Hermes flagged as fraud_suspected
+// (operator hit an answering machine/voicemail and didn't hang up promptly
+// — see the ANALYSIS_RUBRIC's fraud_suspected field in
+// hermes/services/call_analytics_server.py) — one query across all callers,
+// mirroring CountOutcomesByCaller, for surfacing suspected time-padding
+// without an N+1 fetch. This is a separate boolean axis from `outcome`, not
+// one of its values, per the regulation's separation of technical/fraud
+// detection from script-compliance scoring.
+func (db *DB) CountFraudSuspectedByCaller(ctx context.Context, from, to time.Time) (map[string]int, error) {
 	query := `
-		SELECT caller_id, COALESCE(analytics_json->>'category', 'не проанализировано'), count(*)
+		SELECT caller_id, count(*)
 		FROM calls
 		WHERE caller_id IS NOT NULL AND started_at >= $1 AND started_at < $2
-		GROUP BY caller_id, COALESCE(analytics_json->>'category', 'не проанализировано')
+		  AND (analytics_json->>'fraud_suspected')::boolean IS TRUE
+		GROUP BY caller_id
 	`
 	rows, err := db.QueryContext(ctx, query, from, to)
 	if err != nil {
-		return nil, fmt.Errorf("failed to count categories by caller: %w", err)
+		return nil, fmt.Errorf("failed to count fraud-suspected calls by caller: %w", err)
 	}
 	defer rows.Close()
 
-	counts := map[string]map[string]int{}
+	counts := map[string]int{}
 	for rows.Next() {
-		var callerID, category string
+		var callerID string
 		var count int
-		if err := rows.Scan(&callerID, &category, &count); err != nil {
-			return nil, fmt.Errorf("failed to scan category count: %w", err)
+		if err := rows.Scan(&callerID, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan fraud-suspected count: %w", err)
 		}
-		if counts[callerID] == nil {
-			counts[callerID] = map[string]int{}
-		}
-		counts[callerID][category] = count
+		counts[callerID] = count
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating category counts: %w", err)
+		return nil, fmt.Errorf("error iterating fraud-suspected counts: %w", err)
 	}
 	return counts, nil
 }
@@ -294,16 +296,20 @@ func (db *DB) ListCallsByStatusPeriod(ctx context.Context, statuses []string, fr
 
 // ListCallsNeedingAnalysis returns calls in [from, to) whose transcript is
 // ready (transcript_status='done') but haven't been LLM-classified yet
-// (analytics_json IS NULL), or were classified before the fraud/script
-// "category" split was added to the prompt (analytics_json missing the
-// "category" key) — the queue for the decoupled AnalyzeCalls job.
+// (analytics_json IS NULL or missing both the legacy "category" key and the
+// current "call_type" key) — the queue for the decoupled AnalyzeCalls job.
+// Checking both keys matters: a call already analyzed under the old flat
+// {category, outcome} shape (pre IQ-200-v1.2 rubric) is intentionally left
+// as-is rather than backfilled, so it must still count as "analyzed" even
+// though it lacks "call_type"; a call analyzed under the current shape must
+// not be picked up again just because it lacks the legacy "category" key.
 func (db *DB) ListCallsNeedingAnalysis(ctx context.Context, from, to time.Time) ([]models.Call, error) {
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
 		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json, created_at, updated_at
 		FROM calls
 		WHERE transcript_status = 'done'
-		  AND (analytics_json IS NULL OR NOT (analytics_json ? 'category'))
+		  AND (analytics_json IS NULL OR NOT (analytics_json ? 'category' OR analytics_json ? 'call_type'))
 		  AND started_at >= $1 AND started_at < $2
 		ORDER BY started_at
 	`

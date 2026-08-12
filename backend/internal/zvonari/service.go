@@ -643,18 +643,19 @@ func (s *Service) OutcomeCounts(ctx context.Context, from, to time.Time) (map[st
 	return s.db.CountOutcomesByCaller(ctx, from, to)
 }
 
-// CategoryCounts returns each caller's global call-category breakdown
-// ("не сброшенный автоответчик (фрод)" vs "работа по скрипту") in
-// [from, to) — the fraud-detection counterpart to OutcomeCounts, one query
-// for all callers.
-func (s *Service) CategoryCounts(ctx context.Context, from, to time.Time) (map[string]map[string]int, error) {
-	return s.db.CountCategoriesByCaller(ctx, from, to)
+// FraudCounts returns each caller's count of fraud_suspected calls
+// (operator hit an answering machine/voicemail and didn't hang up promptly)
+// in [from, to) — the time-padding-detection counterpart to OutcomeCounts,
+// one query for all callers. A separate boolean axis from outcome, not one
+// of its values — see CountFraudSuspectedByCaller.
+func (s *Service) FraudCounts(ctx context.Context, from, to time.Time) (map[string]int, error) {
+	return s.db.CountFraudSuspectedByCaller(ctx, from, to)
 }
 
 // CallDistribution buckets a caller's calls for a period by their Hermes
-// outcome classification (analytics_json.outcome) — the UI's "brief
-// distribution" view. No Hermes call needed: it aggregates analysis that
-// already happened when each call was synced.
+// outcome classification (analytics_json.outcome, one of the 13 closed-list
+// values) — the UI's "brief distribution" view. No Hermes call needed: it
+// aggregates analysis that already happened when each call was synced.
 func (s *Service) CallDistribution(ctx context.Context, callerID string, from, to time.Time) (map[string]int, error) {
 	calls, err := s.db.ListCallsByCallerPeriod(ctx, callerID, from, to)
 	if err != nil {
@@ -662,10 +663,6 @@ func (s *Service) CallDistribution(ctx context.Context, callerID string, from, t
 	}
 	dist := map[string]int{}
 	for _, c := range calls {
-		if category := ExtractCategory(c.AnalyticsJSON); category == FraudCategory {
-			dist["автоответчик (фрод)"]++
-			continue
-		}
 		dist[ExtractOutcome(c.AnalyticsJSON)]++
 	}
 	return dist, nil
@@ -684,23 +681,40 @@ func ExtractOutcome(raw json.RawMessage) string {
 	return parsed.Outcome
 }
 
-// FraudCategory is Hermes' global call-category label for a call where the
-// operator hit an answering machine/voicemail and didn't hang up promptly
-// — must match FRAUD_CATEGORY in hermes/services/call_analytics_server.py.
-const FraudCategory = "не сброшенный автоответчик (фрод)"
-
-// ExtractCategory reads analytics_json.category — Hermes' global
-// classification (fraud vs. real "работа по скрипту" call), independent of
-// outcome (which only applies to real conversations).
-func ExtractCategory(raw json.RawMessage) string {
+// ExtractCallType reads analytics_json.call_type ("технический" /
+// "содержательный" / "недостаточно_данных") — the IQ-200 v1.2 rubric's
+// classification of whether a real script-scorable conversation happened at
+// all, independent of outcome and of fraud_suspected. Calls analyzed under
+// the pre-rubric legacy {category, outcome} shape have no call_type and
+// read back as "" here — callers must handle that the same way as
+// "не проанализировано" rather than treating it as a fourth real value.
+func ExtractCallType(raw json.RawMessage) string {
 	if len(raw) == 0 {
-		return "не проанализировано"
+		return ""
 	}
 	var parsed struct {
-		Category string `json:"category"`
+		CallType string `json:"call_type"`
 	}
-	if err := json.Unmarshal(raw, &parsed); err != nil || parsed.Category == "" {
-		return "не проанализировано"
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return ""
 	}
-	return parsed.Category
+	return parsed.CallType
+}
+
+// ExtractFraudSuspected reads analytics_json.fraud_suspected — set when
+// Hermes judged the call to be an answering machine/voicemail left open
+// past when the operator should have hung up (suspected time-padding on the
+// line), independent of call_type/outcome. Must match the fraud_suspected
+// field in hermes/services/call_analytics_server.py's _normalize_analytics.
+func ExtractFraudSuspected(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var parsed struct {
+		FraudSuspected bool `json:"fraud_suspected"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return false
+	}
+	return parsed.FraudSuspected
 }
