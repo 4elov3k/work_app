@@ -437,10 +437,15 @@ func (s *Service) transcribeOnly(ctx context.Context, call *models.Call, pbxUUID
 // analyzeBatchSize caps how many calls go into one call-analytics batch
 // request. Larger batches mean fewer `hermes chat` subprocess round-trips
 // (the actual bottleneck, not the classification itself), but also a bigger
-// prompt/response and more to lose if the whole request errors — 50 is
-// where call_analytics_server.py's batch_timeout still stays well under the
-// Go client's 10-minute timeout.
-const analyzeBatchSize = 50
+// prompt/response and more to lose if the whole request errors. Under the
+// IQ-200 v1.2 rubric each call's response is a full per-step breakdown
+// (evidence/missing per step, not just {category, outcome, note}), which is
+// far heavier to generate than the old flat classification — a batch of 50
+// measured well over call_analytics_server.py's batch_timeout(50)=460s in
+// practice, forcing a slow serial per-call fallback for the whole batch. 10
+// keeps batch_timeout(10)=140s comfortably achievable while still saving
+// most of the per-call subprocess-spawn overhead batching was for.
+const analyzeBatchSize = 10
 
 func (s *Service) AnalyzeCalls(ctx context.Context, from, to time.Time) (*SyncResult, error) {
 	if !s.callreport.Configured() {
