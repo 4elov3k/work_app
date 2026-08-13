@@ -114,6 +114,32 @@ func (h *Handlers) RetryFailedCalls(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// RetranscribeAllCalls обрабатывает POST /api/zvonari/calls/retranscribe-gpu?from=&to=
+// Массово (пере)транскрибирует ВСЕ звонки за период, включая уже готовые —
+// в отличие от /retry-failed (только сломанные/необработанные). Транскрибация
+// уже сама предпочитает GPU-бокс, если он настроен (TRANSCRIBE_SERVICE_GPU_URL)
+// и доступен, иначе тихо падает на локальный CPU — нужен для того, чтобы
+// задним числом переснять качество транскриптов, сделанных раньше на CPU.
+// Тот же общий "слот" фоновой задачи, что и у /sync, /retry-failed, /analyze.
+func (h *Handlers) RetranscribeAllCalls(w http.ResponseWriter, r *http.Request) {
+	from, to, err := parseRangeParams(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	started := h.zvonari.StartRetranscribeAll(from, to)
+	if !started {
+		respondWithJSON(w, http.StatusConflict, map[string]interface{}{
+			"data": map[string]string{"status": "already_running"},
+		})
+		return
+	}
+	respondWithJSON(w, http.StatusAccepted, map[string]interface{}{
+		"data": map[string]string{"status": "started"},
+	})
+}
+
 // AnalyzeCalls обрабатывает POST /api/zvonari/calls/analyze?from=&to=
 // Запускает LLM-классификацию для звонков за период, у которых уже есть
 // готовый транскрипт, но ещё нет analytics_json — отдельная фоновая задача

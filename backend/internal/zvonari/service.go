@@ -350,6 +350,42 @@ func (s *Service) RetryFailedCalls(ctx context.Context, from, to time.Time) (*Sy
 	return result, nil
 }
 
+// allTranscriptStatuses covers every value transcript_status can hold —
+// used by RetranscribeAll to force every call in a period back through
+// transcribeOnly regardless of its current status, not just the
+// broken/pending ones RetryFailedCalls targets.
+var allTranscriptStatuses = []string{"done", "failed", "no_recording", "pending", "transcribing"}
+
+// RetranscribeAll force-retranscribes every call in [from, to) — including
+// ones already transcript_status='done' — via transcribeOnly, which always
+// prefers the GPU box (see transcribe.Client.Transcribe) when
+// TRANSCRIBE_SERVICE_GPU_URL is configured and falls back to the local CPU
+// service otherwise. Exists for backfilling better transcripts once a GPU
+// box comes online after calls were already transcribed on CPU/small.
+func (s *Service) RetranscribeAll(ctx context.Context, from, to time.Time) (*SyncResult, error) {
+	calls, err := s.db.ListCallsByStatusPeriod(ctx, allTranscriptStatuses, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("listing calls to retranscribe: %w", err)
+	}
+
+	result := &SyncResult{CallsFound: len(calls)}
+	var toProcess []pending
+	for i := range calls {
+		toProcess = append(toProcess, pending{call: &calls[i], uuid: calls[i].PBXUUID})
+	}
+
+	s.processConcurrently(ctx, toProcess, result)
+
+	return result, nil
+}
+
+// StartRetranscribeAll launches RetranscribeAll in the background — see startBackgroundJob.
+func (s *Service) StartRetranscribeAll(from, to time.Time) bool {
+	return s.startBackgroundJob(func(ctx context.Context) (*SyncResult, error) {
+		return s.RetranscribeAll(ctx, from, to)
+	})
+}
+
 // processConcurrently runs transcribeAndAnalyze for each pending call, up
 // to maxConcurrentProcessing at once, and keeps the live sync-status
 // progress counters (TotalToProcess/Processed) up to date as it goes.

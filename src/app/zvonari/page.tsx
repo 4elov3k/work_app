@@ -27,6 +27,7 @@ import {
   XCircle,
   CircleDashed,
   CornerDownRight,
+  Cpu,
 } from "lucide-react";
 
 import { zvonariAPI, Caller, CallerReport, Call, CallAnalytics, ApiError } from "@/lib/api";
@@ -871,6 +872,11 @@ export default function ZvonariPage() {
       () => zvonariAPI.retryFailed(period.from, period.to),
       "Повтор запущен, это может занять несколько минут..."
     );
+  const handleRetranscribeGpu = () =>
+    runBackgroundJob(
+      () => zvonariAPI.retranscribeAllGpu(period.from, period.to),
+      "Перетранскрибация запущена — все звонки периода будут пересняты (GPU, если доступен)..."
+    );
   const handleAnalyze = () =>
     runBackgroundJob(
       () => zvonariAPI.analyzeCalls(period.from, period.to),
@@ -1175,6 +1181,16 @@ export default function ZvonariPage() {
                 >
                   <RefreshCw className="mr-2 h-4 w-4" />
                   Повторить неудачные
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={handleRetranscribeGpu}
+                  disabled={syncing}
+                  title="Перетранскрибировать ВСЕ звонки периода (включая уже готовые) — использует GPU-бокс, если он настроен и доступен"
+                  className="text-muted-foreground transition-transform hover:text-foreground active:scale-95"
+                >
+                  <Cpu className="mr-2 h-4 w-4" />
+                  Перетранскрибировать на GPU
                 </Button>
               </div>
             </div>

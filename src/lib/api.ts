@@ -1245,6 +1245,16 @@ export const zvonariAPI = {
     return handleResponse<SingleResponse<{ status: string }>>(response);
   },
 
+  // Массово ПЕРЕтранскрибировать вообще все звонки периода, включая уже
+  // готовые (в отличие от retryFailed) — транскрибация сама предпочитает
+  // GPU-бокс, если он настроен и доступен. Для задним числом улучшения
+  // качества транскриптов, сделанных раньше на CPU. Тоже фоновая задача.
+  retranscribeAllGpu: async (from: string, to: string): Promise<SingleResponse<{ status: string }>> => {
+    const params = new URLSearchParams({ from, to });
+    const response = await fetch(`${API_BASE}/zvonari/calls/retranscribe-gpu?${params.toString()}`, { method: 'POST' });
+    return handleResponse<SingleResponse<{ status: string }>>(response);
+  },
+
   // Запустить LLM-оценку по скрипту IQ-200 (регламент v1.2) для звонков за
   // период, у которых уже готов транскрипт, но ещё нет анализа —
   // отдельный шаг от синхронизации/транскрибации. Тоже фоновая задача.
