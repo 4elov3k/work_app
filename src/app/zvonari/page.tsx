@@ -36,6 +36,24 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 
+// Период (from/to) переживает перезагрузку страницы через localStorage —
+// без этого при каждом обновлении фильтр молча слетал обратно на дефолтную
+// неделю, теряя то, что реально смотрел человек.
+const PERIOD_STORAGE_KEY = "zvonari_period";
+
+function loadStoredPeriod(): { from: string; to: string } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(PERIOD_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.from === "string" && typeof parsed?.to === "string") return parsed;
+  } catch {
+    // corrupted/old value — ignore and fall back to default period
+  }
+  return null;
+}
+
 function todayISO(offsetDays = 0): string {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
@@ -118,6 +136,89 @@ function stepStatusMeta(status: string | undefined): { icon: ReactNode; classNam
     default:
       return { icon: <HelpCircle className="h-3.5 w-3.5" />, className: "text-muted-foreground" };
   }
+}
+
+// Заливка для точки в компактном индикаторе прогресса (StepStepper) —
+// упрощённая версия stepStatusMeta без иконок, для сканирования одним взглядом.
+function stepDotClassName(stepKey: string, status: string | undefined): string {
+  if (stepKey === "step4") {
+    return status === "Использован" ? "bg-primary" : "bg-muted border border-border";
+  }
+  switch (status) {
+    case "Выполнен":
+      return "bg-success";
+    case "Частично":
+      return "bg-warning";
+    case "Не выполнен":
+      return "bg-destructive";
+    case "Выполнен вне последовательности":
+      return "bg-warning ring-2 ring-warning/30";
+    case "Корректная остановка":
+      return "bg-muted-foreground/50";
+    case "Не применим":
+      return "bg-muted border border-border";
+    default:
+      return "bg-muted border border-dashed border-border";
+  }
+}
+
+// Компактный индикатор прогресса по 6 шагам скрипта — точка на шаг, цвет по
+// статусу (см. stepDotClassName). Даёт "просканировать" таблицу одним
+// взглядом без разворачивания каждой строки; title на каждой точке — статус
+// конкретного шага для наведения.
+function StepStepper({ steps }: { steps?: CallAnalytics["steps"] }) {
+  if (!steps) return <span className="text-xs text-muted-foreground">—</span>;
+  return (
+    <div className="flex items-center gap-1">
+      {STEP_KEYS.map((key) => {
+        const status = steps[key]?.status;
+        return (
+          <span
+            key={key}
+            title={`${STEP_LABELS[key]}: ${status || "нет данных"}`}
+            className={`h-2.5 w-2.5 shrink-0 rounded-full ${stepDotClassName(key, status)}`}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+// Грубая классификация итога звонка на "тон" — чтобы таблицу можно было
+// сканировать по цвету, а не перечитывать текст каждой строки.
+function outcomeTone(outcome: string | undefined): "positive" | "negative" | "neutral" | "muted" {
+  switch (outcome) {
+    case OUTCOME_SCRIPT_COMPLETED:
+    case "Согласован конкретный повторный контакт":
+    case "Корректно выявлено отсутствие потребности":
+      return "positive";
+    case OUTCOME_STEP1_BROKEN:
+    case "Срыв на шаге 2":
+    case "Встреча согласована, шаг 5 не выполнен":
+      return "negative";
+    case "Технический / содержательный диалог не состоялся":
+    case "Недостаточно данных для оценки":
+    case undefined:
+      return "muted";
+    default:
+      return "neutral";
+  }
+}
+
+const OUTCOME_TONE_CLASSES: Record<ReturnType<typeof outcomeTone>, string> = {
+  positive: "border-success/40 bg-success/10 text-success",
+  negative: "border-destructive/40 bg-destructive/10 text-destructive",
+  neutral: "border-border text-foreground",
+  muted: "border-border text-muted-foreground",
+};
+
+function OutcomeBadge({ outcome }: { outcome?: string }) {
+  if (!outcome) return <span className="text-xs text-muted-foreground">не проанализировано</span>;
+  return (
+    <Badge variant="outline" className={`whitespace-normal text-left font-normal ${OUTCOME_TONE_CLASSES[outcomeTone(outcome)]}`}>
+      {outcome}
+    </Badge>
+  );
 }
 
 function StepBreakdown({ analytics }: { analytics: CallAnalytics }) {
@@ -247,6 +348,7 @@ function CallDetailList({
   onRetranscribe: (callId: string) => void;
 }) {
   const [filters, setFilters] = useState<CallFilters>(EMPTY_FILTERS);
+  const [expandedCallId, setExpandedCallId] = useState<string | null>(null);
   const filtered = useMemo(() => filterCalls(calls, filters), [calls, filters]);
 
   const outcomes = useMemo(() => {
@@ -359,63 +461,120 @@ function CallDetailList({
       {filtered.length === 0 ? (
         <p className="text-sm text-muted-foreground">Ничего не найдено по этим фильтрам</p>
       ) : (
-        <div className="space-y-2">
-          {filtered.map((call) => {
-            const isRetranscribing = retranscribingIds.has(call.id);
-            const analytics = call.analytics_json;
-            const isFraud = !!analytics?.fraud_suspected;
-            return (
-              <details
-                key={call.id}
-                className={`group rounded-md border p-2 transition-colors hover:bg-accent/40 ${
-                  isFraud ? "border-l-4 border-l-destructive" : ""
-                }`}
-              >
-                <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">{new Date(call.started_at).toLocaleString("ru-RU")}</span>
-                  <Badge variant="outline">{DIRECTION_LABELS[call.direction] || call.direction}</Badge>
-                  <span className="text-muted-foreground">{formatDuration(call.duration_sec)}</span>
-                  {analytics?.call_type && (
-                    <Badge variant="outline">{CALL_TYPE_LABELS[analytics.call_type] || analytics.call_type}</Badge>
-                  )}
-                  {isFraud && (
-                    <Badge variant="destructive" className="gap-1">
-                      <ShieldAlert className="h-3 w-3" />
-                      фрод
-                    </Badge>
-                  )}
-                  {analytics?.outcome && <Badge variant="secondary">{analytics.outcome}</Badge>}
-                  {analytics?.confidence && analytics.confidence !== "высокая" && (
-                    <Badge variant="outline" className="text-xs text-muted-foreground">
-                      уверенность: {analytics.confidence}
-                    </Badge>
-                  )}
-                  <span
-                    className={`text-xs ${call.transcript_status === "done" ? "text-muted-foreground" : "text-warning"}`}
-                  >
-                    {STATUS_LABELS[call.transcript_status] || call.transcript_status}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="ml-auto h-7 px-2 transition-transform active:scale-95"
-                    disabled={isRetranscribing}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      onRetranscribe(call.id);
-                    }}
-                  >
-                    {isRetranscribing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mic className="h-3.5 w-3.5" />}
-                    <span className="ml-1">Транскрибировать</span>
-                  </Button>
-                </summary>
-                {analytics?.steps && <StepBreakdown analytics={analytics} />}
-                <p className="mt-2 whitespace-pre-wrap rounded-md bg-muted/50 p-2 text-sm text-muted-foreground">
-                  {call.transcript_text || "Транскрипт недоступен"}
-                </p>
-              </details>
-            );
-          })}
+        <div className="flex items-center gap-3 px-1 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">Прогресс:</span>
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2.5 w-2.5 rounded-full bg-success" /> выполнен
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2.5 w-2.5 rounded-full bg-warning" /> частично / вне очереди
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2.5 w-2.5 rounded-full bg-destructive" /> не выполнен
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2.5 w-2.5 rounded-full bg-muted border border-dashed border-border" /> н/д или не применим
+          </span>
+          <span className="ml-auto">1 → 2 → 3 → 4 → 5 → 6</span>
+        </div>
+      )}
+
+      {filtered.length > 0 && (
+        <div className="overflow-hidden rounded-lg border border-border/70">
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="w-6" />
+                <TableHead>Время</TableHead>
+                <TableHead>Длит.</TableHead>
+                <TableHead>Прогресс по скрипту</TableHead>
+                <TableHead>Итог</TableHead>
+                <TableHead className="w-10" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((call) => {
+                const isRetranscribing = retranscribingIds.has(call.id);
+                const analytics = call.analytics_json;
+                const isFraud = !!analytics?.fraud_suspected;
+                const isExpanded = expandedCallId === call.id;
+                const notDone = call.transcript_status !== "done";
+                return (
+                  <Fragment key={call.id}>
+                    <TableRow
+                      className={`cursor-pointer transition-colors hover:bg-accent/50 ${isExpanded ? "bg-accent/30" : ""} ${
+                        isFraud ? "border-l-4 border-l-destructive" : ""
+                      }`}
+                      onClick={() => setExpandedCallId(isExpanded ? null : call.id)}
+                    >
+                      <TableCell>
+                        <ChevronRight
+                          className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${
+                            isExpanded ? "rotate-90 text-primary" : ""
+                          }`}
+                        />
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-sm">
+                        <div>{new Date(call.started_at).toLocaleString("ru-RU")}</div>
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <Badge variant="outline" className="px-1 py-0 text-[10px] font-normal">
+                            {DIRECTION_LABELS[call.direction] || call.direction}
+                          </Badge>
+                          {notDone && (
+                            <span className="text-warning">{STATUS_LABELS[call.transcript_status] || call.transcript_status}</span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                        {formatDuration(call.duration_sec)}
+                      </TableCell>
+                      <TableCell>
+                        <StepStepper steps={analytics?.steps} />
+                      </TableCell>
+                      <TableCell className="max-w-xs">
+                        <div className="flex flex-wrap items-center gap-1">
+                          <OutcomeBadge outcome={analytics?.outcome} />
+                          {isFraud && (
+                            <Badge variant="destructive" className="gap-1 px-1.5 py-0 text-[10px]">
+                              <ShieldAlert className="h-3 w-3" />
+                              фрод
+                            </Badge>
+                          )}
+                          {analytics?.confidence && analytics.confidence !== "высокая" && (
+                            <span className="text-[10px] text-muted-foreground">увер.: {analytics.confidence}</span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 transition-transform active:scale-95"
+                          disabled={isRetranscribing}
+                          title="Транскрибировать заново"
+                          onClick={() => onRetranscribe(call.id)}
+                        >
+                          {isRetranscribing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mic className="h-3.5 w-3.5" />}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                    {isExpanded && (
+                      <TableRow className="hover:bg-transparent">
+                        <TableCell colSpan={6} className="bg-accent/10">
+                          <div className="space-y-2 py-1">
+                            {analytics?.steps && <StepBreakdown analytics={analytics} />}
+                            <p className="whitespace-pre-wrap rounded-md bg-muted/50 p-2 text-sm text-muted-foreground">
+                              {call.transcript_text || "Транскрипт недоступен"}
+                            </p>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </TableBody>
+          </Table>
         </div>
       )}
     </div>
@@ -505,8 +664,12 @@ export default function ZvonariPage() {
   const [loadingCallers, setLoadingCallers] = useState(true);
   const [listError, setListError] = useState("");
 
-  const [from, setFrom] = useState(todayISO(-6));
-  const [to, setTo] = useState(todayISO());
+  const [from, setFrom] = useState(() => loadStoredPeriod()?.from ?? todayISO(-6));
+  const [to, setTo] = useState(() => loadStoredPeriod()?.to ?? todayISO());
+
+  useEffect(() => {
+    window.localStorage.setItem(PERIOD_STORAGE_KEY, JSON.stringify({ from, to }));
+  }, [from, to]);
 
   const [syncing, setSyncing] = useState(false);
   const [paused, setPaused] = useState(false);
