@@ -664,8 +664,22 @@ export default function ZvonariPage() {
   const [loadingCallers, setLoadingCallers] = useState(true);
   const [listError, setListError] = useState("");
 
-  const [from, setFrom] = useState(() => loadStoredPeriod()?.from ?? todayISO(-6));
-  const [to, setTo] = useState(() => loadStoredPeriod()?.to ?? todayISO());
+  const [from, setFrom] = useState(todayISO(-6));
+  const [to, setTo] = useState(todayISO());
+
+  // Reads the persisted period after mount rather than in the useState
+  // initializer above — the server has no localStorage, so computing the
+  // initial value from it there would make the client's first render
+  // disagree with the server-rendered HTML (React hydration mismatch).
+  // Loading it post-mount instead means one harmless extra render on the
+  // client right after hydration, not a mismatch during hydration itself.
+  useEffect(() => {
+    const stored = loadStoredPeriod();
+    if (stored) {
+      setFrom(stored.from);
+      setTo(stored.to);
+    }
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem(PERIOD_STORAGE_KEY, JSON.stringify({ from, to }));
