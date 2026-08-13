@@ -42,12 +42,14 @@ type Client struct {
 // still legitimately in progress, not stuck.
 const transcribeTimeout = 6 * time.Minute
 
-// GPU transcription should finish in seconds, not minutes — this timeout
-// exists to fail fast into the CPU fallback if the GPU box is unreachable
-// (network hiccup, not just "powered off": TCP refused/no-route already
-// return almost instantly) or its transcription is unexpectedly hung,
-// without eating into the overall per-call budget.
-const gpuTranscribeTimeout = 90 * time.Second
+// 90s was tuned assuming "GPU transcription finishes in seconds" — true for
+// a typical few-minute call, but measured false for a real ~16-minute call,
+// which was still legitimately transcribing on the GPU box when this fired,
+// silently falling back to a much slower CPU pass instead. Still meant to
+// fail fast if the GPU box is unreachable (TCP refused/no-route return
+// almost instantly, long before this budget matters) or genuinely hung —
+// just no longer assumes every call is short.
+const gpuTranscribeTimeout = 5 * time.Minute
 
 func NewFromEnv() *Client {
 	baseURL := strings.TrimRight(os.Getenv("TRANSCRIBE_SERVICE_URL"), "/")
