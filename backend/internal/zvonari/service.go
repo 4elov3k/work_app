@@ -486,6 +486,11 @@ func (s *Service) transcribeOnly(ctx context.Context, call *models.Call, pbxUUID
 // legitimately working.
 const analyzeBatchSize = 25
 
+// analyzeBatchCtxTimeout mirrors callreport.analyzeHTTPTimeout — kept as an
+// independent context deadline (see the call site) rather than trusting the
+// http.Client timeout alone.
+const analyzeBatchCtxTimeout = 25 * time.Minute
+
 func (s *Service) AnalyzeCalls(ctx context.Context, from, to time.Time) (*SyncResult, error) {
 	if !s.callreport.Configured() {
 		return nil, fmt.Errorf("аналитика недоступна (не настроен CALL_ANALYTICS_URL)")
@@ -515,7 +520,16 @@ func (s *Service) AnalyzeCalls(ctx context.Context, from, to time.Time) (*SyncRe
 			reqs[i] = callreport.AnalyzeCallRequest{CallID: c.ID, Transcript: c.TranscriptText}
 		}
 
-		batchResult, err := s.callreport.AnalyzeCallsBatch(ctx, reqs)
+		// Belt-and-suspenders alongside callreport.Client's own httpClient.Timeout:
+		// a real production run left a batch hung for 5+ hours with neither a
+		// result nor an error ever coming back, well past that client timeout —
+		// cause unconfirmed, but an explicit per-call context deadline is the
+		// more standard Go mechanism and gives a second, independent way for
+		// the request to actually get cancelled instead of relying on exactly
+		// one timeout path that's already been observed not to fire.
+		batchCtx, cancel := context.WithTimeout(ctx, analyzeBatchCtxTimeout)
+		batchResult, err := s.callreport.AnalyzeCallsBatch(batchCtx, reqs)
+		cancel()
 		if err != nil {
 			// Whole-batch failure (timeout, service down) — every call in it
 			// stays without analytics_json, so the next AnalyzeCalls run
