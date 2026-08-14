@@ -478,10 +478,13 @@ func (s *Service) transcribeOnly(ctx context.Context, call *models.Call, pbxUUID
 // (evidence/missing per step, not just {category, outcome, note}), which is
 // far heavier to generate than the old flat classification — a batch of 50
 // measured well over call_analytics_server.py's batch_timeout(50)=460s in
-// practice, forcing a slow serial per-call fallback for the whole batch. 10
-// keeps batch_timeout(10)=140s comfortably achievable while still saving
-// most of the per-call subprocess-spawn overhead batching was for.
-const analyzeBatchSize = 10
+// practice, forcing a slow serial per-call fallback for the whole batch. 25
+// is a deliberate middle ground: batch_timeout(25)=810s in
+// call_analytics_server.py, plus up to ~25 more per-call fallback attempts
+// in the worst case — see analyzeHTTPTimeout below, which is sized to
+// outlast that worst case rather than abandon a batch that's still
+// legitimately working.
+const analyzeBatchSize = 25
 
 func (s *Service) AnalyzeCalls(ctx context.Context, from, to time.Time) (*SyncResult, error) {
 	if !s.callreport.Configured() {

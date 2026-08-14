@@ -22,15 +22,25 @@ type Client struct {
 	httpClient *http.Client
 }
 
+// analyzeHTTPTimeout must outlast call_analytics_server.py's own worst case
+// for one /analyze-calls-batch request: the batch_timeout(analyzeBatchSize)
+// budget for the initial combined attempt, PLUS — if that attempt fails —
+// a full serial per-call fallback for every item in the batch (each
+// individual analyze_call() call takes on the order of ~15-20s under the
+// IQ-200 v1.2 rubric's per-step JSON schema). At analyzeBatchSize=25 that's
+// roughly 810s + 25*20s ≈ 22 minutes worst case; 10 minutes (the previous
+// value, sized for the old flat {category,outcome,note} schema) would
+// abandon a batch that's still legitimately working, silently discarding
+// its result and forcing a full retry next AnalyzeCalls run instead of
+// just waiting a bit longer. If analyzeBatchSize changes, re-derive this.
+const analyzeHTTPTimeout = 25 * time.Minute
+
 func NewFromEnv() *Client {
 	baseURL := strings.TrimRight(os.Getenv("CALL_ANALYTICS_URL"), "/")
 	return &Client{
-		baseURL: baseURL,
-		token:   os.Getenv("CALL_ANALYTICS_TOKEN"),
-		// A batch of 50 calls can take several minutes server-side (see
-		// batch_timeout in call_analytics_server.py) — the client timeout
-		// must clear that with room to spare, not just cover a single call.
-		httpClient: &http.Client{Timeout: 10 * time.Minute},
+		baseURL:    baseURL,
+		token:      os.Getenv("CALL_ANALYTICS_TOKEN"),
+		httpClient: &http.Client{Timeout: analyzeHTTPTimeout},
 	}
 }
 
