@@ -38,6 +38,18 @@ psql -d invoices_db -f migrations/014_redmine_project_operations.sql
 psql -d invoices_db -f migrations/015_customer_edo_requisites.sql
 psql -d invoices_db -f migrations/016_accounting_mcp.sql
 psql -d invoices_db -f migrations/017_dzerzhinskie_vedomosti_kpp.sql
+psql -d invoices_db -f migrations/018_fix_default_contract_numbers.sql
+psql -d invoices_db -f migrations/019_centr_ttm_director.sql
+psql -d invoices_db -f migrations/020_fix_bank_account_and_dz_vedomosti_signer.sql
+psql -d invoices_db -f migrations/021_contract_appendices.sql
+psql -d invoices_db -f migrations/022_seed_services_catalog.sql
+psql -d invoices_db -f migrations/023_dogovor_602_website_appendix.sql
+psql -d invoices_db -f migrations/024_fix_duplicate_dz_vedomosti_and_stale_contract_numbers.sql
+psql -d invoices_db -f migrations/025_act_invoices_delete_cascade.sql
+psql -d invoices_db -f migrations/026_global_unique_act_invoice_numbers.sql
+psql -d invoices_db -f migrations/027_fix_dogovor_602_number.sql
+psql -d invoices_db -f migrations/028_restore_dogovor_602_appendix.sql
+psql -d invoices_db -f migrations/029_zvonari.sql
 ```
 
 Если база была создана через `docker-compose` до этого изменения, существующий volume нужно либо пересоздать, либо применить миграции вручную: init-скрипты Postgres выполняются только при первом создании пустой БД.
