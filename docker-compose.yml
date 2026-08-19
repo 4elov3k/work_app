@@ -40,6 +40,7 @@ services:
       - ./backend/migrations/027_fix_dogovor_602_number.sql:/docker-entrypoint-initdb.d/027_fix_dogovor_602_number.sql
       - ./backend/migrations/028_restore_dogovor_602_appendix.sql:/docker-entrypoint-initdb.d/028_restore_dogovor_602_appendix.sql
       - ./backend/migrations/029_zvonari.sql:/docker-entrypoint-initdb.d/029_zvonari.sql
+      - ./backend/migrations/030_drop_unused_roadmap_milestone_event_type.sql:/docker-entrypoint-initdb.d/030_drop_unused_roadmap_milestone_event_type.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U invoices_user -d invoices_db"]
       interval: 10s
