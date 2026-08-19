@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { ExternalLink, Loader2, RefreshCw, Settings } from "lucide-react"
 
-import { customersAPI, redmineAPI, RedmineProject, RedmineProjectLink } from "@/lib/api"
+import { ApiError, customersAPI, redmineAPI, RedmineProject, RedmineProjectLink } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
@@ -36,14 +36,15 @@ export default function RedmineProjectLinkPanel({ customerId }: { customerId: st
   }, [projects, search])
 
   const formatError = (err: unknown) => {
-    const message = err instanceof Error ? err.message : "Не удалось выполнить запрос"
-    if (message.includes("HTTP 404")) {
-      return "Redmine endpoints не найдены в backend. Перезапустите backend с новой сборкой и примените миграцию 011."
+    if (err instanceof ApiError) {
+      if (err.status === 404) {
+        return "Redmine endpoints не найдены в backend. Перезапустите backend с новой сборкой и примените миграцию 011."
+      }
+      if (err.status === 502) {
+        return "Backend не смог получить проекты из Redmine. Проверьте REDMINE_URL и REDMINE_API в окружении backend."
+      }
     }
-    if (message.includes("HTTP 502")) {
-      return "Backend не смог получить проекты из Redmine. Проверьте REDMINE_URL и REDMINE_API в окружении backend."
-    }
-    return message
+    return err instanceof Error ? err.message : "Не удалось выполнить запрос"
   }
 
   const loadData = useCallback(async () => {

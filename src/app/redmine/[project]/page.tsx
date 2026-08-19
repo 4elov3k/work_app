@@ -19,56 +19,12 @@ import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { Alert } from "@/components/ui/alert"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-
-function groupKeyForItem(item: RedmineProjectDashboardItem) {
-  const name = item.group_name.toLowerCase()
-  if (name.includes("актив")) return "active"
-  if (name.includes("пауз")) return "pause"
-  if (name.includes("заверш")) return "done"
-  return "unknown"
-}
-
-function groupForColumn(groups: RedmineProjectGroup[], key: string) {
-  if (key === "active") return groups.find((group) => group.name.toLowerCase().includes("актив"))
-  if (key === "pause") return groups.find((group) => group.name.toLowerCase().includes("пауз"))
-  if (key === "done") return groups.find((group) => group.name.toLowerCase().includes("заверш"))
-  return null
-}
-
-const PROJECT_TYPES: Array<{ key: RedmineProjectType; label: string }> = [
-  { key: "", label: "Не задан" },
-  { key: "seo", label: "SEO" },
-  { key: "ads", label: "Реклама" },
-  { key: "dev", label: "Разработка" },
-  { key: "legal", label: "Юридическая помощь" },
-  { key: "support", label: "Техподдержка" },
-]
-
-function projectTypeLabel(type: RedmineProjectType) {
-  return PROJECT_TYPES.find((item) => item.key === type)?.label || "Не задан"
-}
-
-function eventVerb(event: RedmineProjectControlEvent) {
-  if (event.event_type === "control_cut") return "КС отправлен"
-  // dev cycles store their roadmap milestone as event_type "report_date"
-  // too (only the title differs — see insertCycleEvents on the backend),
-  // so "ОД отправлена" would be wrong for them.
-  if (event.event_type === "report_date") {
-    return event.service_type === "dev" ? "Этап закрыт" : "ОД отправлена"
-  }
-  return "Этап закрыт"
-}
+import { eventVerb, groupForColumn, groupKeyForItem, nextMonthDate, PROJECT_TYPES, projectTypeLabel } from "../shared"
 
 function eventStatusLabel(event: RedmineProjectControlEvent) {
   if (event.status === "sent") return "Отправлено"
   if (event.status === "skipped") return "Пропущено"
   return "План"
-}
-
-function nextMonthDate() {
-  const date = new Date()
-  date.setMonth(date.getMonth() + 1)
-  return date.toISOString().slice(0, 10)
 }
 
 export default function RedmineProjectPage() {

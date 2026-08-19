@@ -35,6 +35,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { Alert } from "@/components/ui/alert"
+import { eventVerb, groupForColumn, groupKeyForItem, nextMonthDate, PROJECT_TYPES, projectTypeLabel } from "./shared"
 
 const STATUS_COLUMNS = [
   { key: "active", title: "Активные", tone: "bg-success", icon: CheckCircle2 },
@@ -43,39 +44,11 @@ const STATUS_COLUMNS = [
   { key: "unknown", title: "Не разобраны", tone: "bg-neutral-400", icon: UserRound },
 ]
 
-const PROJECT_TYPES: Array<{ key: RedmineProjectType; label: string }> = [
-  { key: "", label: "Не задан" },
-  { key: "seo", label: "SEO" },
-  { key: "ads", label: "Реклама" },
-  { key: "dev", label: "Разработка" },
-  { key: "legal", label: "Юридическая помощь" },
-  { key: "support", label: "Техподдержка" },
-]
-
 const DEADLINE_STATES: Record<RedmineDeadlineState, { label: string; className: string; icon: typeof CheckCircle2 }> = {
   ok: { label: "Ок", className: "border-success/30 bg-success/10 text-success", icon: CheckCircle2 },
   due_soon: { label: "Скоро срок", className: "border-warning/30 bg-warning/10 text-warning", icon: AlertTriangle },
   burning: { label: "Горит", className: "border-destructive/30 bg-destructive/10 text-destructive", icon: Flame },
   urgent: { label: "Срочное", className: "border-destructive/50 bg-destructive/20 text-destructive", icon: Flame },
-}
-
-function groupKeyForItem(item: RedmineProjectDashboardItem) {
-  const name = item.group_name.toLowerCase()
-  if (name.includes("актив")) return "active"
-  if (name.includes("пауз")) return "pause"
-  if (name.includes("заверш")) return "done"
-  return "unknown"
-}
-
-function groupForColumn(groups: RedmineProjectGroup[], key: string) {
-  if (key === "active") return groups.find((group) => group.name.toLowerCase().includes("актив"))
-  if (key === "pause") return groups.find((group) => group.name.toLowerCase().includes("пауз"))
-  if (key === "done") return groups.find((group) => group.name.toLowerCase().includes("заверш"))
-  return null
-}
-
-function projectTypeLabel(type: RedmineProjectType) {
-  return PROJECT_TYPES.find((item) => item.key === type)?.label || "Не задан"
 }
 
 function formatDate(value: string) {
@@ -90,23 +63,6 @@ function daysUntil(value: string) {
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   return Math.round((due.getTime() - today.getTime()) / 86400000)
-}
-
-function eventVerb(event: RedmineProjectControlEvent) {
-  if (event.event_type === "control_cut") return "КС отправлен"
-  // dev cycles store their roadmap milestone as event_type "report_date"
-  // too (only the title differs — see insertCycleEvents on the backend),
-  // so "ОД отправлена" would be wrong for them.
-  if (event.event_type === "report_date") {
-    return event.service_type === "dev" ? "Этап закрыт" : "ОД отправлена"
-  }
-  return "Этап закрыт"
-}
-
-function nextMonthDate() {
-  const date = new Date()
-  date.setMonth(date.getMonth() + 1)
-  return date.toISOString().slice(0, 10)
 }
 
 export default function RedmineDashboardPage() {
@@ -421,7 +377,19 @@ export default function RedmineDashboardPage() {
       <article
         key={item.project_id}
         draggable
+        role="button"
+        tabIndex={0}
         onClick={() => router.push(`/redmine/${item.project_id}`)}
+        onKeyDown={(event) => {
+          // Ignore keydowns bubbling up from nested interactive controls
+          // (manager select, urgent toggle, etc.) — only the card itself
+          // should navigate on Enter/Space.
+          if (event.target !== event.currentTarget) return
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault()
+            router.push(`/redmine/${item.project_id}`)
+          }
+        }}
         onDragStart={(event) => {
           if ((event.target as HTMLElement).closest("[data-interactive='true']")) {
             event.preventDefault()

@@ -5,8 +5,16 @@ import html2canvas from "html2canvas"
 import JsPDF from "jspdf"
 import { Loader2, Upload } from "lucide-react"
 
-import { customersAPI, redmineAPI } from "@/lib/api"
+import { ApiError, customersAPI, redmineAPI } from "@/lib/api"
 import { Button } from "@/components/ui/button"
+
+// Matches backend/internal/handlers/redmine.go's UploadRedmineDocumentPDF —
+// it returns 400 for several distinct conditions (invalid body, wrong
+// document type, invalid PDF content, AND this one), so status alone can't
+// disambiguate; there's no separate error code in ErrorResponse (Code is
+// just the HTTP status). If this backend message ever changes, this
+// friendly-message branch silently stops firing — keep them in sync.
+const CUSTOMER_NOT_LINKED_MESSAGE = "Customer is not linked to a Redmine project"
 
 type Props = {
   customerId: string
@@ -62,13 +70,12 @@ export default function UploadPdfToRedmine({ customerId, documentType, documentI
 
       alert("PDF отправлен в файлы проекта Redmine")
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Не удалось отправить PDF в Redmine"
-      if (message.includes("Customer is not linked to a Redmine project")) {
+      if (err instanceof ApiError && err.status === 400 && err.message.includes(CUSTOMER_NOT_LINKED_MESSAGE)) {
         alert("Сначала привяжите контрагента к проекту Redmine в карточке контрагента")
         return
       }
       console.error("Failed to upload PDF to Redmine:", err)
-      alert(message)
+      alert(err instanceof Error ? err.message : "Не удалось отправить PDF в Redmine")
     } finally {
       setLoading(false)
     }
