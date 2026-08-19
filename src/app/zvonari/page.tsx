@@ -322,11 +322,21 @@ interface CallFilters {
 
 const EMPTY_FILTERS: CallFilters = { status: "", callType: "", outcome: "", direction: "", search: "", fraudOnly: false };
 
+// CallOutcome uses "" to mean "not yet analyzed" (see zvonari.ts), which
+// collides with the filter's own "no filter selected" sentinel — this
+// separate value lets the dropdown offer "unanalyzed" as its own option
+// instead of it being unreachable.
+const UNANALYZED_OUTCOME = "__unanalyzed__";
+
 function filterCalls(calls: Call[], filters: CallFilters): Call[] {
   return calls.filter((call) => {
     if (filters.status && call.transcript_status !== filters.status) return false;
     if (filters.callType && (call.analytics_json?.call_type || "") !== filters.callType) return false;
-    if (filters.outcome && (call.analytics_json?.outcome || "") !== filters.outcome) return false;
+    if (filters.outcome === UNANALYZED_OUTCOME) {
+      if (call.analytics_json?.outcome) return false;
+    } else if (filters.outcome && (call.analytics_json?.outcome || "") !== filters.outcome) {
+      return false;
+    }
     if (filters.fraudOnly && !call.analytics_json?.fraud_suspected) return false;
     if (filters.direction && call.direction !== filters.direction) return false;
     if (filters.search) {
@@ -357,6 +367,8 @@ function CallDetailList({
     calls.forEach((c) => c.analytics_json?.outcome && set.add(c.analytics_json.outcome));
     return Array.from(set).sort();
   }, [calls]);
+
+  const hasUnanalyzed = useMemo(() => calls.some((c) => !c.analytics_json?.outcome), [calls]);
 
   const callTypes = useMemo(() => {
     const set = new Set<string>();
@@ -426,6 +438,7 @@ function CallDetailList({
           className={selectClass}
         >
           <option value="">Все исходы</option>
+          {hasUnanalyzed && <option value={UNANALYZED_OUTCOME}>Не проанализировано</option>}
           {outcomes.map((o) => (
             <option key={o} value={o}>
               {o}
@@ -503,10 +516,19 @@ function CallDetailList({
                 return (
                   <Fragment key={call.id}>
                     <TableRow
+                      role="button"
+                      tabIndex={0}
                       className={`cursor-pointer transition-colors hover:bg-accent/50 ${isExpanded ? "bg-accent/30" : ""} ${
                         isFraud ? "border-l-4 border-l-destructive" : ""
                       }`}
                       onClick={() => setExpandedCallId(isExpanded ? null : call.id)}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) return
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault()
+                          setExpandedCallId(isExpanded ? null : call.id)
+                        }
+                      }}
                     >
                       <TableCell>
                         <ChevronRight
@@ -553,6 +575,7 @@ function CallDetailList({
                           className="h-7 px-2 transition-transform active:scale-95"
                           disabled={isRetranscribing}
                           title="Транскрибировать заново"
+                          aria-label="Транскрибировать заново"
                           onClick={() => onRetranscribe(call.id)}
                         >
                           {isRetranscribing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mic className="h-3.5 w-3.5" />}
@@ -1007,9 +1030,37 @@ export default function ZvonariPage() {
     }
   };
 
-  const handleDownloadCsv = (callerId: string) => {
+  const handleDownloadCsv = async (callerId: string) => {
+    // A plain `window.location.href = url` navigates the whole SPA away
+    // (losing period/expanded-row/panel state) if the response isn't
+    // actually a CSV attachment (e.g. a JSON error body) — fetch and check
+    // first, matching the pattern used by the invoice/act XML export.
     const url = zvonariAPI.exportCallsCsvUrl(callerId, period.from, period.to);
-    window.location.href = url;
+    updatePanel(callerId, { callsError: "" });
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(text || `Ошибка HTTP ${response.status}`);
+      }
+      const disposition = response.headers.get("content-disposition");
+      const match = disposition?.match(/filename\*=UTF-8''([^;]+)/i) || disposition?.match(/filename="?([^";]+)"?/i);
+      const filename = match?.[1] ? decodeURIComponent(match[1]) : "calls.csv";
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      console.error("CSV export failed:", err);
+      updatePanel(callerId, {
+        callsError: err instanceof Error ? err.message : "Не удалось выгрузить CSV",
+      });
+    }
   };
 
   const handleLoadCalls = async (callerId: string) => {
@@ -1028,6 +1079,7 @@ export default function ZvonariPage() {
 
   const handleRetranscribeCall = async (callerId: string, callId: string) => {
     setRetranscribingIds((current) => new Set(current).add(callId));
+    updatePanel(callerId, { callsError: "" });
     try {
       const response = await zvonariAPI.retranscribeCall(callId);
       const updated = response.data;
@@ -1038,6 +1090,9 @@ export default function ZvonariPage() {
       });
     } catch (err) {
       console.error("Retranscribe failed:", err);
+      updatePanel(callerId, {
+        callsError: err instanceof Error ? err.message : "Не удалось перетранскрибировать звонок",
+      });
     } finally {
       setRetranscribingIds((current) => {
         const next = new Set(current);
@@ -1402,10 +1457,19 @@ export default function ZvonariPage() {
                 return (
                   <Fragment key={caller.id}>
                     <TableRow
+                      role="button"
+                      tabIndex={0}
                       className={`cursor-pointer transition-colors hover:bg-accent/60 ${
                         isExpanded ? "bg-accent/40" : ""
                       }`}
                       onClick={() => toggleExpand(caller.id)}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) return
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault()
+                          toggleExpand(caller.id)
+                        }
+                      }}
                     >
                       <TableCell>
                         <ChevronRight
@@ -1476,6 +1540,7 @@ export default function ZvonariPage() {
                             onClick={() => handleDownloadCsv(caller.id)}
                             className="transition-transform hover:text-primary active:scale-95"
                             title="Скачать CSV"
+                            aria-label="Скачать CSV"
                           >
                             <Download className="h-4 w-4" />
                           </Button>
