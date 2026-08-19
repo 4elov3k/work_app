@@ -8,12 +8,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
+import { Alert } from "@/components/ui/alert"
 
 export default function AllInvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [acts, setActs] = useState<Act[]>([])
   const [customers, setCustomers] = useState<Record<string, Customer>>({})
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
   const [searchQuery, setSearchQuery] = useState("")
 
   useEffect(() => {
@@ -21,6 +23,7 @@ export default function AllInvoicesPage() {
   }, [])
 
   const loadData = async () => {
+    setError("")
     try {
       // Загружаем всех клиентов
       const customersResponse = await customersAPI.getAll(1, 1000)
@@ -39,6 +42,7 @@ export default function AllInvoicesPage() {
       setActs(actsResponse.data || [])
     } catch (err) {
       console.error('Failed to load data:', err)
+      setError(err instanceof Error ? err.message : 'Не удалось загрузить документы. Проверьте соединение с сервером и попробуйте ещё раз.')
     } finally {
       setLoading(false)
     }
@@ -130,6 +134,8 @@ export default function AllInvoicesPage() {
           </Link>
           <h1 className="text-3xl font-bold">Все документы</h1>
         </div>
+
+        {error && <Alert className="mb-6">{error}</Alert>}
 
         {/* Поиск */}
         <div className="relative max-w-md">

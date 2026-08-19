@@ -217,9 +217,17 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
 
   const handleOpenChange = (value: boolean) => {
     setIsOpen(value)
-    if (value && !manualNumber && selectedContractId) {
-      loadNextNumber(selectedContractId)
+    if (value) {
+      setError("")
+      if (!manualNumber && selectedContractId) {
+        loadNextNumber(selectedContractId)
+      }
     }
+  }
+
+  const handleDeleteOpenChange = (value: boolean) => {
+    setDeleteOpen(value)
+    if (value) setError("")
   }
 
   const handleClickAdd = async (event: React.FormEvent) => {
@@ -569,7 +577,7 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
         </div>
       )}
 
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+      <Dialog open={deleteOpen} onOpenChange={handleDeleteOpenChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Удалить {cfg.badgeLabel.toLowerCase()}?</DialogTitle>

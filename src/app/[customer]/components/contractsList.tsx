@@ -147,6 +147,11 @@ export default function ContractsList({ slug }: { slug: string }) {
     }
   }
 
+  const handleDeleteOpenChange = (value: boolean) => {
+    setDeleteOpen(value)
+    if (value) setError("")
+  }
+
   const handleFileSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     event.target.value = ""
@@ -390,7 +395,7 @@ export default function ContractsList({ slug }: { slug: string }) {
         </div>
       )}
 
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+      <Dialog open={deleteOpen} onOpenChange={handleDeleteOpenChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Удалить договор?</DialogTitle>

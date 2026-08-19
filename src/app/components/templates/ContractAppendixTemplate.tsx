@@ -3,6 +3,7 @@ import { Customer, Contract, ContractAppendixWithLines } from "@/lib/api"
 import type { Organization } from "@/lib/api.server"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table"
 import { Card, CardContent } from "@/components/ui/card"
+import { Signature, Stamp } from "./StampAndSignature"
 
 interface ContractAppendixTemplateProps {
   appendix: ContractAppendixWithLines
@@ -130,8 +131,9 @@ export default function ContractAppendixTemplate({
               <div className="text-[11px] flex-shrink-0">Исполнитель:</div>
               <div className="text-[11px] text-right">{sellerSignerName}</div>
             </div>
-            <div className="flex items-center gap-2 mt-2">
+            <div className="relative flex items-center gap-2 mt-2">
               <div className="border-b border-black flex-1 h-6"></div>
+              <Signature />
             </div>
             <p className="text-[9px] text-gray-500 mt-1">(подпись)</p>
           </div>
@@ -148,8 +150,9 @@ export default function ContractAppendixTemplate({
           </div>
         </div>
 
-        <div className="text-left mt-6">
+        <div className="relative text-left mt-6">
           <p className="text-[11px]">М.П.</p>
+          <Stamp />
         </div>
       </CardContent>
     </Card>

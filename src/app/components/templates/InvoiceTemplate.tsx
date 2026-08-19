@@ -4,6 +4,7 @@ import type { Organization } from "@/lib/api.server"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table"
 import { Card, CardContent } from "@/components/ui/card"
 import EditableServiceLine from "./EditableServiceLine"
+import { Signature, Stamp } from "./StampAndSignature"
 
 interface InvoiceTemplateProps {
   invoice: InvoiceWithServices
@@ -170,14 +171,19 @@ export default function InvoiceTemplate({ invoice, customer, docId, organization
           <div className="flex justify-between items-start mb-2">
             <div className="text-[11px]">
               <p className="mb-3">{organization.signer.position || "Руководитель предприятия"}:</p>
-              <div className="border-b border-black w-48 h-6"></div>
+              <div className="relative border-b border-black w-48 h-6">
+                <Signature />
+              </div>
               <p className="text-[9px] text-gray-500 mt-1">(подпись)</p>
             </div>
             <div className="text-[11px] mt-8">
               {sellerSignerName}
             </div>
           </div>
-          <p className="text-[11px] mt-6">М.П.</p>
+          <div className="relative">
+            <p className="text-[11px] mt-6">М.П.</p>
+            <Stamp />
+          </div>
         </div>
       </CardContent>
     </Card>

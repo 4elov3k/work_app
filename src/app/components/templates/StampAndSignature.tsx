@@ -10,7 +10,7 @@ export function Stamp() {
         <path id="circlePath1" d="M 20,60 A 40,40 0 0,1 100,60" fill="none"/>
         <text fill="#0088cc" fontSize="7" fontWeight="500" opacity="0.7">
           <textPath href="#circlePath1" startOffset="50%" textAnchor="middle">
-            ИП МЫЛЬНИКОВА
+            ИП МЫЛЕНКОВА
           </textPath>
         </text>
         
