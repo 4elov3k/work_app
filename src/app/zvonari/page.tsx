@@ -349,6 +349,8 @@ function filterCalls(calls: Call[], filters: CallFilters): Call[] {
   });
 }
 
+const CALLS_PAGE_SIZE = 50;
+
 function CallDetailList({
   calls,
   retranscribingIds,
@@ -360,7 +362,25 @@ function CallDetailList({
 }) {
   const [filters, setFilters] = useState<CallFilters>(EMPTY_FILTERS);
   const [expandedCallId, setExpandedCallId] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
   const filtered = useMemo(() => filterCalls(calls, filters), [calls, filters]);
+  // Some periods return hundreds of calls (each with a full transcript) —
+  // rendering them all into one unvirtualized table is genuinely slow, so
+  // paginate client-side rather than pulling in a virtualization library.
+  const pageCount = Math.max(1, Math.ceil(filtered.length / CALLS_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const paginated = useMemo(
+    () => filtered.slice(currentPage * CALLS_PAGE_SIZE, (currentPage + 1) * CALLS_PAGE_SIZE),
+    [filtered, currentPage]
+  );
+  // Reset to page 1 when the filters or the underlying call list change —
+  // done during render (React's documented pattern for this) rather than
+  // an effect, which would cause an extra commit.
+  const [resetTrackedOn, setResetTrackedOn] = useState({ filters, calls });
+  if (resetTrackedOn.filters !== filters || resetTrackedOn.calls !== calls) {
+    setResetTrackedOn({ filters, calls });
+    setPage(0);
+  }
 
   const outcomes = useMemo(() => {
     const set = new Set<string>();
@@ -507,7 +527,7 @@ function CallDetailList({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((call) => {
+              {paginated.map((call) => {
                 const isRetranscribing = retranscribingIds.has(call.id);
                 const analytics = call.analytics_json;
                 const isFraud = !!analytics?.fraud_suspected;
@@ -599,6 +619,33 @@ function CallDetailList({
               })}
             </TableBody>
           </Table>
+          {pageCount > 1 && (
+            <div className="flex items-center justify-between border-t border-border/70 px-3 py-2 text-xs text-muted-foreground">
+              <span>
+                Стр. {currentPage + 1} из {pageCount}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2"
+                  disabled={currentPage === 0}
+                  onClick={() => setPage(currentPage - 1)}
+                >
+                  Назад
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2"
+                  disabled={currentPage >= pageCount - 1}
+                  onClick={() => setPage(currentPage + 1)}
+                >
+                  Вперёд
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -880,6 +927,7 @@ export default function ZvonariPage() {
       .then((response) => {
         if (response.data.running) {
           setSyncing(true);
+          setPaused(response.data.paused ?? false);
           setSyncMessage("Задача уже выполняется...");
           pollSyncStatus();
         }
@@ -1447,11 +1495,18 @@ export default function ZvonariPage() {
                   Фрод
                   <SortIcon column="fraud" />
                 </TableHead>
+                <TableHead
+                  className="cursor-pointer select-none text-right transition-colors hover:text-foreground"
+                  onClick={() => handleSort("problem")}
+                >
+                  Проблемные
+                  <SortIcon column="problem" />
+                </TableHead>
                 <TableHead className="text-right">Действия</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sortedStats.map(({ caller, total, donePct, outcomes, fraudCount, isProblem }) => {
+              {sortedStats.map(({ caller, total, donePct, outcomes, fraudCount, problemRatio, isProblem }) => {
                 const panel = panels[caller.id] || EMPTY_PANEL;
                 const isExpanded = expandedId === caller.id;
                 return (
@@ -1517,6 +1572,9 @@ export default function ZvonariPage() {
                         ) : (
                           <span className="text-muted-foreground">0</span>
                         )}
+                      </TableCell>
+                      <TableCell className={`text-right tabular-nums ${isProblem ? "text-destructive font-medium" : "text-muted-foreground"}`}>
+                        {total > 0 ? `${Math.round(problemRatio * 100)}%` : "—"}
                       </TableCell>
                       <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end gap-2">
