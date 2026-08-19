@@ -102,6 +102,7 @@ export default function Home() {
         <Input
           type="text"
           placeholder="Поиск контрагентов по названию или ИНН..."
+          aria-label="Поиск контрагентов по названию или ИНН"
           value={value}
           onChange={handleSearchChange}
           className="pl-10"
@@ -121,7 +122,7 @@ export default function Home() {
             </Card>
           ))}
         </div>
-      ) : items.length === 0 && !error ? (
+      ) : items.length === 0 ? (
         <Card>
           <CardContent className="py-10 text-center">
             <Building2 className="mx-auto h-12 w-12 text-muted-foreground mb-4" />

@@ -339,6 +339,7 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
             <Input
               type="text"
               placeholder="Поиск по номеру..."
+              aria-label="Поиск по номеру"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-44 pl-8"
