@@ -36,7 +36,7 @@ import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { Alert } from "@/components/ui/alert"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { eventVerb, groupForColumn, groupKeyForItem, nextMonthDate, PROJECT_TYPES, projectTypeLabel } from "./shared"
+import { eventSentActionLabel, groupForColumn, groupKeyForItem, nextMonthDate, PROJECT_TYPES, projectTypeLabel } from "./shared"
 
 const STATUS_COLUMNS = [
   { key: "active", title: "Активные", tone: "bg-success", icon: CheckCircle2 },
@@ -474,7 +474,7 @@ export default function RedmineDashboardPage() {
                       }}
                     >
                       {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                      {eventVerb(nextEvent)}
+                      {eventSentActionLabel(nextEvent)}
                     </Button>
                     <Button
                       size="sm"

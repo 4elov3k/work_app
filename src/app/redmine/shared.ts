@@ -32,15 +32,18 @@ export function projectTypeLabel(type: RedmineProjectType) {
   return PROJECT_TYPES.find((item) => item.key === type)?.label || "Не задан"
 }
 
-export function eventVerb(event: RedmineProjectControlEvent) {
-  if (event.event_type === "control_cut") return "КС отправлен"
+// eventSentActionLabel is the button text for marking a control event as
+// sent — a call to action, not a status (that's eventStatusLabel in
+// [project]/page.tsx).
+export function eventSentActionLabel(event: RedmineProjectControlEvent) {
+  if (event.event_type === "control_cut") return "Отметить КС отправленным"
   // dev cycles store their roadmap milestone as event_type "report_date"
   // too (only the title differs — see insertCycleEvents on the backend),
-  // so "ОД отправлена" would be wrong for them.
+  // so "Отметить ОД отправленной" would be wrong for them.
   if (event.event_type === "report_date") {
-    return event.service_type === "dev" ? "Этап закрыт" : "ОД отправлена"
+    return event.service_type === "dev" ? "Отметить этап закрытым" : "Отметить ОД отправленной"
   }
-  return "Этап закрыт"
+  return "Отметить этап закрытым"
 }
 
 export function nextMonthDate() {
