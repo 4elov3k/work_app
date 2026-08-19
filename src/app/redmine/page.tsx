@@ -94,7 +94,12 @@ function daysUntil(value: string) {
 
 function eventVerb(event: RedmineProjectControlEvent) {
   if (event.event_type === "control_cut") return "КС отправлен"
-  if (event.event_type === "report_date") return "ОД отправлена"
+  // dev cycles store their roadmap milestone as event_type "report_date"
+  // too (only the title differs — see insertCycleEvents on the backend),
+  // so "ОД отправлена" would be wrong for them.
+  if (event.event_type === "report_date") {
+    return event.service_type === "dev" ? "Этап закрыт" : "ОД отправлена"
+  }
   return "Этап закрыт"
 }
 
@@ -163,7 +168,7 @@ export default function RedmineDashboardPage() {
       const matchesType = !typeFilter || item.project_type === typeFilter
       const matchesDeadline = !deadlineFilter || item.deadline_state === deadlineFilter
       const matchesWithoutType = !withoutTypeOnly || !item.project_type
-      const matchesMissingCycle = !missingCycleOnly || (!item.next_control_event && (item.project_type === "seo" || item.project_type === "ads" || item.project_type === "support"))
+      const matchesMissingCycle = !missingCycleOnly || (!item.next_control_event && Boolean(item.project_type))
       return matchesSearch && matchesManager && matchesStatus && matchesType && matchesDeadline && matchesWithoutType && matchesMissingCycle
     })
   }, [deadlineFilter, items, managerFilter, missingCycleOnly, searchQuery, statusFilter, typeFilter, withoutTypeOnly])
@@ -212,7 +217,7 @@ export default function RedmineDashboardPage() {
       if (item.deadline_state === "burning") result.burning += 1
       if (item.deadline_state === "due_soon") result.dueSoon += 1
       if (!item.project_type) result.withoutType += 1
-      if (!item.next_control_event && (item.project_type === "seo" || item.project_type === "ads" || item.project_type === "support")) {
+      if (!item.next_control_event && item.project_type) {
         result.withoutCycle += 1
       }
     }
@@ -327,7 +332,12 @@ export default function RedmineDashboardPage() {
 
   const handleUrgentToggle = async (item: RedmineProjectDashboardItem) => {
     const nextUrgent = !item.urgent
-    const reason = nextUrgent ? window.prompt("Причина срочности", item.urgent_reason || "") || "" : ""
+    let reason = ""
+    if (nextUrgent) {
+      const promptResult = window.prompt("Причина срочности", item.urgent_reason || "")
+      if (promptResult === null) return // user clicked Cancel — don't mark urgent
+      reason = promptResult
+    }
     setSavingProjectId(item.project_id)
     setError("")
     try {
@@ -403,7 +413,9 @@ export default function RedmineDashboardPage() {
     const nextEvent = item.next_control_event
     const days = nextEvent ? daysUntil(nextEvent.due_date) : null
     const isSaving = savingProjectId === item.project_id
-    const canHaveCycle = item.project_type === "seo" || item.project_type === "ads" || item.project_type === "support"
+    // The backend (insertCycleEvents) generates a cycle for any assigned
+    // project type, not just seo/ads/support — matches [project]/page.tsx.
+    const canHaveCycle = Boolean(item.project_type)
 
     return (
       <article

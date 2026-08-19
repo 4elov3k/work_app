@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { ArrowLeft, CalendarDays, ExternalLink, FileCheck, FileText, Loader2, RefreshCw, Trash2, UserRound } from "lucide-react"
@@ -50,7 +50,12 @@ function projectTypeLabel(type: RedmineProjectType) {
 
 function eventVerb(event: RedmineProjectControlEvent) {
   if (event.event_type === "control_cut") return "КС отправлен"
-  if (event.event_type === "report_date") return "ОД отправлена"
+  // dev cycles store their roadmap milestone as event_type "report_date"
+  // too (only the title differs — see insertCycleEvents on the backend),
+  // so "ОД отправлена" would be wrong for them.
+  if (event.event_type === "report_date") {
+    return event.service_type === "dev" ? "Этап закрыт" : "ОД отправлена"
+  }
   return "Этап закрыт"
 }
 
@@ -75,6 +80,9 @@ export default function RedmineProjectPage() {
   const [issues, setIssues] = useState<RedmineIssue[]>([])
   const [documents, setDocuments] = useState<RedmineProjectDocumentsResponse | null>(null)
   const [controlEvents, setControlEvents] = useState<RedmineProjectControlEvent[]>([])
+  // Guards against a slow loadControlEvents GET resolving after a faster
+  // generate/mark-sent/delete mutation and clobbering it with stale data.
+  const controlEventsRequestId = useRef(0)
   const [cycleDate, setCycleDate] = useState(nextMonthDate())
   const [loading, setLoading] = useState(true)
   const [tabLoading, setTabLoading] = useState(false)
@@ -130,16 +138,19 @@ export default function RedmineProjectPage() {
   }, [projectId])
 
   const loadControlEvents = useCallback(async () => {
+    const requestId = ++controlEventsRequestId.current
     setTabLoading(true)
     setError("")
     try {
       const response = await redmineAPI.getProjectControlEvents(projectId)
-      setControlEvents(response.data || [])
+      if (requestId === controlEventsRequestId.current) setControlEvents(response.data || [])
     } catch (err: unknown) {
       console.error("Failed to load Redmine control events:", err)
-      setError(err instanceof Error ? err.message : "Не удалось загрузить контрольные даты")
+      if (requestId === controlEventsRequestId.current) {
+        setError(err instanceof Error ? err.message : "Не удалось загрузить контрольные даты")
+      }
     } finally {
-      setTabLoading(false)
+      if (requestId === controlEventsRequestId.current) setTabLoading(false)
     }
   }, [projectId])
 
@@ -212,6 +223,7 @@ export default function RedmineProjectPage() {
     setSaving(true)
     setError("")
     try {
+      controlEventsRequestId.current += 1
       const response = await redmineAPI.generateProjectCycle(project.project_id, {
         project_type: project.project_type,
         report_date: cycleDate,
@@ -231,6 +243,7 @@ export default function RedmineProjectPage() {
     setSaving(true)
     setError("")
     try {
+      controlEventsRequestId.current += 1
       const response = await redmineAPI.markControlEventSent(project.project_id, event.id, {
         sent_by: project.effective_manager_name,
       })
@@ -250,6 +263,7 @@ export default function RedmineProjectPage() {
     setSaving(true)
     setError("")
     try {
+      controlEventsRequestId.current += 1
       const response = await redmineAPI.deleteControlEvent(project.project_id, event.id)
       setControlEvents(response.data || [])
       await loadProject()
