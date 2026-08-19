@@ -491,11 +491,15 @@ func (db *DB) GenerateRedmineProjectCycle(ctx context.Context, projectID, projec
 		return nil, fmt.Errorf("failed to update project type for cycle: %w", err)
 	}
 
+	// Mark rather than delete: still-planned events from the previous cycle
+	// (e.g. КС1/2 nobody sent yet) stay visible as "Пропущено" instead of
+	// silently vanishing — the UI already renders the skipped status.
 	if _, err := tx.ExecContext(ctx, `
-		DELETE FROM redmine_project_control_events
+		UPDATE redmine_project_control_events
+		SET status = 'skipped'
 		WHERE redmine_project_id = $1 AND status = 'planned'
 	`, projectID); err != nil {
-		return nil, fmt.Errorf("failed to clear planned control events: %w", err)
+		return nil, fmt.Errorf("failed to mark previous-cycle control events skipped: %w", err)
 	}
 
 	if err := insertCycleEvents(ctx, tx, projectID, projectType, reportDate); err != nil {
@@ -570,11 +574,15 @@ func (db *DB) MarkRedmineProjectControlEventSent(ctx context.Context, projectID,
 	}
 
 	if eventType == "report_date" {
+		// Mark rather than delete: any control cuts (КС1/2/3) nobody sent
+		// before the report date closed the cycle stay visible as
+		// "Пропущено" instead of silently vanishing — see GenerateRedmineProjectCycle.
 		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM redmine_project_control_events
+			UPDATE redmine_project_control_events
+			SET status = 'skipped'
 			WHERE redmine_project_id = $1 AND status = 'planned'
 		`, projectID); err != nil {
-			return nil, fmt.Errorf("failed to clear planned events after report date: %w", err)
+			return nil, fmt.Errorf("failed to mark unsent control events skipped after report date: %w", err)
 		}
 		if err := insertCycleEvents(ctx, tx, projectID, projectType, dueDate.AddDate(0, 1, 0)); err != nil {
 			return nil, err
