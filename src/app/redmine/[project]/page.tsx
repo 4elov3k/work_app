@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { Alert } from "@/components/ui/alert"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { eventVerb, groupForColumn, groupKeyForItem, nextMonthDate, PROJECT_TYPES, projectTypeLabel } from "../shared"
 
 function eventStatusLabel(event: RedmineProjectControlEvent) {
@@ -40,6 +41,7 @@ export default function RedmineProjectPage() {
   // generate/mark-sent/delete mutation and clobbering it with stale data.
   const controlEventsRequestId = useRef(0)
   const [cycleDate, setCycleDate] = useState(nextMonthDate())
+  const [deleteEventTarget, setDeleteEventTarget] = useState<RedmineProjectControlEvent | null>(null)
   const [loading, setLoading] = useState(true)
   const [tabLoading, setTabLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -213,16 +215,16 @@ export default function RedmineProjectPage() {
     }
   }
 
-  const deleteControlEvent = async (event: RedmineProjectControlEvent) => {
-    if (!project) return
-    if (!window.confirm(`Удалить "${event.title}" на ${event.due_date}?`)) return
+  const confirmEventDelete = async () => {
+    if (!project || !deleteEventTarget) return
     setSaving(true)
     setError("")
     try {
       controlEventsRequestId.current += 1
-      const response = await redmineAPI.deleteControlEvent(project.project_id, event.id)
+      const response = await redmineAPI.deleteControlEvent(project.project_id, deleteEventTarget.id)
       setControlEvents(response.data || [])
       await loadProject()
+      setDeleteEventTarget(null)
     } catch (err: unknown) {
       console.error("Failed to delete control event:", err)
       setError(err instanceof Error ? err.message : "Не удалось удалить контрольную дату")
@@ -508,7 +510,7 @@ export default function RedmineProjectPage() {
                           <Button size="sm" variant="outline" disabled={saving} onClick={() => markEventSent(event)}>
                             {eventVerb(event)}
                           </Button>
-                          <Button size="sm" variant="outline" disabled={saving} aria-label="Удалить контрольную дату" onClick={() => deleteControlEvent(event)}>
+                          <Button size="sm" variant="outline" disabled={saving} aria-label="Удалить контрольную дату" onClick={() => setDeleteEventTarget(event)}>
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
@@ -618,6 +620,25 @@ export default function RedmineProjectPage() {
           </section>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={!!deleteEventTarget} onOpenChange={(open) => !open && setDeleteEventTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Удалить контрольную дату?</DialogTitle>
+            <DialogDescription>
+              {deleteEventTarget && `"${deleteEventTarget.title}" на ${deleteEventTarget.due_date}`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDeleteEventTarget(null)} disabled={saving}>
+              Отмена
+            </Button>
+            <Button type="button" variant="destructive" onClick={confirmEventDelete} disabled={saving}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Удалить"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

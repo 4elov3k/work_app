@@ -35,6 +35,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { Alert } from "@/components/ui/alert"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { eventVerb, groupForColumn, groupKeyForItem, nextMonthDate, PROJECT_TYPES, projectTypeLabel } from "./shared"
 
 const STATUS_COLUMNS = [
@@ -86,6 +87,7 @@ export default function RedmineDashboardPage() {
   const [cardMode, setCardMode] = useState<"lead" | "manager" | "docs" | "compact">("lead")
   const [dragProjectId, setDragProjectId] = useState("")
   const [cycleDates, setCycleDates] = useState<Record<string, string>>({})
+  const [deleteEventTarget, setDeleteEventTarget] = useState<{ item: RedmineProjectDashboardItem; event: RedmineProjectControlEvent } | null>(null)
 
   const applyDashboard = useCallback((response: RedmineProjectDashboardResponse) => {
     setItems(response.data || [])
@@ -303,7 +305,6 @@ export default function RedmineDashboardPage() {
         urgent_reason: reason,
         deadline_state: nextUrgent ? "urgent" : item.next_control_event ? item.deadline_state : "ok",
       })
-      await loadDashboard(false)
     } catch (err: unknown) {
       console.error("Failed to update project urgency:", err)
       setError(err instanceof Error ? err.message : "Не удалось изменить срочность")
@@ -346,13 +347,15 @@ export default function RedmineDashboardPage() {
     }
   }
 
-  const handleEventDelete = async (item: RedmineProjectDashboardItem, event: RedmineProjectControlEvent) => {
-    if (!window.confirm(`Удалить "${event.title}" на ${event.due_date}?`)) return
+  const confirmEventDelete = async () => {
+    if (!deleteEventTarget) return
+    const { item, event } = deleteEventTarget
     setSavingProjectId(item.project_id)
     setError("")
     try {
       await redmineAPI.deleteControlEvent(item.project_id, event.id)
       await loadDashboard(false)
+      setDeleteEventTarget(null)
     } catch (err: unknown) {
       console.error("Failed to delete control event:", err)
       setError(err instanceof Error ? err.message : "Не удалось удалить контрольную дату")
@@ -481,7 +484,7 @@ export default function RedmineDashboardPage() {
                       data-interactive="true"
                       onClick={(event) => {
                         event.stopPropagation()
-                        handleEventDelete(item, nextEvent)
+                        setDeleteEventTarget({ item, event: nextEvent })
                       }}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -840,6 +843,39 @@ export default function RedmineDashboardPage() {
           )}
         </div>
       )}
+
+      <Dialog open={!!deleteEventTarget} onOpenChange={(open) => !open && setDeleteEventTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Удалить контрольную дату?</DialogTitle>
+            <DialogDescription>
+              {deleteEventTarget && `"${deleteEventTarget.event.title}" на ${deleteEventTarget.event.due_date}`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDeleteEventTarget(null)}
+              disabled={!!deleteEventTarget && savingProjectId === deleteEventTarget.item.project_id}
+            >
+              Отмена
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={confirmEventDelete}
+              disabled={!!deleteEventTarget && savingProjectId === deleteEventTarget.item.project_id}
+            >
+              {deleteEventTarget && savingProjectId === deleteEventTarget.item.project_id ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Удалить"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
