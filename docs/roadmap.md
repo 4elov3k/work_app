@@ -10,12 +10,14 @@
 - Next.js обновлён до 16.3.1 (React 19.2.8), `npm audit` — 0 уязвимостей
 - 39 находок из UI/UX-аудита (13 high + 14 medium + 12 low/доп.) исправлены и проверены на реальных данных
 
-## Незакрытые хвосты (сделать в первую очередь)
+## Незакрытые хвосты
 
-1. **`worktree-error-handling-fixes`** — локальный worktree с незавершённой правкой в `backend/internal/accounting/service.go` (добавление `jsonschema`-подсказок для LLM в struct tags accounting-mcp, сделано только для `CreateContractInput` из нескольких структур). Нужно решить: дописать по аналогии для остальных input-структур, закоммитить как есть, или отбросить.
-2. **`AGENTS.md` / `CLAUDE.md`** в корне репозитория — автогенерация Next.js 16 при `npm run dev` (фича "AI agent docs"). Untracked. Решить: закоммитить (так и задумано фреймворком — эти файлы держат агентов в курсе версии Next) или добавить в `.gitignore`.
-3. **Root README.md отсутствует** — есть `backend/README.md`, но нет общего README для всего проекта (стек, как поднять фронт+бэк, структура трёх фич). Стоит завести.
-4. **Go-зависимости backend устарели** — `go list -m -u all` показывает доступные обновления: `github.com/go-chi/chi/v5` (5.2.3→5.3.1), `github.com/lib/pq` (1.10.9→1.12.3), `github.com/modelcontextprotocol/go-sdk` (1.6.1→1.7.0), `golang.org/x/oauth2`, `golang.org/x/sys`, `golang.org/x/tools`, `cloud.google.com/go/compute/metadata`. Не критично (govulncheck не нашёл эксплуатируемых уязвимостей в самих зависимостях — только в локальной версии Go-тулчейна, что не влияет на прод), но стоит обновить при следующем спокойном окне.
+Все 4 пункта из предыдущей версии этого раздела закрыты (2026-08-20, ветки `worktree-error-handling-fixes` и `worktree-roadmap-tail-items`, обе запушены — ждут мержа):
+
+1. ~~`worktree-error-handling-fixes`~~ — `jsonschema`-подсказки дописаны по аналогии для всех input-структур accounting-mcp (`CreateCounterpartyInput`, `UpdateCounterpartyInput`, `IDInput`, `CreateInvoiceInput`, `CreateActInput`, `CreateContractAppendixInput`), билд и тесты зелёные.
+2. ~~`AGENTS.md` / `CLAUDE.md`~~ — закоммичены как есть: файл сам объясняет, что это задумано фреймворком.
+3. ~~Root README.md~~ — добавлен, описывает стек, структуру трёх фич и запуск фронт+бэк.
+4. ~~Go-зависимости backend~~ — обновлены до актуальных minor/patch версий, `go build`/`vet`/`test ./...` проходят.
 
 ## Точки роста по фичам
 
