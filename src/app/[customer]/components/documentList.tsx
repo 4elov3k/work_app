@@ -135,15 +135,20 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
       .then((response) => {
         const list = response.data || []
         setContracts(list)
-        if (!selectedContractId && list.length > 0) {
-          setSelectedContractId(list[0].id)
+        if (list.length > 0) {
+          // Functional form so this doesn't need selectedContractId in its
+          // closure — keeping it out of the deps below avoids loadContracts'
+          // identity changing right after its own setState, which used to
+          // re-trigger the whole mount effect (loadDocuments/loadRedmineStatuses/
+          // loadServices too, not just this) a second time.
+          setSelectedContractId((current) => current || list[0].id)
         }
       })
       .catch((err) => {
         console.error("Failed to load contracts:", err)
         setContracts([])
       })
-  }, [fixedContractId, selectedContractId, slug])
+  }, [fixedContractId, slug])
 
   const loadServices = useCallback(() => {
     servicesAPI
@@ -454,7 +459,7 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
                     onChange={(e) => setSelectedServiceId(e.target.value)}
                   >
                     <option value="">Не выбрано</option>
-                    {services.map((service) => (
+                    {services.filter((service) => !service.archived).map((service) => (
                       <option key={service.id} value={service.id}>
                         {service.name} • {service.price} ₽
                       </option>

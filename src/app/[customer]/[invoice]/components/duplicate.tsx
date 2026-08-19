@@ -4,6 +4,7 @@ import { Copy, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Alert } from "@/components/ui/alert"
 import { invoicesAPI } from "@/lib/api"
 import { useRouter } from "next/navigation"
 
@@ -17,11 +18,18 @@ export default function Duplicate({ invoiceId, customerId }: DuplicateProps) {
   const [submitting, setSubmitting] = useState(false)
   const [number, setNumber] = useState("")
   const [date, setDate] = useState("")
+  const [error, setError] = useState("")
   const router = useRouter()
+
+  const handleOpenChange = (value: boolean) => {
+    setIsOpen(value)
+    if (value) setError("")
+  }
 
   const handleDuplicate = async (event: React.FormEvent) => {
     event.preventDefault()
     setSubmitting(true)
+    setError("")
 
     try {
       const newDate = date.split("-").reverse().join(".")
@@ -40,14 +48,14 @@ export default function Duplicate({ invoiceId, customerId }: DuplicateProps) {
       router.refresh()
     } catch (err) {
       console.error('Failed to duplicate invoice:', err)
-      alert('Ошибка при дублировании счета')
+      setError(err instanceof Error ? err.message : 'Ошибка при дублировании счета')
     } finally {
       setSubmitting(false)
     }
   }
 
   return (
-    <Dialog open={isOpen} onOpenChange={setIsOpen}>
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button variant="secondary">
           <Copy className="mr-2 h-4 w-4" />
@@ -63,6 +71,7 @@ export default function Duplicate({ invoiceId, customerId }: DuplicateProps) {
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
+            {error && <Alert>{error}</Alert>}
             <div className="space-y-2">
               <label htmlFor="number" className="text-sm font-medium">
                 Новый номер

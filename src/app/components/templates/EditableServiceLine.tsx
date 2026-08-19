@@ -222,9 +222,9 @@ export default function EditableServiceLine({
                   onChange={(event) => setServiceId(event.target.value)}
                 >
                   <option value="">Не выбрано</option>
-                  {services.map((item) => (
+                  {services.filter((item) => !item.archived || item.id === serviceId).map((item) => (
                     <option key={item.id} value={item.id}>
-                      {item.name} • {item.price} ₽
+                      {item.name} • {item.price} ₽{item.archived ? " (архив)" : ""}
                     </option>
                   ))}
                 </Select>

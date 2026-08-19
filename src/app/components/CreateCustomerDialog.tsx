@@ -4,6 +4,7 @@ import { Plus, Loader2, Building2, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Alert } from "@/components/ui/alert"
 import { Customer, customersAPI } from "@/lib/api"
 
 interface CreateCustomerDialogProps {
@@ -15,6 +16,7 @@ export default function CreateCustomerDialog({ onCreated }: CreateCustomerDialog
   const [submitting, setSubmitting] = useState(false)
   const [lookupLoading, setLookupLoading] = useState(false)
   const [lookupMessage, setLookupMessage] = useState("")
+  const [error, setError] = useState("")
   const [name, setName] = useState("")
   const [fullname, setFullname] = useState("")
   const [address, setAddress] = useState("")
@@ -32,6 +34,7 @@ export default function CreateCustomerDialog({ onCreated }: CreateCustomerDialog
     setContactPerson("")
     setContactPosition("")
     setLookupMessage("")
+    setError("")
   }
 
   const handleLookup = async () => {
@@ -71,6 +74,7 @@ export default function CreateCustomerDialog({ onCreated }: CreateCustomerDialog
   const handleCreate = async (event: React.FormEvent) => {
     event.preventDefault()
     setSubmitting(true)
+    setError("")
 
     try {
       const response = await customersAPI.create({
@@ -88,8 +92,7 @@ export default function CreateCustomerDialog({ onCreated }: CreateCustomerDialog
       resetForm()
     } catch (err) {
       console.error('Failed to create customer:', err)
-      const message = err instanceof Error ? err.message : 'Неизвестная ошибка'
-      alert(`Ошибка при создании контрагента: ${message}`)
+      setError(err instanceof Error ? err.message : 'Неизвестная ошибка')
     } finally {
       setSubmitting(false)
     }
@@ -122,6 +125,7 @@ export default function CreateCustomerDialog({ onCreated }: CreateCustomerDialog
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
+            {error && <Alert>{error}</Alert>}
             <div className="space-y-2">
               <label htmlFor="name" className="text-sm font-medium">
                 Краткое название <span className="text-destructive">*</span>

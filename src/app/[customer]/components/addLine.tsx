@@ -102,7 +102,7 @@ export default function AddLine({ docId, docType }: AddLineProps) {
                 onChange={(e) => setServiceId(e.target.value)}
               >
                 <option value="">Не выбрано</option>
-                {services.map((service) => (
+                {services.filter((service) => !service.archived).map((service) => (
                   <option key={service.id} value={service.id}>
                     {service.name} • {service.price} ₽
                   </option>

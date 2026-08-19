@@ -97,7 +97,7 @@ export default function AppendixList({ customerId, contractId }: AppendixListPro
     setFormError("")
     setSelected({})
     setCustomLines([])
-    setDate(new Date().toLocaleDateString("ru-RU"))
+    setDate(new Date().toISOString().slice(0, 10))
     setCatalogLoading(true)
     Promise.all([contractAppendicesAPI.getNextNumber(contractId), serviceCatalogAPI.get()])
       .then(([nextNumber, catalogRes]) => {
@@ -184,7 +184,8 @@ export default function AppendixList({ customerId, contractId }: AppendixListPro
 
     setSubmitting(true)
     try {
-      await contractAppendicesAPI.create(contractId, { number, date, lines })
+      const formattedDate = date.split("-").reverse().join(".")
+      await contractAppendicesAPI.create(contractId, { number, date: formattedDate, lines })
       setIsOpen(false)
       loadAppendices()
     } catch (err) {
@@ -223,7 +224,7 @@ export default function AppendixList({ customerId, contractId }: AppendixListPro
               </div>
               <div>
                 <label className="text-sm font-medium mb-1 block">Дата</label>
-                <Input value={date} onChange={(e) => setDate(e.target.value)} placeholder="ДД.ММ.ГГГГ" />
+                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
               </div>
             </div>
 

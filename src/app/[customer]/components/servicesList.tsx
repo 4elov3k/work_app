@@ -177,6 +177,7 @@ export default function ServicesList() {
                   <div className="flex items-center gap-2">
                     <Wrench className="h-5 w-5 text-muted-foreground" />
                     <Badge variant="outline">{service.price} ₽</Badge>
+                    {service.archived && <Badge variant="secondary">Архив</Badge>}
                   </div>
                   <Button
                     variant="ghost"
