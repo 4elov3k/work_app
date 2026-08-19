@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_DB: invoices_db
       POSTGRES_USER: invoices_user
-      POSTGRES_PASSWORD: invoices_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-invoices_password}
     ports:
       - "5432:5432"
     volumes:
@@ -28,6 +28,18 @@ services:
       - ./backend/migrations/015_customer_edo_requisites.sql:/docker-entrypoint-initdb.d/015_customer_edo_requisites.sql
       - ./backend/migrations/016_accounting_mcp.sql:/docker-entrypoint-initdb.d/016_accounting_mcp.sql
       - ./backend/migrations/017_dzerzhinskie_vedomosti_kpp.sql:/docker-entrypoint-initdb.d/017_dzerzhinskie_vedomosti_kpp.sql
+      - ./backend/migrations/018_fix_default_contract_numbers.sql:/docker-entrypoint-initdb.d/018_fix_default_contract_numbers.sql
+      - ./backend/migrations/019_centr_ttm_director.sql:/docker-entrypoint-initdb.d/019_centr_ttm_director.sql
+      - ./backend/migrations/020_fix_bank_account_and_dz_vedomosti_signer.sql:/docker-entrypoint-initdb.d/020_fix_bank_account_and_dz_vedomosti_signer.sql
+      - ./backend/migrations/021_contract_appendices.sql:/docker-entrypoint-initdb.d/021_contract_appendices.sql
+      - ./backend/migrations/022_seed_services_catalog.sql:/docker-entrypoint-initdb.d/022_seed_services_catalog.sql
+      - ./backend/migrations/023_dogovor_602_website_appendix.sql:/docker-entrypoint-initdb.d/023_dogovor_602_website_appendix.sql
+      - ./backend/migrations/024_fix_duplicate_dz_vedomosti_and_stale_contract_numbers.sql:/docker-entrypoint-initdb.d/024_fix_duplicate_dz_vedomosti_and_stale_contract_numbers.sql
+      - ./backend/migrations/025_act_invoices_delete_cascade.sql:/docker-entrypoint-initdb.d/025_act_invoices_delete_cascade.sql
+      - ./backend/migrations/026_global_unique_act_invoice_numbers.sql:/docker-entrypoint-initdb.d/026_global_unique_act_invoice_numbers.sql
+      - ./backend/migrations/027_fix_dogovor_602_number.sql:/docker-entrypoint-initdb.d/027_fix_dogovor_602_number.sql
+      - ./backend/migrations/028_restore_dogovor_602_appendix.sql:/docker-entrypoint-initdb.d/028_restore_dogovor_602_appendix.sql
+      - ./backend/migrations/029_zvonari.sql:/docker-entrypoint-initdb.d/029_zvonari.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U invoices_user -d invoices_db"]
       interval: 10s
@@ -44,7 +56,7 @@ services:
         APP: server
     container_name: invoices_backend
     environment:
-      DATABASE_URL: postgres://invoices_user:invoices_password@postgres:5432/invoices_db?sslmode=disable
+      DATABASE_URL: postgres://invoices_user:${POSTGRES_PASSWORD:-invoices_password}@postgres:5432/invoices_db?sslmode=disable
       PORT: 8080
       CORS_ORIGIN: http://localhost:3000,http://localhost:3001,http://localhost:3002,http://127.0.0.1:3000,http://127.0.0.1:3001,http://127.0.0.1:3002,http://192.168.3.103:3000,http://100.64.229.103:3000
       DADATA_API_KEY: ${DADATA_API_KEY:-}
@@ -89,7 +101,7 @@ services:
         APP: accounting-mcp
     container_name: accounting_mcp
     environment:
-      DATABASE_URL: postgres://invoices_user:invoices_password@postgres:5432/invoices_db?sslmode=disable
+      DATABASE_URL: postgres://invoices_user:${POSTGRES_PASSWORD:-invoices_password}@postgres:5432/invoices_db?sslmode=disable
       MCP_TRANSPORT: http
       MCP_HOST: 0.0.0.0
       MCP_PORT: 3000
