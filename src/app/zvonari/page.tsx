@@ -664,6 +664,7 @@ export default function ZvonariPage() {
   const [callers, setCallers] = useState<Caller[]>([]);
   const [loadingCallers, setLoadingCallers] = useState(true);
   const [listError, setListError] = useState("");
+  const [aggregatesError, setAggregatesError] = useState("");
 
   const [from, setFrom] = useState(todayISO(-6));
   const [to, setTo] = useState(todayISO());
@@ -707,6 +708,17 @@ export default function ZvonariPage() {
 
   const period = useMemo(() => ({ from, to }), [from, to]);
 
+  // Tracks the currently-running poll interval so pollSyncStatus can be
+  // called safely from multiple places (mount check, 409-race retry,
+  // job-start) without ever having two intervals ticking at once, and so
+  // it can be torn down on unmount instead of leaking.
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, []);
+
   // pollSyncStatus's setInterval closure is created once per background job
   // and would otherwise see stale from/to/expandedId/panels — refs give it a
   // way to read the live values on every tick without re-subscribing.
@@ -739,22 +751,35 @@ export default function ZvonariPage() {
   };
 
   const loadAggregates = (periodFrom: string, periodTo: string) => {
+    setAggregatesError("");
     zvonariAPI
       .getCallCounts(periodFrom, periodTo)
       .then((response) => setCallCounts(response.data || {}))
-      .catch((err) => console.error("Failed to load call counts:", err));
+      .catch((err) => {
+        console.error("Failed to load call counts:", err);
+        setAggregatesError("Не удалось загрузить статистику по звонкам — показанные цифры могут быть неполными.");
+      });
     zvonariAPI
       .getStatusCounts(periodFrom, periodTo)
       .then((response) => setStatusCounts(response.data || {}))
-      .catch((err) => console.error("Failed to load status counts:", err));
+      .catch((err) => {
+        console.error("Failed to load status counts:", err);
+        setAggregatesError("Не удалось загрузить статистику по звонкам — показанные цифры могут быть неполными.");
+      });
     zvonariAPI
       .getOutcomeCounts(periodFrom, periodTo)
       .then((response) => setOutcomeCounts(response.data || {}))
-      .catch((err) => console.error("Failed to load outcome counts:", err));
+      .catch((err) => {
+        console.error("Failed to load outcome counts:", err);
+        setAggregatesError("Не удалось загрузить статистику по звонкам — показанные цифры могут быть неполными.");
+      });
     zvonariAPI
       .getFraudCounts(periodFrom, periodTo)
       .then((response) => setFraudCounts(response.data || {}))
-      .catch((err) => console.error("Failed to load fraud counts:", err));
+      .catch((err) => {
+        console.error("Failed to load fraud counts:", err);
+        setAggregatesError("Не удалось загрузить статистику по звонкам — показанные цифры могут быть неполными.");
+      });
   };
 
   // Обновляет цифры без перезагрузки страницы и без спиннеров/сброса того,
@@ -783,7 +808,10 @@ export default function ZvonariPage() {
   // держать один долгий запрос — иначе прокси/браузер обрывает соединение
   // раньше, чем бэкенд успевает закончить.
   const pollSyncStatus = () => {
-    const interval = setInterval(async () => {
+    // Idempotent: if a poll is already running (e.g. the mount check and a
+    // 409 retry both call this), replace it instead of ticking twice.
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    pollIntervalRef.current = setInterval(async () => {
       try {
         const response = await zvonariAPI.getSyncStatus();
         const status = response.data;
@@ -793,7 +821,8 @@ export default function ZvonariPage() {
         setPaused(status.paused ?? false);
         refreshLiveData();
         if (!status.running) {
-          clearInterval(interval);
+          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
           setSyncing(false);
           setPaused(false);
           setSyncProgress(null);
@@ -812,7 +841,8 @@ export default function ZvonariPage() {
         }
       } catch (err) {
         console.error("Sync status poll failed:", err);
-        clearInterval(interval);
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
         setSyncing(false);
         setSyncProgress(null);
       }
@@ -837,6 +867,32 @@ export default function ZvonariPage() {
 
   useEffect(() => {
     loadAggregates(from, to);
+    // distribution/calls are fetched per period and cached in `panels`
+    // (see toggleExpand's `!panels[next]?.distribution` guard) — without
+    // this, an already-cached panel keeps showing the previous period's
+    // data forever, disagreeing with the row's own just-updated aggregate
+    // columns. `history` (past reports) isn't period-scoped, so it survives.
+    const openId = expandedIdRef.current;
+    const hadCalls = Boolean(openId && panelsRef.current[openId]?.calls);
+    setPanels((previous) => {
+      const openPanel = openId ? previous[openId] : undefined;
+      if (!openId) return {};
+      return { [openId]: { ...EMPTY_PANEL, history: openPanel?.history ?? null } };
+    });
+    if (openId) {
+      updatePanel(openId, { distributionLoading: true });
+      zvonariAPI
+        .getDistribution(openId, from, to)
+        .then((response) => updatePanel(openId, { distribution: response.data, distributionLoading: false }))
+        .catch((err) => {
+          console.error("Failed to load distribution:", err);
+          updatePanel(openId, { distributionLoading: false });
+        });
+      // Only re-fetch the call list if it was already open — matches
+      // refreshLiveData's same panelsRef.current[openId]?.calls check.
+      if (hadCalls) handleLoadCalls(openId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [from, to]);
 
   const runBackgroundJob = async (
@@ -1275,6 +1331,9 @@ export default function ZvonariPage() {
 
       {listError && (
         <p className="mb-4 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{listError}</p>
+      )}
+      {aggregatesError && (
+        <p className="mb-4 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{aggregatesError}</p>
       )}
       {loadingCallers ? (
         <div className="flex items-center gap-2 text-muted-foreground">
