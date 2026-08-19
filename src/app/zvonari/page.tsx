@@ -1224,7 +1224,14 @@ export default function ZvonariPage() {
       0
     );
     const totalStep1Broken = Object.values(outcomeCounts).reduce((sum, o) => sum + (o[OUTCOME_STEP1_BROKEN] ?? 0), 0);
-    const totalUnanalyzed = Object.values(outcomeCounts).reduce((sum, o) => sum + (o["не проанализировано"] ?? 0), 0);
+    // Backend buckets under "не проанализировано" via COALESCE(...outcome, 'не проанализировано')
+    // — that only catches NULL analytics_json, not legacy rows with an
+    // explicit empty-string outcome (CallOutcome's own "" variant, see
+    // zvonari.ts) which bucket under "" instead. Count both.
+    const totalUnanalyzed = Object.values(outcomeCounts).reduce(
+      (sum, o) => sum + (o["не проанализировано"] ?? 0) + (o[""] ?? 0),
+      0
+    );
     const totalFraud = Object.values(fraudCounts).reduce((a, b) => a + b, 0);
     return { totalCalls, totalDone, totalScriptCompleted, totalStep1Broken, totalUnanalyzed, totalFraud };
   }, [callCounts, statusCounts, outcomeCounts, fraudCounts]);
