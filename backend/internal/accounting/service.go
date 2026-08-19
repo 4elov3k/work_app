@@ -194,69 +194,69 @@ type SearchInput struct {
 }
 
 type CreateCounterpartyInput struct {
-	Type            string `json:"type,omitempty"`
+	Type            string `json:"type,omitempty" jsonschema:"counterparty legal type, defaults to organization"`
 	Name            string `json:"name" jsonschema:"short display name"`
 	FullName        string `json:"fullname,omitempty" jsonschema:"full legal name"`
-	Address         string `json:"address,omitempty"`
+	Address         string `json:"address,omitempty" jsonschema:"legal or postal address"`
 	INN             string `json:"inn" jsonschema:"taxpayer identifier"`
-	KPP             string `json:"kpp,omitempty"`
+	KPP             string `json:"kpp,omitempty" jsonschema:"tax registration reason code, if applicable"`
 	Phone           string `json:"phone,omitempty"`
 	Email           string `json:"email,omitempty"`
-	ContactPerson   string `json:"contact_person,omitempty"`
-	ContactPosition string `json:"contact_position,omitempty"`
+	ContactPerson   string `json:"contact_person,omitempty" jsonschema:"name of the contact person at the counterparty"`
+	ContactPosition string `json:"contact_position,omitempty" jsonschema:"job title of the contact person"`
 	Comment         string `json:"comment,omitempty"`
-	AllowDuplicate  bool   `json:"allow_duplicate,omitempty"`
+	AllowDuplicate  bool   `json:"allow_duplicate,omitempty" jsonschema:"set true to create anyway when a possible duplicate (matching INN/KPP) was already flagged by prepare"`
 }
 
 type UpdateCounterpartyInput struct {
-	ID              string  `json:"id"`
-	Name            *string `json:"name,omitempty"`
-	FullName        *string `json:"fullname,omitempty"`
-	Address         *string `json:"address,omitempty"`
-	INN             *string `json:"inn,omitempty"`
-	KPP             *string `json:"kpp,omitempty"`
-	Phone           *string `json:"phone,omitempty"`
-	Email           *string `json:"email,omitempty"`
-	ContactPerson   *string `json:"contact_person,omitempty"`
-	ContactPosition *string `json:"contact_position,omitempty"`
-	Comment         *string `json:"comment,omitempty"`
+	ID              string  `json:"id" jsonschema:"existing counterparty id from counterparties.search"`
+	Name            *string `json:"name,omitempty" jsonschema:"leave unset to keep the current value"`
+	FullName        *string `json:"fullname,omitempty" jsonschema:"leave unset to keep the current value"`
+	Address         *string `json:"address,omitempty" jsonschema:"leave unset to keep the current value"`
+	INN             *string `json:"inn,omitempty" jsonschema:"leave unset to keep the current value"`
+	KPP             *string `json:"kpp,omitempty" jsonschema:"leave unset to keep the current value"`
+	Phone           *string `json:"phone,omitempty" jsonschema:"leave unset to keep the current value"`
+	Email           *string `json:"email,omitempty" jsonschema:"leave unset to keep the current value"`
+	ContactPerson   *string `json:"contact_person,omitempty" jsonschema:"leave unset to keep the current value"`
+	ContactPosition *string `json:"contact_position,omitempty" jsonschema:"leave unset to keep the current value"`
+	Comment         *string `json:"comment,omitempty" jsonschema:"leave unset to keep the current value"`
 }
 
 type IDInput struct {
-	ID string `json:"id"`
+	ID string `json:"id" jsonschema:"existing record id, as returned by the matching search/list call"`
 }
 
 type CreateContractInput struct {
-	CounterpartyID    string `json:"counterparty_id,omitempty"`
-	CounterpartyQuery string `json:"counterparty_query,omitempty"`
-	Number            string `json:"number,omitempty"`
-	Date              string `json:"date,omitempty"`
-	StartDate         string `json:"start_date,omitempty"`
-	EndDate           string `json:"end_date,omitempty"`
-	Subject           string `json:"subject,omitempty"`
-	Currency          string `json:"currency,omitempty"`
-	Status            string `json:"status,omitempty"`
+	CounterpartyID    string `json:"counterparty_id,omitempty" jsonschema:"existing counterparty id from counterparties.search"`
+	CounterpartyQuery string `json:"counterparty_query,omitempty" jsonschema:"name or INN to resolve a counterparty by, if counterparty_id is not already known"`
+	Number            string `json:"number,omitempty" jsonschema:"the number printed on the signed contract itself. Never invent or default this — if illegible, omit it entirely and the next sequential number is auto-assigned; do not guess or fall back to a placeholder"`
+	Date              string `json:"date,omitempty" jsonschema:"DD.MM.YYYY, defaults to today"`
+	StartDate         string `json:"start_date,omitempty" jsonschema:"DD.MM.YYYY — contract period start (e.g. from 'настоящий договор заключен на срок с ... по ...'). Must be DD.MM.YYYY, not YYYY-MM-DD or any other format"`
+	EndDate           string `json:"end_date,omitempty" jsonschema:"DD.MM.YYYY — contract period end. Must be DD.MM.YYYY, not YYYY-MM-DD or any other format"`
+	Subject           string `json:"subject,omitempty" jsonschema:"contract topic/subject; will be mapped to one of the allowed contract topics server-side"`
+	Currency          string `json:"currency,omitempty" jsonschema:"defaults to RUB"`
+	Status            string `json:"status,omitempty" jsonschema:"defaults to active"`
 }
 
 type CreateInvoiceInput struct {
-	CounterpartyID    string           `json:"counterparty_id,omitempty"`
-	CounterpartyQuery string           `json:"counterparty_query,omitempty"`
-	ContractID        string           `json:"contract_id,omitempty"`
-	ContractNumber    string           `json:"contract_number,omitempty"`
-	Date              string           `json:"date,omitempty"`
-	Status            string           `json:"status,omitempty"`
-	Lines             []MoneyLineInput `json:"lines"`
+	CounterpartyID    string           `json:"counterparty_id,omitempty" jsonschema:"existing counterparty id from counterparties.search"`
+	CounterpartyQuery string           `json:"counterparty_query,omitempty" jsonschema:"name or INN to resolve a counterparty by, if counterparty_id is not already known"`
+	ContractID        string           `json:"contract_id,omitempty" jsonschema:"existing contract id; resolved from contract_number if omitted"`
+	ContractNumber    string           `json:"contract_number,omitempty" jsonschema:"contract number to resolve a contract by, if contract_id is not already known"`
+	Date              string           `json:"date,omitempty" jsonschema:"DD.MM.YYYY, defaults to today"`
+	Status            string           `json:"status,omitempty" jsonschema:"defaults to draft"`
+	Lines             []MoneyLineInput `json:"lines" jsonschema:"line items to bill; required, at least one line"`
 }
 
 type CreateActInput struct {
-	CounterpartyID    string           `json:"counterparty_id,omitempty"`
-	CounterpartyQuery string           `json:"counterparty_query,omitempty"`
-	ContractID        string           `json:"contract_id,omitempty"`
-	ContractNumber    string           `json:"contract_number,omitempty"`
-	InvoiceID         string           `json:"invoice_id,omitempty"`
-	Date              string           `json:"date,omitempty"`
-	Status            string           `json:"status,omitempty"`
-	Lines             []MoneyLineInput `json:"lines,omitempty"`
+	CounterpartyID    string           `json:"counterparty_id,omitempty" jsonschema:"existing counterparty id from counterparties.search; omit when invoice_id is set"`
+	CounterpartyQuery string           `json:"counterparty_query,omitempty" jsonschema:"name or INN to resolve a counterparty by, if counterparty_id is not already known"`
+	ContractID        string           `json:"contract_id,omitempty" jsonschema:"existing contract id; resolved from contract_number if omitted"`
+	ContractNumber    string           `json:"contract_number,omitempty" jsonschema:"contract number to resolve a contract by, if contract_id is not already known"`
+	InvoiceID         string           `json:"invoice_id,omitempty" jsonschema:"existing invoice id to copy counterparty, contract, and lines from; omit to build the act from scratch using the other fields"`
+	Date              string           `json:"date,omitempty" jsonschema:"DD.MM.YYYY, defaults to today"`
+	Status            string           `json:"status,omitempty" jsonschema:"defaults to draft"`
+	Lines             []MoneyLineInput `json:"lines,omitempty" jsonschema:"line items; required unless invoice_id is set, in which case the invoice's lines are used"`
 }
 
 type RenderFileInput struct {
@@ -669,13 +669,13 @@ type ContractAppendixLineInput struct {
 
 // CreateContractAppendixInput is the input for preparing a new contract appendix.
 type CreateContractAppendixInput struct {
-	CounterpartyID    string                      `json:"counterparty_id,omitempty"`
-	CounterpartyQuery string                      `json:"counterparty_query,omitempty"`
-	ContractID        string                      `json:"contract_id,omitempty"`
-	ContractNumber    string                      `json:"contract_number,omitempty"`
+	CounterpartyID    string                      `json:"counterparty_id,omitempty" jsonschema:"existing counterparty id from counterparties.search; omit if contract_id already identifies the contract"`
+	CounterpartyQuery string                      `json:"counterparty_query,omitempty" jsonschema:"name or INN to resolve a counterparty by, if counterparty_id is not already known"`
+	ContractID        string                      `json:"contract_id,omitempty" jsonschema:"existing contract id; resolved from contract_number (plus counterparty) if omitted"`
+	ContractNumber    string                      `json:"contract_number,omitempty" jsonschema:"contract number to resolve a contract by, if contract_id is not already known"`
 	Number            string                      `json:"number,omitempty" jsonschema:"appendix number; auto-assigned per contract if omitted"`
 	Date              string                      `json:"date,omitempty" jsonschema:"DD.MM.YYYY, defaults to today"`
-	Lines             []ContractAppendixLineInput `json:"lines"`
+	Lines             []ContractAppendixLineInput `json:"lines" jsonschema:"appendix line items; required, at least one line"`
 }
 
 type appendixDBLine struct {
