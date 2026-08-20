@@ -54,7 +54,7 @@ export type RedmineDeadlineState = "ok" | "due_soon" | "burning" | "urgent";
 export interface RedmineProjectControlEvent {
   id: string;
   project_id: string;
-  event_type: "report_date" | "control_cut" | "roadmap_milestone";
+  event_type: "report_date" | "control_cut";
   service_type: RedmineProjectType;
   title: string;
   due_date: string;

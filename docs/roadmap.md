@@ -10,12 +10,14 @@
 - Next.js обновлён до 16.3.1 (React 19.2.8), `npm audit` — 0 уязвимостей
 - 39 находок из UI/UX-аудита (13 high + 14 medium + 12 low/доп.) исправлены и проверены на реальных данных
 
-## Незакрытые хвосты (сделать в первую очередь)
+## Незакрытые хвосты
 
-1. **`worktree-error-handling-fixes`** — локальный worktree с незавершённой правкой в `backend/internal/accounting/service.go` (добавление `jsonschema`-подсказок для LLM в struct tags accounting-mcp, сделано только для `CreateContractInput` из нескольких структур). Нужно решить: дописать по аналогии для остальных input-структур, закоммитить как есть, или отбросить.
-2. **`AGENTS.md` / `CLAUDE.md`** в корне репозитория — автогенерация Next.js 16 при `npm run dev` (фича "AI agent docs"). Untracked. Решить: закоммитить (так и задумано фреймворком — эти файлы держат агентов в курсе версии Next) или добавить в `.gitignore`.
-3. **Root README.md отсутствует** — есть `backend/README.md`, но нет общего README для всего проекта (стек, как поднять фронт+бэк, структура трёх фич). Стоит завести.
-4. **Go-зависимости backend устарели** — `go list -m -u all` показывает доступные обновления: `github.com/go-chi/chi/v5` (5.2.3→5.3.1), `github.com/lib/pq` (1.10.9→1.12.3), `github.com/modelcontextprotocol/go-sdk` (1.6.1→1.7.0), `golang.org/x/oauth2`, `golang.org/x/sys`, `golang.org/x/tools`, `cloud.google.com/go/compute/metadata`. Не критично (govulncheck не нашёл эксплуатируемых уязвимостей в самих зависимостях — только в локальной версии Go-тулчейна, что не влияет на прод), но стоит обновить при следующем спокойном окне.
+Все 4 пункта из предыдущей версии этого раздела закрыты (2026-08-20, ветки `worktree-error-handling-fixes` и `worktree-roadmap-tail-items`, обе запушены — ждут мержа):
+
+1. ~~`worktree-error-handling-fixes`~~ — `jsonschema`-подсказки дописаны по аналогии для всех input-структур accounting-mcp (`CreateCounterpartyInput`, `UpdateCounterpartyInput`, `IDInput`, `CreateInvoiceInput`, `CreateActInput`, `CreateContractAppendixInput`), билд и тесты зелёные.
+2. ~~`AGENTS.md` / `CLAUDE.md`~~ — закоммичены как есть: файл сам объясняет, что это задумано фреймворком.
+3. ~~Root README.md~~ — добавлен, описывает стек, структуру трёх фич и запуск фронт+бэк.
+4. ~~Go-зависимости backend~~ — обновлены до актуальных minor/patch версий, `go build`/`vet`/`test ./...` проходят.
 
 ## Точки роста по фичам
 
@@ -28,11 +30,11 @@
 - `redmine_project_control_events` — таблица с событиями (`control_cut`, `report_date`, `roadmap_milestone`), статусами (`planned`/`sent`/`skipped`), циклами по типу проекта
 - В этой сессии починена главная опасность (каскадное удаление → пометка `skipped`, история не теряется) и рассинхрон между дашбордом и страницей проекта
 
-Следующие шаги:
-- **Уведомления о приближающихся датах** — сейчас `deadline_state` (ok/due_soon/burning/urgent) считается и показывается только при заходе в UI. Стоит завести фоновую рассылку (email/Telegram через Hermes) за N дней до `due_date`, пока событие ещё `planned`.
-- **Разграничение менеджеров с одинаковыми именами** — `RedmineProjectDashboardResponse.managers` сейчас `string[]` (только имена), назначение идёт по имени, а не по ID. При росте команды это станет реальной проблемой. Нужно: backend отдаёт `{id, name}[]`, `assignProjectManager` принимает `manager_id`.
-- **`roadmap_milestone` event_type** — заведён в constraint схемы, но нигде фактически не используется (dev-циклы используют `report_date` с другим `title`). Либо реально развести типы событий для dev-проектов, либо убрать неиспользуемое значение из constraint.
-- **Текст кнопок "КС отправлен"/"ОД отправлена"** — читаются как статус, а не как призыв к действию. Минорный UX-долг, можно поправить при следующей итерации над этим экраном.
+Следующие шаги — все 4 закрыты (2026-08-20, ветки `worktree-agent-a44f904047c8f8c26`, `worktree-agent-ab545663279b59fb0`, `worktree-roadmap-tail-items`, запушены, ждут ревью/мержа):
+- ~~Уведомления о приближающихся датах~~ — фоновый тикер (`internal/notify`, часовой интервал) шлёт "due soon" на Hermes-эндпоинт (контракт ещё не реализован на стороне Hermes) за `REDMINE_NOTIFY_DAYS_BEFORE` дней до `due_date`, пока `planned`; `notified_at` не даёт слать повторно. No-op, если `REDMINE_NOTIFY_URL` не задан.
+- ~~Разграничение менеджеров с одинаковыми именами~~ — `managers` теперь `{id, name}[]`, дедупликация по ID; оба picker'а (дашборд и страница проекта) шлют `manager_id` в `assignProjectManager`.
+- ~~`roadmap_milestone` event_type~~ — убран из constraint как неиспользуемый (миграция 030): dev-циклы и так различаются через `service_type='dev'` при `event_type='report_date'`.
+- ~~Текст кнопок "КС отправлен"/"ОД отправлена"~~ — переименованы в "Отметить КС отправленным"/"Отметить ОД отправленной"/"Отметить этап закрытым".
 
 ### 3. Звонари
 - **Пагинация звонков** добавлена в этой сессии (50/страница) — на реальных данных видели 781 звонок у одного звонаря за 2 недели. Если объём продолжит расти на порядок, пагинации может не хватить — тогда переходить на виртуализацию списка (`react-window`/`@tanstack/react-virtual`) или серверную пагинацию вместо клиентской.
@@ -41,9 +43,9 @@
 
 ## Инфраструктура и качество
 
-- **Тестовое покрытие frontend — сейчас 0.** В `package.json` нет тестового фреймворка вообще. Backend частично покрыт (`accounting`, `docparse`, `saby`, `export/updxml`), но `handlers`, `database`, `zvonari`, `redmine`, `pbx`, `transcribe`, `callreport` — без тестов. При таком объёме бизнес-логики (особенно вокруг control-events и zvonari-аналитики) стоит рассмотреть хотя бы базовое покрытие критичных путей.
-- **CI отсутствует** — нет GitHub Actions/аналога, весь `build`/`test`/`lint` в этой сессии прогонялся вручную. Даже минимальный workflow (`go build/vet/test` + `npm run build`+`tsc`+`eslint` на каждый PR) поймал бы регрессии раньше.
-- **`docker-compose.yml`** — теперь мигрирует все 29 миграций и не хардкодит пароль Postgres (пофикшено в этой сессии). Стоит подумать о переходе на `golang-migrate`/аналог вместо ручного списка volume-маунтов миграций — сейчас при каждой новой миграции нужно не забыть добавить строку и в `docker-compose.yml`, и в `backend/README.md` (это уже дважды забывали — миграции 018-029 отсутствовали в обоих местах).
+- **Тестовое покрытие frontend — сейчас 0.** В `package.json` нет тестового фреймворка вообще, это ещё не сделано. ~~Backend: `handlers`, `database`, `zvonari`, `redmine`, `pbx`, `transcribe`, `callreport` — без тестов~~ — частично закрыто (2026-08-20, ветка `worktree-agent-aadb06092bd65e0d7`): добавлены юнит-тесты на чистые функции `database.deadlineState`/`dateOnly` и `zvonari.ExtractOutcome`/`ExtractCallType`/`ExtractFraudSuspected`/`callerExtension`, включая regression-тест на баг с legacy пустой строкой в outcome. `handlers`, `redmine`, `pbx`, `transcribe`, `callreport` по-прежнему без тестов (там нет чистых функций без похода в БД/сеть — нужна либо инфраструктура для интеграционных тестов, либо выделение чистой логики).
+- ~~CI отсутствует~~ — закрыто (2026-08-20, ветка `worktree-roadmap-tail-items`): `.github/workflows/ci.yml`, backend (`go build/vet/test`) + frontend (`build/tsc/lint`) на каждый PR.
+- **`docker-compose.yml`** — теперь мигрирует все 30 миграций и не хардкодит пароль Postgres (пофикшено в этой сессии). Стоит подумать о переходе на `golang-migrate`/аналог вместо ручного списка volume-маунтов миграций — сейчас при каждой новой миграции нужно не забыть добавить строку и в `docker-compose.yml`, и в `backend/README.md` (это уже дважды забывали — миграции 018-029 отсутствовали в обоих местах).
 
 ## Гигиена (продолжать практику)
 

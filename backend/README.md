@@ -50,6 +50,7 @@ psql -d invoices_db -f migrations/026_global_unique_act_invoice_numbers.sql
 psql -d invoices_db -f migrations/027_fix_dogovor_602_number.sql
 psql -d invoices_db -f migrations/028_restore_dogovor_602_appendix.sql
 psql -d invoices_db -f migrations/029_zvonari.sql
+psql -d invoices_db -f migrations/030_drop_unused_roadmap_milestone_event_type.sql
 ```
 
 Если база была создана через `docker-compose` до этого изменения, существующий volume нужно либо пересоздать, либо применить миграции вручную: init-скрипты Postgres выполняются только при первом создании пустой БД.

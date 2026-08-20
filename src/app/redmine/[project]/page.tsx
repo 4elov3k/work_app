@@ -20,7 +20,7 @@ import { Select } from "@/components/ui/select"
 import { Alert } from "@/components/ui/alert"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { eventVerb, groupForColumn, groupKeyForItem, nextMonthDate, PROJECT_TYPES, projectTypeLabel } from "../shared"
+import { eventSentActionLabel, groupForColumn, groupKeyForItem, nextMonthDate, PROJECT_TYPES, projectTypeLabel } from "../shared"
 
 function eventStatusLabel(event: RedmineProjectControlEvent) {
   if (event.status === "sent") return "Отправлено"
@@ -508,7 +508,7 @@ export default function RedmineProjectPage() {
                       {event.status === "planned" ? (
                         <div className="flex gap-2">
                           <Button size="sm" variant="outline" disabled={saving} onClick={() => markEventSent(event)}>
-                            {eventVerb(event)}
+                            {eventSentActionLabel(event)}
                           </Button>
                           <Button size="sm" variant="outline" disabled={saving} aria-label="Удалить контрольную дату" onClick={() => setDeleteEventTarget(event)}>
                             <Trash2 className="h-4 w-4" />
