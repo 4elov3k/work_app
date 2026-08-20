@@ -120,23 +120,13 @@ func (h *Handlers) ExportActUPDXML(w http.ResponseWriter, r *http.Request) {
 
 	customer, err := h.db.GetCustomerByID(ctx, act.CustomerID)
 	if err != nil {
-		if isRecordNotFoundError(err) {
-			respondWithError(w, http.StatusBadRequest, "Customer not found for act")
-			return
-		}
-		log.Printf("Error loading customer for act export (act ID: %s): %v", id, err)
-		respondWithError(w, http.StatusInternalServerError, "Internal server error")
+		respondLinkedRecordOrInternal(w, err, "Customer not found for act", fmt.Sprintf("Error loading customer for act export (act ID: %s)", id))
 		return
 	}
 
 	contract, err := h.db.GetContractByID(ctx, act.ContractID)
 	if err != nil {
-		if isRecordNotFoundError(err) {
-			respondWithError(w, http.StatusBadRequest, "Contract not found for act")
-			return
-		}
-		log.Printf("Error loading contract for act export (act ID: %s): %v", id, err)
-		respondWithError(w, http.StatusInternalServerError, "Internal server error")
+		respondLinkedRecordOrInternal(w, err, "Contract not found for act", fmt.Sprintf("Error loading contract for act export (act ID: %s)", id))
 		return
 	}
 

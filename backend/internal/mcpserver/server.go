@@ -281,6 +281,11 @@ func addPrompts(server *mcp.Server) {
 func errorPayload(err error) map[string]any {
 	var app *accounting.AccountingError
 	if errors.As(err, &app) {
+		if app.UnderlyingError != "" {
+			// The client-facing message is intentionally generic (e.g.
+			// STORAGE_ERROR) — log the real cause here so it's not lost.
+			log.Printf("mcp: %s (client message: %q): %s", app.Code, app.Message, app.UnderlyingError)
+		}
 		return map[string]any{
 			"code":             app.Code,
 			"message":          app.Message,
@@ -290,10 +295,18 @@ func errorPayload(err error) map[string]any {
 		}
 	}
 	log.Printf("mcp: unclassified internal error: %v", err)
+	// Unclassified means it's a bug or an unexpected failure mode the code
+	// didn't anticipate — every foreseeable, genuinely transient condition
+	// already gets a classified *AccountingError with its own Recoverable
+	// value above. Defaulting to recoverable:false here is the safer choice:
+	// most unclassified errors (a nil dereference, a bad query, a value that
+	// always fails to marshal) will fail identically on retry, and blindly
+	// telling the caller to retry an unknown failure risks a retry storm
+	// against what might be a systemic outage.
 	return map[string]any{
 		"code":             "INTERNAL_ERROR",
-		"message":          "Внутренняя ошибка сервера. Повторите операцию позже.",
-		"recoverable":      true,
-		"suggested_action": "Повторите запрос через некоторое время или обратитесь к администратору",
+		"message":          "Внутренняя ошибка сервера.",
+		"recoverable":      false,
+		"suggested_action": "Обратитесь к администратору",
 	}
 }

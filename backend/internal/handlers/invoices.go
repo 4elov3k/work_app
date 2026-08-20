@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -132,23 +133,13 @@ func (h *Handlers) ExportInvoiceXML(w http.ResponseWriter, r *http.Request) {
 
 	customer, err := h.db.GetCustomerByID(ctx, invoice.CustomerID)
 	if err != nil {
-		if isRecordNotFoundError(err) {
-			respondWithError(w, http.StatusBadRequest, "Customer not found for invoice")
-			return
-		}
-		log.Printf("Error loading customer for invoice export (invoice ID: %s): %v", id, err)
-		respondWithError(w, http.StatusInternalServerError, "Internal server error")
+		respondLinkedRecordOrInternal(w, err, "Customer not found for invoice", fmt.Sprintf("Error loading customer for invoice export (invoice ID: %s)", id))
 		return
 	}
 
 	contract, err := h.db.GetContractByID(ctx, invoice.ContractID)
 	if err != nil {
-		if isRecordNotFoundError(err) {
-			respondWithError(w, http.StatusBadRequest, "Contract not found for invoice")
-			return
-		}
-		log.Printf("Error loading contract for invoice export (invoice ID: %s): %v", id, err)
-		respondWithError(w, http.StatusInternalServerError, "Internal server error")
+		respondLinkedRecordOrInternal(w, err, "Contract not found for invoice", fmt.Sprintf("Error loading contract for invoice export (invoice ID: %s)", id))
 		return
 	}
 

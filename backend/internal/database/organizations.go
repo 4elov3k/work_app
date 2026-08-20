@@ -37,7 +37,7 @@ func (db *DB) GetActiveOrganization(ctx context.Context) (*models.Organization, 
 		&signerRaw,
 	)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("organization not found")
+		return nil, fmt.Errorf("organization not found: %w", ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get organization: %w", err)

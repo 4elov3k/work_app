@@ -194,74 +194,75 @@ type SearchInput struct {
 }
 
 type CreateCounterpartyInput struct {
-	Type            string `json:"type,omitempty"`
+	Type            string `json:"type,omitempty" jsonschema:"counterparty legal type, defaults to organization"`
 	Name            string `json:"name" jsonschema:"short display name"`
 	FullName        string `json:"fullname,omitempty" jsonschema:"full legal name"`
-	Address         string `json:"address,omitempty"`
+	Address         string `json:"address,omitempty" jsonschema:"legal or postal address"`
 	INN             string `json:"inn" jsonschema:"taxpayer identifier"`
-	KPP             string `json:"kpp,omitempty"`
+	KPP             string `json:"kpp,omitempty" jsonschema:"tax registration reason code, if applicable"`
 	Phone           string `json:"phone,omitempty"`
 	Email           string `json:"email,omitempty"`
-	ContactPerson   string `json:"contact_person,omitempty"`
-	ContactPosition string `json:"contact_position,omitempty"`
+	ContactPerson   string `json:"contact_person,omitempty" jsonschema:"name of the contact person at the counterparty"`
+	ContactPosition string `json:"contact_position,omitempty" jsonschema:"job title of the contact person"`
 	Comment         string `json:"comment,omitempty"`
-	AllowDuplicate  bool   `json:"allow_duplicate,omitempty"`
+	AllowDuplicate  bool   `json:"allow_duplicate,omitempty" jsonschema:"set true to create anyway when a possible duplicate (matching INN/KPP) was already flagged by prepare"`
 }
 
 type UpdateCounterpartyInput struct {
-	ID              string  `json:"id"`
-	Name            *string `json:"name,omitempty"`
-	FullName        *string `json:"fullname,omitempty"`
-	Address         *string `json:"address,omitempty"`
-	INN             *string `json:"inn,omitempty"`
-	KPP             *string `json:"kpp,omitempty"`
-	Phone           *string `json:"phone,omitempty"`
-	Email           *string `json:"email,omitempty"`
-	ContactPerson   *string `json:"contact_person,omitempty"`
-	ContactPosition *string `json:"contact_position,omitempty"`
-	Comment         *string `json:"comment,omitempty"`
+	ID              string  `json:"id" jsonschema:"existing counterparty id from counterparties.search"`
+	Name            *string `json:"name,omitempty" jsonschema:"leave unset to keep the current value"`
+	FullName        *string `json:"fullname,omitempty" jsonschema:"leave unset to keep the current value"`
+	Address         *string `json:"address,omitempty" jsonschema:"leave unset to keep the current value"`
+	INN             *string `json:"inn,omitempty" jsonschema:"leave unset to keep the current value"`
+	KPP             *string `json:"kpp,omitempty" jsonschema:"leave unset to keep the current value"`
+	Phone           *string `json:"phone,omitempty" jsonschema:"leave unset to keep the current value"`
+	Email           *string `json:"email,omitempty" jsonschema:"leave unset to keep the current value"`
+	ContactPerson   *string `json:"contact_person,omitempty" jsonschema:"leave unset to keep the current value"`
+	ContactPosition *string `json:"contact_position,omitempty" jsonschema:"leave unset to keep the current value"`
+	Comment         *string `json:"comment,omitempty" jsonschema:"leave unset to keep the current value"`
 }
 
 type IDInput struct {
-	ID string `json:"id"`
+	ID string `json:"id" jsonschema:"existing record id, as returned by the matching search/list call"`
 }
 
 type CreateContractInput struct {
-	CounterpartyID    string `json:"counterparty_id,omitempty"`
-	CounterpartyQuery string `json:"counterparty_query,omitempty"`
-	Number            string `json:"number,omitempty"`
-	Date              string `json:"date,omitempty"`
-	StartDate         string `json:"start_date,omitempty"`
-	EndDate           string `json:"end_date,omitempty"`
-	Subject           string `json:"subject,omitempty"`
-	Currency          string `json:"currency,omitempty"`
-	Status            string `json:"status,omitempty"`
+	CounterpartyID    string `json:"counterparty_id,omitempty" jsonschema:"existing counterparty id from counterparties.search"`
+	CounterpartyQuery string `json:"counterparty_query,omitempty" jsonschema:"name or INN to resolve a counterparty by, if counterparty_id is not already known"`
+	Number            string `json:"number,omitempty" jsonschema:"the number printed on the signed contract itself. Never invent or default this — if illegible, omit it entirely and the next sequential number is auto-assigned; do not guess or fall back to a placeholder"`
+	Date              string `json:"date,omitempty" jsonschema:"DD.MM.YYYY, defaults to today"`
+	StartDate         string `json:"start_date,omitempty" jsonschema:"DD.MM.YYYY — contract period start (e.g. from 'настоящий договор заключен на срок с ... по ...'). Must be DD.MM.YYYY, not YYYY-MM-DD or any other format"`
+	EndDate           string `json:"end_date,omitempty" jsonschema:"DD.MM.YYYY — contract period end. Must be DD.MM.YYYY, not YYYY-MM-DD or any other format"`
+	Subject           string `json:"subject,omitempty" jsonschema:"contract topic/subject; will be mapped to one of the allowed contract topics server-side"`
+	Currency          string `json:"currency,omitempty" jsonschema:"defaults to RUB"`
+	Status            string `json:"status,omitempty" jsonschema:"defaults to active"`
 }
 
 type CreateInvoiceInput struct {
-	CounterpartyID    string           `json:"counterparty_id,omitempty"`
-	CounterpartyQuery string           `json:"counterparty_query,omitempty"`
-	ContractID        string           `json:"contract_id,omitempty"`
-	ContractNumber    string           `json:"contract_number,omitempty"`
-	Date              string           `json:"date,omitempty"`
-	Status            string           `json:"status,omitempty"`
-	Lines             []MoneyLineInput `json:"lines"`
+	CounterpartyID    string           `json:"counterparty_id,omitempty" jsonschema:"existing counterparty id from counterparties.search"`
+	CounterpartyQuery string           `json:"counterparty_query,omitempty" jsonschema:"name or INN to resolve a counterparty by, if counterparty_id is not already known"`
+	ContractID        string           `json:"contract_id,omitempty" jsonschema:"existing contract id; resolved from contract_number if omitted"`
+	ContractNumber    string           `json:"contract_number,omitempty" jsonschema:"contract number to resolve a contract by, if contract_id is not already known"`
+	Date              string           `json:"date,omitempty" jsonschema:"DD.MM.YYYY, defaults to today"`
+	Status            string           `json:"status,omitempty" jsonschema:"defaults to draft"`
+	Lines             []MoneyLineInput `json:"lines" jsonschema:"line items to bill; required, at least one line"`
 }
 
 type CreateActInput struct {
-	CounterpartyID    string           `json:"counterparty_id,omitempty"`
-	CounterpartyQuery string           `json:"counterparty_query,omitempty"`
-	ContractID        string           `json:"contract_id,omitempty"`
-	ContractNumber    string           `json:"contract_number,omitempty"`
-	InvoiceID         string           `json:"invoice_id,omitempty"`
-	Date              string           `json:"date,omitempty"`
-	Status            string           `json:"status,omitempty"`
-	Lines             []MoneyLineInput `json:"lines,omitempty"`
+	CounterpartyID    string           `json:"counterparty_id,omitempty" jsonschema:"existing counterparty id from counterparties.search; omit when invoice_id is set"`
+	CounterpartyQuery string           `json:"counterparty_query,omitempty" jsonschema:"name or INN to resolve a counterparty by, if counterparty_id is not already known"`
+	ContractID        string           `json:"contract_id,omitempty" jsonschema:"existing contract id; resolved from contract_number if omitted"`
+	ContractNumber    string           `json:"contract_number,omitempty" jsonschema:"contract number to resolve a contract by, if contract_id is not already known"`
+	InvoiceID         string           `json:"invoice_id,omitempty" jsonschema:"existing invoice id to copy counterparty, contract, and lines from; omit to build the act from scratch using the other fields"`
+	Date              string           `json:"date,omitempty" jsonschema:"DD.MM.YYYY, defaults to today"`
+	Status            string           `json:"status,omitempty" jsonschema:"defaults to draft"`
+	Lines             []MoneyLineInput `json:"lines,omitempty" jsonschema:"line items; required unless invoice_id is set, in which case the invoice's lines are used"`
 }
 
 type RenderFileInput struct {
 	DocumentType string `json:"document_type" jsonschema:"invoice or act"`
 	DocumentID   string `json:"document_id"`
+	FileKind     string `json:"file_kind,omitempty" jsonschema:"optional: pdf or upd_xml; omit to get the most recently stored file of any kind"`
 }
 
 type UpdateDocumentNumberInput struct {
@@ -669,13 +670,13 @@ type ContractAppendixLineInput struct {
 
 // CreateContractAppendixInput is the input for preparing a new contract appendix.
 type CreateContractAppendixInput struct {
-	CounterpartyID    string                      `json:"counterparty_id,omitempty"`
-	CounterpartyQuery string                      `json:"counterparty_query,omitempty"`
-	ContractID        string                      `json:"contract_id,omitempty"`
-	ContractNumber    string                      `json:"contract_number,omitempty"`
+	CounterpartyID    string                      `json:"counterparty_id,omitempty" jsonschema:"existing counterparty id from counterparties.search; omit if contract_id already identifies the contract"`
+	CounterpartyQuery string                      `json:"counterparty_query,omitempty" jsonschema:"name or INN to resolve a counterparty by, if counterparty_id is not already known"`
+	ContractID        string                      `json:"contract_id,omitempty" jsonschema:"existing contract id; resolved from contract_number (plus counterparty) if omitted"`
+	ContractNumber    string                      `json:"contract_number,omitempty" jsonschema:"contract number to resolve a contract by, if contract_id is not already known"`
 	Number            string                      `json:"number,omitempty" jsonschema:"appendix number; auto-assigned per contract if omitted"`
 	Date              string                      `json:"date,omitempty" jsonschema:"DD.MM.YYYY, defaults to today"`
-	Lines             []ContractAppendixLineInput `json:"lines"`
+	Lines             []ContractAppendixLineInput `json:"lines" jsonschema:"appendix line items; required, at least one line"`
 }
 
 type appendixDBLine struct {
@@ -1418,7 +1419,9 @@ func (s *Service) RenderPDF(ctx context.Context, input RenderFileInput) (*FileRe
 	result, err := s.upsertDocumentFile(ctx, org.ID, docType, input.DocumentID, "pdf", "application/pdf", path, filename, int64(len(data)))
 	if err != nil {
 		_ = os.Remove(path)
-		return nil, appError("STORAGE_ERROR", "Файл сформирован, но не удалось сохранить запись о нём — повторите запрос", true, "Повторите render_pdf")
+		storageErr := appError("STORAGE_ERROR", "Файл сформирован, но не удалось сохранить запись о нём — повторите запрос", true, "Повторите render_pdf")
+		storageErr.UnderlyingError = err.Error()
+		return nil, storageErr
 	}
 	return result, nil
 }
@@ -1457,7 +1460,9 @@ func (s *Service) ExportActUPDXML(ctx context.Context, input IDInput) (*FileResu
 	result, err := s.upsertDocumentFile(ctx, org.ID, "act", input.ID, "upd_xml", "application/xml", path, safeName, int64(len(data)))
 	if err != nil {
 		_ = os.Remove(path)
-		return nil, appError("STORAGE_ERROR", "Файл УПД сформирован, но не удалось сохранить запись о нём — повторите запрос", true, "Повторите acts.export_upd_xml")
+		storageErr := appError("STORAGE_ERROR", "Файл УПД сформирован, но не удалось сохранить запись о нём — повторите запрос", true, "Повторите acts.export_upd_xml")
+		storageErr.UnderlyingError = err.Error()
+		return nil, storageErr
 	}
 	return result, nil
 }
@@ -1483,8 +1488,11 @@ func (s *Service) ValidateActUPDXML(ctx context.Context, input IDInput) (*Valida
 	if err != nil {
 		return nil, appError("XML_VALIDATION_FAILED", err.Error(), true, "Исправьте реквизиты или строки акта")
 	}
-	// Best-effort reference to a previously stored file, if any — validation never writes.
-	file, _ := s.GetFile(ctx, RenderFileInput{DocumentType: "act", DocumentID: input.ID})
+	// Best-effort reference to the previously stored UPD XML file, if any —
+	// validation never writes. Must ask for file_kind="upd_xml" specifically:
+	// an act can also have a "pdf" file stored (acts.render_pdf), and without
+	// this filter GetFile returns whichever was written most recently.
+	file, _ := s.GetFile(ctx, RenderFileInput{DocumentType: "act", DocumentID: input.ID, FileKind: "upd_xml"})
 	if err := xml.Unmarshal(data, new(any)); err != nil {
 		return &ValidationResult{Status: "failed", XMLParse: err.Error(), XSDValidation: "not_run"}, nil
 	}
@@ -1511,13 +1519,19 @@ func (s *Service) GetFile(ctx context.Context, input RenderFileInput) (*FileResu
 	if docType == "" {
 		return nil, appError("VALIDATION_ERROR", "document_type должен быть invoice или act", true, "Исправьте тип документа")
 	}
-	row := s.db.QueryRowContext(ctx, `
+	query := `
 		SELECT id, document_type, document_id::text, file_kind, mime_type, file_name, storage_path, size_bytes
 		FROM document_files
 		WHERE document_type=$1 AND document_id=$2::uuid
-		ORDER BY created_at DESC
-		LIMIT 1
-	`, docType, input.DocumentID)
+	`
+	args := []any{docType, input.DocumentID}
+	if input.FileKind != "" {
+		query += " AND file_kind=$3"
+		args = append(args, input.FileKind)
+	}
+	query += " ORDER BY created_at DESC LIMIT 1"
+
+	row := s.db.QueryRowContext(ctx, query, args...)
 	var f FileResult
 	if err := row.Scan(&f.ID, &f.DocumentType, &f.DocumentID, &f.FileKind, &f.MimeType, &f.FileName, &f.StoragePath, &f.SizeBytes); err != nil {
 		return nil, appError("DOCUMENT_NOT_FOUND", "Файл документа не найден", true, "Сначала вызовите render_pdf или export_upd_xml")
@@ -1797,7 +1811,15 @@ func (s *Service) commitWithConfirmation(ctx context.Context, action string, inp
 			// of surfacing a raw Postgres constraint error.
 			_ = tx.Rollback()
 			existing, lookupErr := s.getIdempotentResultDB(ctx, action, input.IdempotencyKey, payloadHash)
-			if lookupErr == nil && existing != nil {
+			if lookupErr != nil {
+				// A specific, actionable error (e.g. CONFIRMATION_MISMATCH when
+				// the winner used a different payload under the same key) —
+				// surface it as-is rather than masking it with the generic
+				// "retry with the same idempotency_key" advice below, which
+				// would be wrong here: a mismatch needs a *new* key, not a retry.
+				return nil, lookupErr
+			}
+			if existing != nil {
 				return existing, nil
 			}
 			return nil, appError("IDEMPOTENCY_CONFLICT", "Операция с этим idempotency_key уже обрабатывается или обработана параллельным запросом", true, "Повторите запрос с тем же idempotency_key через несколько секунд")

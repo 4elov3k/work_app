@@ -150,7 +150,7 @@ func (db *DB) GetInvoiceByID(ctx context.Context, id string) (*models.Invoice, e
 	)
 
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("invoice not found")
+		return nil, fmt.Errorf("invoice not found: %w", ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get invoice: %w", err)
@@ -274,12 +274,12 @@ func (db *DB) CreateInvoice(ctx context.Context, req models.CreateInvoiceRequest
 	if req.ContractID != "" {
 		contract, err = db.GetContractByID(ctx, req.ContractID)
 		if err != nil {
-			return nil, fmt.Errorf("contract not found")
+			return nil, fmt.Errorf("contract not found: %w", ErrNotFound)
 		}
 	} else if req.CustomerID != "" && req.ContractNumber != "" {
 		contract, err = db.GetContractByCustomerAndNumber(ctx, req.CustomerID, req.ContractNumber)
 		if err != nil {
-			return nil, fmt.Errorf("contract not found")
+			return nil, fmt.Errorf("contract not found: %w", ErrNotFound)
 		}
 		req.ContractID = contract.ID
 	} else {
@@ -523,7 +523,7 @@ func buildInvoiceLines(ctx context.Context, tx *sql.Tx, req models.CreateInvoice
 		if line.ServiceID != "" {
 			service, err := getServiceByIDTx(ctx, tx, line.ServiceID)
 			if err != nil {
-				return nil, 0, fmt.Errorf("service not found")
+				return nil, 0, fmt.Errorf("service not found: %w", ErrNotFound)
 			}
 			title = service.Name
 			price = service.Price
@@ -554,7 +554,7 @@ func buildInvoiceLines(ctx context.Context, tx *sql.Tx, req models.CreateInvoice
 			return nil, 0, err
 		}
 		if len(services) != len(req.ServiceIDs) {
-			return nil, 0, fmt.Errorf("one or more services not found")
+			return nil, 0, fmt.Errorf("one or more services not found: %w", ErrNotFound)
 		}
 		for _, s := range services {
 			amount := s.Price
@@ -764,7 +764,7 @@ func getServiceByIDTx(ctx context.Context, tx *sql.Tx, id string) (*models.Servi
 	var s models.Service
 	if err := tx.QueryRowContext(ctx, query, id).Scan(&s.ID, &s.Name, &s.Price, &s.CreatedAt, &s.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("service not found")
+			return nil, fmt.Errorf("service not found: %w", ErrNotFound)
 		}
 		return nil, err
 	}
