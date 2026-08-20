@@ -374,23 +374,152 @@ function formatDuration(seconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function DistributionBars({ distribution }: { distribution: Record<string, number> }) {
-  const entries = Object.entries(distribution);
-  const max = Math.max(1, ...entries.map(([, count]) => count));
-  if (entries.length === 0) {
+// The IQ-200 v1.2 rubric's closed list of 13 outcome values (see
+// baza_znaniy_ocenka_zvonkov_po_skriptu_IQ200_v1.2.md, section 11), ordered
+// here to read as a left-to-right journey through the script rather than
+// the alphabetical/arbitrary order a plain distribution table would give.
+// "Корректно выявлено отсутствие потребности" and fraud are deliberately
+// NOT in this path: the former is a valid terminal state reached only after
+// the step-3 diagnosis (not a "how far did they get" milestone), and fraud
+// is an orthogonal boolean axis, not one of the outcome values at all — see
+// ExtractFraudSuspected/FraudCounts on the backend. Both render as separate
+// callout boxes beside the main path instead.
+interface RoadmapStage {
+  value: string;
+  label: string;
+  tone: "positive" | "negative" | "neutral" | "muted";
+}
+
+const ROADMAP_MAIN_PATH: RoadmapStage[] = [
+  { value: "Срыв на шаге 1", label: "Шаг 1: срыв", tone: "negative" },
+  { value: "Шаг 1 выполнен", label: "Шаг 1 пройден", tone: "neutral" },
+  { value: "Срыв на шаге 2", label: "Шаг 2: срыв", tone: "negative" },
+  { value: "Шаг 2 выполнен", label: "Шаг 2 пройден", tone: "neutral" },
+  { value: "Шаг 3 выполнен вне последовательности", label: "Шаг 3 вне очереди", tone: "muted" },
+  { value: "Шаг 3 выполнен", label: "Шаг 3 пройден", tone: "neutral" },
+  { value: "Согласован конкретный повторный контакт", label: "Повторный контакт", tone: "positive" },
+  { value: "Встреча согласована, шаг 5 не выполнен", label: "Встреча, шаг 5 не закрыт", tone: "negative" },
+  { value: OUTCOME_SCRIPT_COMPLETED, label: "Шаг 6: скрипт пройден", tone: "positive" },
+];
+
+const ROADMAP_OTHER_PATH: RoadmapStage[] = [
+  { value: "Технический / содержательный диалог не состоялся", label: "Диалог не состоялся", tone: "muted" },
+  { value: "Корректная ранняя остановка", label: "Ранняя остановка", tone: "muted" },
+  { value: "Недостаточно данных для оценки", label: "Недостаточно данных", tone: "muted" },
+];
+
+const ROADMAP_TONE_CLASSES: Record<RoadmapStage["tone"], string> = {
+  positive: "border-success/40 bg-success/10 text-success",
+  negative: "border-destructive/40 bg-destructive/10 text-destructive",
+  neutral: "border-primary/40 bg-primary/10 text-primary",
+  muted: "border-border bg-muted/40 text-muted-foreground",
+};
+
+function RoadmapStageChip({
+  label,
+  count,
+  tone,
+  selected,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  tone: RoadmapStage["tone"];
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex shrink-0 flex-col items-center gap-0.5 rounded-md border px-2.5 py-1.5 text-center transition-all active:scale-95 ${ROADMAP_TONE_CLASSES[tone]} ${
+        selected ? "ring-2 ring-ring" : count === 0 ? "opacity-40 hover:opacity-70" : "hover:opacity-80"
+      }`}
+      title={label}
+    >
+      <span className="text-base font-bold leading-none tabular-nums">{count}</span>
+      <span className="max-w-[6.5rem] whitespace-normal text-[11px] leading-tight">{label}</span>
+    </button>
+  );
+}
+
+// ScriptRoadmap replaces the old plain bar-chart distribution: instead of
+// an unordered "here are 13 bars", it lays the same counts out in script
+// order (see ROADMAP_MAIN_PATH) so it reads like a funnel — where calls
+// actually stopped — and doubles as the outcome filter (click a stage to
+// filter the call list to it, click again to clear) instead of a separate
+// dropdown.
+function ScriptRoadmap({
+  distribution,
+  fraudCount,
+  selected,
+  onSelect,
+}: {
+  distribution: Record<string, number>;
+  fraudCount: number;
+  selected: string;
+  onSelect: (value: string) => void;
+}) {
+  const total = Object.values(distribution).reduce((a, b) => a + b, 0);
+  if (total === 0 && fraudCount === 0) {
     return <p className="text-sm text-muted-foreground">Нет звонков за этот период</p>;
   }
+  const unanalyzedCount = distribution["не проанализировано"] ?? 0;
+  const noNeedCount = distribution["Корректно выявлено отсутствие потребности"] ?? 0;
+  const toggle = (value: string) => onSelect(selected === value ? "" : value);
+
   return (
-    <div className="space-y-2">
-      {entries.map(([outcome, count]) => (
-        <div key={outcome} className="flex items-center gap-3 text-sm">
-          <span className="w-40 shrink-0 truncate text-muted-foreground">{outcome}</span>
-          <div className="h-3 flex-1 rounded bg-muted overflow-hidden">
-            <div className="h-full bg-primary" style={{ width: `${(count / max) * 100}%` }} />
-          </div>
-          <span className="w-6 shrink-0 text-right font-medium">{count}</span>
-        </div>
-      ))}
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {ROADMAP_MAIN_PATH.map((stage, i) => (
+          <Fragment key={stage.value}>
+            {i > 0 && <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />}
+            <RoadmapStageChip
+              label={stage.label}
+              count={distribution[stage.value] ?? 0}
+              tone={stage.tone}
+              selected={selected === stage.value}
+              onClick={() => toggle(stage.value)}
+            />
+          </Fragment>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-border/60 pt-2">
+        <span className="mr-1 text-xs text-muted-foreground">Отдельно:</span>
+        <RoadmapStageChip
+          label="Правильно скинут (нет потребности)"
+          count={noNeedCount}
+          tone="positive"
+          selected={selected === "Корректно выявлено отсутствие потребности"}
+          onClick={() => toggle("Корректно выявлено отсутствие потребности")}
+        />
+        <RoadmapStageChip
+          label="Фрод (автоответчик)"
+          count={fraudCount}
+          tone="negative"
+          selected={selected === UNANALYZED_FRAUD_FILTER}
+          onClick={() => toggle(UNANALYZED_FRAUD_FILTER)}
+        />
+        {ROADMAP_OTHER_PATH.map((stage) => (
+          <RoadmapStageChip
+            key={stage.value}
+            label={stage.label}
+            count={distribution[stage.value] ?? 0}
+            tone={stage.tone}
+            selected={selected === stage.value}
+            onClick={() => toggle(stage.value)}
+          />
+        ))}
+        {unanalyzedCount > 0 && (
+          <RoadmapStageChip
+            label="Не проанализировано"
+            count={unanalyzedCount}
+            tone="muted"
+            selected={selected === UNANALYZED_OUTCOME}
+            onClick={() => toggle(UNANALYZED_OUTCOME)}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -398,30 +527,37 @@ function DistributionBars({ distribution }: { distribution: Record<string, numbe
 interface CallFilters {
   status: string;
   callType: string;
-  outcome: string;
   direction: string;
   search: string;
-  fraudOnly: boolean;
 }
 
-const EMPTY_FILTERS: CallFilters = { status: "", callType: "", outcome: "", direction: "", search: "", fraudOnly: false };
+const EMPTY_FILTERS: CallFilters = { status: "", callType: "", direction: "", search: "" };
 
 // CallOutcome uses "" to mean "not yet analyzed" (see zvonari.ts), which
-// collides with the filter's own "no filter selected" sentinel — this
-// separate value lets the dropdown offer "unanalyzed" as its own option
-// instead of it being unreachable.
+// collides with the roadmap filter's own "no filter selected" sentinel —
+// this separate value lets a stage represent "unanalyzed" instead of it
+// being unreachable.
 const UNANALYZED_OUTCOME = "__unanalyzed__";
+// fraud_suspected is a boolean field on analytics_json, not one of the 13
+// outcome values (see ExtractFraudSuspected on the backend) — this sentinel
+// lets the roadmap's "Фрод" chip drive the same single filter state as the
+// outcome stages even though it filters a different field.
+const UNANALYZED_FRAUD_FILTER = "__fraud__";
 
-function filterCalls(calls: Call[], filters: CallFilters): Call[] {
+// roadmapFilter is a single value covering both outcome stages and the two
+// side callouts (unanalyzed, fraud) — see ScriptRoadmap, which replaced the
+// separate outcome dropdown and "только фрод" toggle this list used to have.
+function filterCalls(calls: Call[], filters: CallFilters, roadmapFilter: string): Call[] {
   return calls.filter((call) => {
     if (filters.status && call.transcript_status !== filters.status) return false;
     if (filters.callType && (call.analytics_json?.call_type || "") !== filters.callType) return false;
-    if (filters.outcome === UNANALYZED_OUTCOME) {
+    if (roadmapFilter === UNANALYZED_OUTCOME) {
       if (call.analytics_json?.outcome) return false;
-    } else if (filters.outcome && (call.analytics_json?.outcome || "") !== filters.outcome) {
+    } else if (roadmapFilter === UNANALYZED_FRAUD_FILTER) {
+      if (!call.analytics_json?.fraud_suspected) return false;
+    } else if (roadmapFilter && (call.analytics_json?.outcome || "") !== roadmapFilter) {
       return false;
     }
-    if (filters.fraudOnly && !call.analytics_json?.fraud_suspected) return false;
     if (filters.direction && call.direction !== filters.direction) return false;
     if (filters.search) {
       const q = filters.search.toLowerCase();
@@ -439,15 +575,19 @@ function CallDetailList({
   calls,
   retranscribingIds,
   onRetranscribe,
+  roadmapFilter,
+  onClearRoadmapFilter,
 }: {
   calls: Call[];
   retranscribingIds: Set<string>;
   onRetranscribe: (callId: string) => void;
+  roadmapFilter: string;
+  onClearRoadmapFilter: () => void;
 }) {
   const [filters, setFilters] = useState<CallFilters>(EMPTY_FILTERS);
   const [expandedCallId, setExpandedCallId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
-  const filtered = useMemo(() => filterCalls(calls, filters), [calls, filters]);
+  const filtered = useMemo(() => filterCalls(calls, filters, roadmapFilter), [calls, filters, roadmapFilter]);
   // Some periods return hundreds of calls (each with a full transcript) —
   // rendering them all into one unvirtualized table is genuinely slow, so
   // paginate client-side rather than pulling in a virtualization library.
@@ -460,27 +600,21 @@ function CallDetailList({
   // Reset to page 1 when the filters or the underlying call list change —
   // done during render (React's documented pattern for this) rather than
   // an effect, which would cause an extra commit.
-  const [resetTrackedOn, setResetTrackedOn] = useState({ filters, calls });
-  if (resetTrackedOn.filters !== filters || resetTrackedOn.calls !== calls) {
-    setResetTrackedOn({ filters, calls });
+  const [resetTrackedOn, setResetTrackedOn] = useState({ filters, calls, roadmapFilter });
+  if (
+    resetTrackedOn.filters !== filters ||
+    resetTrackedOn.calls !== calls ||
+    resetTrackedOn.roadmapFilter !== roadmapFilter
+  ) {
+    setResetTrackedOn({ filters, calls, roadmapFilter });
     setPage(0);
   }
-
-  const outcomes = useMemo(() => {
-    const set = new Set<string>();
-    calls.forEach((c) => c.analytics_json?.outcome && set.add(c.analytics_json.outcome));
-    return Array.from(set).sort();
-  }, [calls]);
-
-  const hasUnanalyzed = useMemo(() => calls.some((c) => !c.analytics_json?.outcome), [calls]);
 
   const callTypes = useMemo(() => {
     const set = new Set<string>();
     calls.forEach((c) => c.analytics_json?.call_type && set.add(c.analytics_json.call_type));
     return Array.from(set).sort();
   }, [calls]);
-
-  const hasFraudSuspected = useMemo(() => calls.some((c) => c.analytics_json?.fraud_suspected), [calls]);
 
   if (calls.length === 0) {
     return <p className="text-sm text-muted-foreground">Нет звонков за этот период</p>;
@@ -525,30 +659,6 @@ function CallDetailList({
             </option>
           ))}
         </select>
-        {hasFraudSuspected && (
-          <Button
-            variant={filters.fraudOnly ? "destructive" : "outline"}
-            size="sm"
-            className="h-8 gap-1.5 bg-card transition-transform active:scale-95"
-            onClick={() => setFilters((f) => ({ ...f, fraudOnly: !f.fraudOnly }))}
-          >
-            <ShieldAlert className="h-3.5 w-3.5" />
-            Только фрод
-          </Button>
-        )}
-        <select
-          value={filters.outcome}
-          onChange={(e) => setFilters((f) => ({ ...f, outcome: e.target.value }))}
-          className={selectClass}
-        >
-          <option value="">Все исходы</option>
-          {hasUnanalyzed && <option value={UNANALYZED_OUTCOME}>Не проанализировано</option>}
-          {outcomes.map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
         <select
           value={filters.direction}
           onChange={(e) => setFilters((f) => ({ ...f, direction: e.target.value }))}
@@ -561,12 +671,15 @@ function CallDetailList({
             </option>
           ))}
         </select>
-        {(filters.status || filters.callType || filters.outcome || filters.direction || filters.search || filters.fraudOnly) && (
+        {(filters.status || filters.callType || filters.direction || filters.search || roadmapFilter) && (
           <Button
             variant="ghost"
             size="sm"
             className="h-8 text-muted-foreground transition-colors hover:text-foreground"
-            onClick={() => setFilters(EMPTY_FILTERS)}
+            onClick={() => {
+              setFilters(EMPTY_FILTERS);
+              onClearRoadmapFilter();
+            }}
           >
             Сбросить
           </Button>
@@ -875,6 +988,12 @@ export default function ZvonariPage() {
 
   const [panels, setPanels] = useState<Record<string, CallerPanelState>>({});
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // Drives both the ScriptRoadmap's highlighted stage and the calls list's
+  // filtering — only one caller panel can be expanded at a time, so a single
+  // value (not per-caller) is enough; reset whenever the expanded caller
+  // changes (see toggleExpand) so a stage picked for one звонарь doesn't
+  // leak into the next one's call list.
+  const [roadmapFilter, setRoadmapFilter] = useState("");
   const [retranscribingIds, setRetranscribingIds] = useState<Set<string>>(new Set());
 
   const [sortKey, setSortKey] = useState<SortKey>("name");
@@ -1168,6 +1287,7 @@ export default function ZvonariPage() {
   const toggleExpand = (callerId: string) => {
     const next = expandedId === callerId ? null : callerId;
     setExpandedId(next);
+    setRoadmapFilter("");
     if (next && !panels[next]?.distribution && !panels[next]?.distributionLoading) {
       updatePanel(next, { distributionLoading: true });
       zvonariAPI
@@ -1762,9 +1882,14 @@ export default function ZvonariPage() {
                               <div className="rounded-lg border border-border/70 bg-card p-3">
                                 <h4 className="mb-2 flex items-center gap-1.5 text-sm font-medium">
                                   <ListChecks className="h-4 w-4 text-primary" />
-                                  Распределение звонков за период
+                                  Дорожная карта скрипта за период
                                 </h4>
-                                <DistributionBars distribution={panel.distribution} />
+                                <ScriptRoadmap
+                                  distribution={panel.distribution}
+                                  fraudCount={fraudCount}
+                                  selected={roadmapFilter}
+                                  onSelect={setRoadmapFilter}
+                                />
                               </div>
                             ) : null}
 
@@ -1859,6 +1984,8 @@ export default function ZvonariPage() {
                                     calls={panel.calls}
                                     retranscribingIds={retranscribingIds}
                                     onRetranscribe={(callId) => handleRetranscribeCall(caller.id, callId)}
+                                    roadmapFilter={roadmapFilter}
+                                    onClearRoadmapFilter={() => setRoadmapFilter("")}
                                   />
                                 </div>
                               )}
