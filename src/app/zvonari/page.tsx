@@ -575,12 +575,16 @@ function CallDetailList({
   calls,
   retranscribingIds,
   onRetranscribe,
+  analyzingIds,
+  onAnalyze,
   roadmapFilter,
   onClearRoadmapFilter,
 }: {
   calls: Call[];
   retranscribingIds: Set<string>;
   onRetranscribe: (callId: string) => void;
+  analyzingIds: Set<string>;
+  onAnalyze: (callId: string) => void;
   roadmapFilter: string;
   onClearRoadmapFilter: () => void;
 }) {
@@ -726,6 +730,7 @@ function CallDetailList({
             <TableBody>
               {paginated.map((call) => {
                 const isRetranscribing = retranscribingIds.has(call.id);
+                const isAnalyzing = analyzingIds.has(call.id);
                 const analytics = call.analytics_json;
                 const isFraud = !!analytics?.fraud_suspected;
                 const isExpanded = expandedCallId === call.id;
@@ -785,7 +790,7 @@ function CallDetailList({
                           )}
                         </div>
                       </TableCell>
-                      <TableCell onClick={(e) => e.stopPropagation()}>
+                      <TableCell onClick={(e) => e.stopPropagation()} className="whitespace-nowrap">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -796,6 +801,17 @@ function CallDetailList({
                           onClick={() => onRetranscribe(call.id)}
                         >
                           {isRetranscribing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mic className="h-3.5 w-3.5" />}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 transition-transform active:scale-95"
+                          disabled={isAnalyzing || !call.transcript_text}
+                          title="Переанализировать (пересчитать исход и фрод по текущему транскрипту)"
+                          aria-label="Переанализировать"
+                          onClick={() => onAnalyze(call.id)}
+                        >
+                          {isAnalyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -995,6 +1011,7 @@ export default function ZvonariPage() {
   // leak into the next one's call list.
   const [roadmapFilter, setRoadmapFilter] = useState("");
   const [retranscribingIds, setRetranscribingIds] = useState<Set<string>>(new Set());
+  const [analyzingIds, setAnalyzingIds] = useState<Set<string>>(new Set());
 
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -1395,6 +1412,31 @@ export default function ZvonariPage() {
       });
     } finally {
       setRetranscribingIds((current) => {
+        const next = new Set(current);
+        next.delete(callId);
+        return next;
+      });
+    }
+  };
+
+  const handleAnalyzeCall = async (callerId: string, callId: string) => {
+    setAnalyzingIds((current) => new Set(current).add(callId));
+    updatePanel(callerId, { callsError: "" });
+    try {
+      const response = await zvonariAPI.analyzeCall(callId);
+      const updated = response.data;
+      setPanels((current) => {
+        const panel = current[callerId];
+        if (!panel?.calls) return current;
+        return { ...current, [callerId]: { ...panel, calls: panel.calls.map((c) => (c.id === callId ? updated : c)) } };
+      });
+    } catch (err) {
+      console.error("Analyze failed:", err);
+      updatePanel(callerId, {
+        callsError: err instanceof Error ? err.message : "Не удалось переанализировать звонок",
+      });
+    } finally {
+      setAnalyzingIds((current) => {
         const next = new Set(current);
         next.delete(callId);
         return next;
@@ -1984,6 +2026,8 @@ export default function ZvonariPage() {
                                     calls={panel.calls}
                                     retranscribingIds={retranscribingIds}
                                     onRetranscribe={(callId) => handleRetranscribeCall(caller.id, callId)}
+                                    analyzingIds={analyzingIds}
+                                    onAnalyze={(callId) => handleAnalyzeCall(caller.id, callId)}
                                     roadmapFilter={roadmapFilter}
                                     onClearRoadmapFilter={() => setRoadmapFilter("")}
                                   />

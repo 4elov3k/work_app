@@ -237,6 +237,14 @@ export const zvonariAPI = {
     return handleResponse<SingleResponse<Call>>(response);
   },
 
+  // Вручную (пере)запустить только аналитику Hermes для одного звонка (без
+  // ретранскрибации) — нужен для уже проанализированных звонков, которые
+  // обычный AnalyzeCalls по периоду пропускает.
+  analyzeCall: async (callId: string): Promise<SingleResponse<Call>> => {
+    const response = await fetch(`${API_BASE}/zvonari/calls/${callId}/analyze`, { method: 'POST' });
+    return handleResponse<SingleResponse<Call>>(response);
+  },
+
   // Детализация звонков звонаря за период (время, направление, транскрипт, категория)
   getCalls: async (callerId: string, from: string, to: string): Promise<SingleResponse<Call[]>> => {
     const params = new URLSearchParams({ from, to });

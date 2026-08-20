@@ -582,7 +582,7 @@ func (s *Service) StartAnalyzeCalls(from, to time.Time) bool {
 // "transcribing"/"failed" (e.g. because the backend restarted mid-batch)
 // had no way to be retried short of that. Runs synchronously — a single
 // call is seconds, not minutes, so it doesn't need the background-job
-// treatment SyncCalls does. Does NOT re-run analysis — call AnalyzeCalls
+// treatment SyncCalls does. Does NOT re-run analysis — call AnalyzeCall
 // separately if the transcript changed and needs re-classifying.
 func (s *Service) RetranscribeCall(ctx context.Context, callID string) (*models.Call, error) {
 	call, err := s.db.GetCallByID(ctx, callID)
@@ -594,6 +594,37 @@ func (s *Service) RetranscribeCall(ctx context.Context, callID string) (*models.
 	var mu sync.Mutex
 	s.transcribeOnly(ctx, call, call.PBXUUID, &mu, &result)
 
+	return s.db.GetCallByID(ctx, callID)
+}
+
+// AnalyzeCall (re)runs Hermes analysis for one existing call, on demand from
+// the UI — AnalyzeCalls' ListCallsNeedingAnalysis only ever picks up calls
+// that don't already have analytics_json.call_type set, so a call that was
+// already analyzed (e.g. before a prompt/rubric change, or before
+// duration_sec/talk_time_sec started being sent — see the 2026-08 fraud-
+// detection fix) had no way to be re-scored short of clearing its
+// analytics_json by hand. Unlike RetranscribeCall this always re-analyzes
+// regardless of current analytics_json state.
+func (s *Service) AnalyzeCall(ctx context.Context, callID string) (*models.Call, error) {
+	if !s.callreport.Configured() {
+		return nil, fmt.Errorf("аналитика недоступна (не настроен CALL_ANALYTICS_URL)")
+	}
+	call, err := s.db.GetCallByID(ctx, callID)
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.callreport.AnalyzeCall(ctx, callreport.AnalyzeCallRequest{
+		CallID:      call.ID,
+		Transcript:  call.TranscriptText,
+		DurationSec: call.DurationSec,
+		TalkTimeSec: call.TalkTimeSec,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("analyzing call: %w", err)
+	}
+	if err := s.db.SetCallAnalytics(ctx, call.ID, result.AnalyticsJSON); err != nil {
+		return nil, fmt.Errorf("saving analytics: %w", err)
+	}
 	return s.db.GetCallByID(ctx, callID)
 }
 

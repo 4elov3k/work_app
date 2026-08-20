@@ -279,6 +279,24 @@ func (h *Handlers) RetranscribeCall(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusOK, models.CallResponse{Data: *call})
 }
 
+// AnalyzeCall обрабатывает POST /api/zvonari/calls/{id}/analyze
+// Ручной (пере)запуск только аналитики Hermes для одного звонка — в отличие
+// от RetranscribeCall не трогает транскрипт, только пересчитывает
+// classification/fraud_suspected. Нужен, когда звонок уже был проанализирован
+// раньше (regular AnalyzeCalls пропускает уже размеченные звонки) — например
+// после смены регламента/промпта на стороне Hermes.
+func (h *Handlers) AnalyzeCall(w http.ResponseWriter, r *http.Request) {
+	callID := chi.URLParam(r, "id")
+
+	call, err := h.zvonari.AnalyzeCall(r.Context(), callID)
+	if err != nil {
+		log.Printf("AnalyzeCall failed: %v", err)
+		respondNotFoundOrInternal(w, err, "Call not found")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, models.CallResponse{Data: *call})
+}
+
 // GetCallerCallDistribution обрабатывает GET /api/zvonari/callers/{id}/distribution?from=&to=
 func (h *Handlers) GetCallerCallDistribution(w http.ResponseWriter, r *http.Request) {
 	callerID := chi.URLParam(r, "id")
