@@ -61,6 +61,90 @@ function todayISO(offsetDays = 0): string {
   return d.toISOString().slice(0, 10);
 }
 
+// previousPeriod returns the period of the same length immediately
+// preceding [from, to] — e.g. from=08-14/to=08-20 (7 days) -> 08-07/08-13 —
+// so period-over-period KPI trends compare like-for-like windows rather than
+// a fixed "last month" that could be a very different length.
+function previousPeriod(from: string, to: string): { from: string; to: string } {
+  const fromDate = new Date(from + "T00:00:00Z");
+  const toDate = new Date(to + "T00:00:00Z");
+  const lengthDays = Math.max(1, Math.round((toDate.getTime() - fromDate.getTime()) / 86400000) + 1);
+  const prevTo = new Date(fromDate.getTime() - 86400000);
+  const prevFrom = new Date(prevTo.getTime() - (lengthDays - 1) * 86400000);
+  return { from: prevFrom.toISOString().slice(0, 10), to: prevTo.toISOString().slice(0, 10) };
+}
+
+// formatTrend compares current vs previous and returns display text plus a
+// tone: goodDirection says which direction ("up"/"down") is an improvement
+// for this particular metric (e.g. up is good for "done", down is good for
+// "не проанализировано"); pass "neutral" for metrics where neither
+// direction is inherently good/bad (e.g. raw call volume).
+function formatTrend(
+  current: number,
+  previous: number,
+  goodDirection: "up" | "down" | "neutral"
+): { text: string; tone: "positive" | "negative" | "neutral" } {
+  if (previous === 0) {
+    if (current === 0) return { text: "без изменений к пред. периоду", tone: "neutral" };
+    const tone = goodDirection === "neutral" ? "neutral" : goodDirection === "up" ? "positive" : "negative";
+    return { text: `+${current}, не было в пред. периоде`, tone };
+  }
+  const pct = Math.round(((current - previous) / previous) * 100);
+  if (pct === 0) return { text: "без изменений к пред. периоду", tone: "neutral" };
+  const direction: "up" | "down" = pct > 0 ? "up" : "down";
+  const tone =
+    goodDirection === "neutral" ? "neutral" : direction === goodDirection ? "positive" : "negative";
+  return { text: `${pct > 0 ? "+" : ""}${pct}% к пред. периоду`, tone };
+}
+
+// formatPointTrend is formatTrend's counterpart for a value that is itself
+// already a percentage (e.g. "% готово") — the delta is shown in
+// percentage points ("+7 п.п."), not a relative percent-of-percent change,
+// which would conflate "50% -> 60%" with a confusing "+20%".
+function formatPointTrend(
+  current: number | null,
+  previous: number | null,
+  goodDirection: "up" | "down" | "neutral"
+): { text: string; tone: "positive" | "negative" | "neutral" } | undefined {
+  if (current === null || previous === null) return undefined;
+  const diff = Math.round(current - previous);
+  if (diff === 0) return { text: "без изменений к пред. периоду", tone: "neutral" };
+  const direction: "up" | "down" = diff > 0 ? "up" : "down";
+  const tone =
+    goodDirection === "neutral" ? "neutral" : direction === goodDirection ? "positive" : "negative";
+  return { text: `${diff > 0 ? "+" : ""}${diff} п.п. к пред. периоду`, tone };
+}
+
+// computeKpi aggregates the 4 per-caller endpoint responses into the same
+// summary numbers shown on the KPI cards — factored out (rather than inline
+// in a useMemo) so the exact same logic can run once for the current period
+// and once for the comparison period, guaranteeing the two numbers being
+// diffed for a trend are always computed the same way.
+function computeKpi(
+  callCounts: Record<string, number>,
+  statusCounts: Record<string, Record<string, number>>,
+  outcomeCounts: Record<string, Record<string, number>>,
+  fraudCounts: Record<string, number>
+) {
+  const totalCalls = Object.values(callCounts).reduce((a, b) => a + b, 0);
+  const totalDone = Object.values(statusCounts).reduce((sum, s) => sum + (s.done ?? 0), 0);
+  const totalScriptCompleted = Object.values(outcomeCounts).reduce(
+    (sum, o) => sum + (o[OUTCOME_SCRIPT_COMPLETED] ?? 0),
+    0
+  );
+  const totalStep1Broken = Object.values(outcomeCounts).reduce((sum, o) => sum + (o[OUTCOME_STEP1_BROKEN] ?? 0), 0);
+  // Backend buckets under "не проанализировано" via COALESCE(...outcome, 'не проанализировано')
+  // — that only catches NULL analytics_json, not legacy rows with an
+  // explicit empty-string outcome (CallOutcome's own "" variant, see
+  // zvonari.ts) which bucket under "" instead. Count both.
+  const totalUnanalyzed = Object.values(outcomeCounts).reduce(
+    (sum, o) => sum + (o["не проанализировано"] ?? 0) + (o[""] ?? 0),
+    0
+  );
+  const totalFraud = Object.values(fraudCounts).reduce((a, b) => a + b, 0);
+  return { totalCalls, totalDone, totalScriptCompleted, totalStep1Broken, totalUnanalyzed, totalFraud };
+}
+
 const PERIOD_PRESETS: { label: string; from: () => string; to: () => string }[] = [
   { label: "Сегодня", from: () => todayISO(), to: () => todayISO() },
   { label: "Неделя", from: () => todayISO(-6), to: () => todayISO() },
@@ -699,18 +783,26 @@ const KPI_ACCENTS = {
   warning: "border-l-warning",
 } as const;
 
+const TREND_TONE_CLASSES = {
+  positive: "text-success",
+  negative: "text-destructive",
+  neutral: "text-muted-foreground",
+} as const;
+
 function KpiCard({
   label,
   value,
   hint,
   icon,
   accent = "neutral",
+  trend,
 }: {
   label: string;
   value: string;
   hint?: string;
   icon?: ReactNode;
   accent?: keyof typeof KPI_ACCENTS;
+  trend?: { text: string; tone: keyof typeof TREND_TONE_CLASSES };
 }) {
   return (
     <Card
@@ -725,6 +817,7 @@ function KpiCard({
           {icon && <span className="shrink-0 text-muted-foreground/60">{icon}</span>}
         </div>
         {hint && <div className="mt-1 text-xs text-muted-foreground">{hint}</div>}
+        {trend && <div className={`mt-1 text-xs ${TREND_TONE_CLASSES[trend.tone]}`}>{trend.text}</div>}
       </CardContent>
     </Card>
   );
@@ -768,6 +861,17 @@ export default function ZvonariPage() {
   const [statusCounts, setStatusCounts] = useState<Record<string, Record<string, number>>>({});
   const [outcomeCounts, setOutcomeCounts] = useState<Record<string, Record<string, number>>>({});
   const [fraudCounts, setFraudCounts] = useState<Record<string, number>>({});
+
+  // Same 4 aggregates for the immediately-preceding period of equal length,
+  // used to show "+N% к пред. периоду" trend text on the KPI cards below —
+  // see previousPeriod()/formatTrend(). prevLoaded stays false while any of
+  // the 4 requests is in flight or failed, so trends are hidden rather than
+  // shown next to a half-loaded/stale comparison.
+  const [prevCallCounts, setPrevCallCounts] = useState<Record<string, number>>({});
+  const [prevStatusCounts, setPrevStatusCounts] = useState<Record<string, Record<string, number>>>({});
+  const [prevOutcomeCounts, setPrevOutcomeCounts] = useState<Record<string, Record<string, number>>>({});
+  const [prevFraudCounts, setPrevFraudCounts] = useState<Record<string, number>>({});
+  const [prevLoaded, setPrevLoaded] = useState(false);
 
   const [panels, setPanels] = useState<Record<string, CallerPanelState>>({});
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -849,6 +953,32 @@ export default function ZvonariPage() {
       .catch((err) => {
         console.error("Failed to load fraud counts:", err);
         setAggregatesError("Не удалось загрузить статистику по звонкам — показанные цифры могут быть неполными.");
+      });
+  };
+
+  // Same 4 requests as loadAggregates, for the comparison period — kept
+  // separate (rather than parameterizing loadAggregates with the setters)
+  // so a slow/failed previous-period fetch can never overwrite the current
+  // period's numbers, and so it fails silently (hides the trend, no error
+  // banner) instead of competing with aggregatesError for the same banner.
+  const loadPreviousAggregates = (periodFrom: string, periodTo: string) => {
+    setPrevLoaded(false);
+    Promise.all([
+      zvonariAPI.getCallCounts(periodFrom, periodTo),
+      zvonariAPI.getStatusCounts(periodFrom, periodTo),
+      zvonariAPI.getOutcomeCounts(periodFrom, periodTo),
+      zvonariAPI.getFraudCounts(periodFrom, periodTo),
+    ])
+      .then(([callsRes, statusRes, outcomeRes, fraudRes]) => {
+        setPrevCallCounts(callsRes.data || {});
+        setPrevStatusCounts(statusRes.data || {});
+        setPrevOutcomeCounts(outcomeRes.data || {});
+        setPrevFraudCounts(fraudRes.data || {});
+        setPrevLoaded(true);
+      })
+      .catch((err) => {
+        console.error("Failed to load previous-period statistics for trends:", err);
+        setPrevLoaded(false);
       });
   };
 
@@ -938,6 +1068,8 @@ export default function ZvonariPage() {
 
   useEffect(() => {
     loadAggregates(from, to);
+    const { from: prevFrom, to: prevTo } = previousPeriod(from, to);
+    loadPreviousAggregates(prevFrom, prevTo);
     // distribution/calls are fetched per period and cached in `panels`
     // (see toggleExpand's `!panels[next]?.distribution` guard) — without
     // this, an already-cached panel keeps showing the previous period's
@@ -1216,25 +1348,16 @@ export default function ZvonariPage() {
     return sortDir === "asc" ? <ChevronUp className="ml-1 inline h-3 w-3" /> : <ChevronDown className="ml-1 inline h-3 w-3" />;
   };
 
-  const kpi = useMemo(() => {
-    const totalCalls = Object.values(callCounts).reduce((a, b) => a + b, 0);
-    const totalDone = Object.values(statusCounts).reduce((sum, s) => sum + (s.done ?? 0), 0);
-    const totalScriptCompleted = Object.values(outcomeCounts).reduce(
-      (sum, o) => sum + (o[OUTCOME_SCRIPT_COMPLETED] ?? 0),
-      0
-    );
-    const totalStep1Broken = Object.values(outcomeCounts).reduce((sum, o) => sum + (o[OUTCOME_STEP1_BROKEN] ?? 0), 0);
-    // Backend buckets under "не проанализировано" via COALESCE(...outcome, 'не проанализировано')
-    // — that only catches NULL analytics_json, not legacy rows with an
-    // explicit empty-string outcome (CallOutcome's own "" variant, see
-    // zvonari.ts) which bucket under "" instead. Count both.
-    const totalUnanalyzed = Object.values(outcomeCounts).reduce(
-      (sum, o) => sum + (o["не проанализировано"] ?? 0) + (o[""] ?? 0),
-      0
-    );
-    const totalFraud = Object.values(fraudCounts).reduce((a, b) => a + b, 0);
-    return { totalCalls, totalDone, totalScriptCompleted, totalStep1Broken, totalUnanalyzed, totalFraud };
-  }, [callCounts, statusCounts, outcomeCounts, fraudCounts]);
+  const kpi = useMemo(
+    () => computeKpi(callCounts, statusCounts, outcomeCounts, fraudCounts),
+    [callCounts, statusCounts, outcomeCounts, fraudCounts]
+  );
+  const prevKpi = useMemo(
+    () => computeKpi(prevCallCounts, prevStatusCounts, prevOutcomeCounts, prevFraudCounts),
+    [prevCallCounts, prevStatusCounts, prevOutcomeCounts, prevFraudCounts]
+  );
+  const trend = (current: number, previous: number, goodDirection: "up" | "down" | "neutral") =>
+    prevLoaded ? formatTrend(current, previous, goodDirection) : undefined;
 
   return (
     <div className="zvonari-theme min-h-screen bg-background">
@@ -1402,6 +1525,7 @@ export default function ZvonariPage() {
             value={String(kpi.totalCalls)}
             icon={<Phone className="h-5 w-5" />}
             accent="primary"
+            trend={trend(kpi.totalCalls, prevKpi.totalCalls, "neutral")}
           />
           <KpiCard
             label="Готово"
@@ -1409,18 +1533,29 @@ export default function ZvonariPage() {
             hint={`${kpi.totalDone} из ${kpi.totalCalls}`}
             icon={<ListChecks className="h-5 w-5" />}
             accent="primary"
+            trend={
+              prevLoaded
+                ? formatPointTrend(
+                    kpi.totalCalls > 0 ? (kpi.totalDone / kpi.totalCalls) * 100 : null,
+                    prevKpi.totalCalls > 0 ? (prevKpi.totalDone / prevKpi.totalCalls) * 100 : null,
+                    "up"
+                  )
+                : undefined
+            }
           />
           <KpiCard
             label="Скрипт пройден до шага 6"
             value={String(kpi.totalScriptCompleted)}
             icon={<CheckCircle2 className="h-5 w-5" />}
             accent="positive"
+            trend={trend(kpi.totalScriptCompleted, prevKpi.totalScriptCompleted, "up")}
           />
           <KpiCard
             label="Срыв на шаге 1"
             value={String(kpi.totalStep1Broken)}
             icon={<XCircle className="h-5 w-5" />}
             accent="warning"
+            trend={trend(kpi.totalStep1Broken, prevKpi.totalStep1Broken, "down")}
           />
           <KpiCard
             label="Автоответчик (фрод)"
@@ -1428,6 +1563,7 @@ export default function ZvonariPage() {
             hint={kpi.totalFraud > 0 ? "не сброшен вовремя" : undefined}
             icon={<ShieldAlert className="h-5 w-5" />}
             accent="negative"
+            trend={trend(kpi.totalFraud, prevKpi.totalFraud, "down")}
           />
           <KpiCard
             label="Не проанализировано"
@@ -1435,6 +1571,7 @@ export default function ZvonariPage() {
             hint={kpi.totalUnanalyzed > 0 ? "нажмите «Анализировать»" : undefined}
             icon={<HelpCircle className="h-5 w-5" />}
             accent="neutral"
+            trend={trend(kpi.totalUnanalyzed, prevKpi.totalUnanalyzed, "down")}
           />
         </div>
       )}
