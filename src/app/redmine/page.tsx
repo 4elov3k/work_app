@@ -121,7 +121,10 @@ export default function RedmineDashboardPage() {
         item.name.toLowerCase().includes(needle) ||
         item.identifier.toLowerCase().includes(needle) ||
         item.description.toLowerCase().includes(needle)
-      const matchesManager = !managerFilter || item.effective_manager_name === managerFilter
+      // Keyed by id-or-name (matching the `managers` option keying below) so
+      // two managers sharing a display name filter independently instead of
+      // both matching whichever one the filter's raw name string picks.
+      const matchesManager = !managerFilter || (item.effective_manager_id || item.effective_manager_name) === managerFilter
       const matchesStatus = !statusFilter || groupKeyForItem(item) === statusFilter
       const matchesType = !typeFilter || item.project_type === typeFilter
       const matchesDeadline = !deadlineFilter || item.deadline_state === deadlineFilter
@@ -185,7 +188,10 @@ export default function RedmineDashboardPage() {
   const activeFilterChips = useMemo(() => {
     const chips: { key: string; label: string; onRemove: () => void }[] = []
     if (searchQuery) chips.push({ key: "search", label: `Поиск: «${searchQuery}»`, onRemove: () => setSearchQuery("") })
-    if (managerFilter) chips.push({ key: "manager", label: `Проектник: ${managerFilter}`, onRemove: () => setManagerFilter("") })
+    if (managerFilter) {
+      const managerLabel = managers.find((manager) => (manager.id || manager.name) === managerFilter)?.name || managerFilter
+      chips.push({ key: "manager", label: `Проектник: ${managerLabel}`, onRemove: () => setManagerFilter("") })
+    }
     if (typeFilter) chips.push({ key: "type", label: `Тип: ${projectTypeLabel(typeFilter)}`, onRemove: () => setTypeFilter("") })
     if (statusFilter) {
       const columnTitle = STATUS_COLUMNS.find((column) => column.key === statusFilter)?.title || statusFilter
@@ -198,7 +204,7 @@ export default function RedmineDashboardPage() {
     if (withoutTypeOnly) chips.push({ key: "withoutType", label: "Без типа", onRemove: () => setWithoutTypeOnly(false) })
     if (missingCycleOnly) chips.push({ key: "missingCycle", label: "Без цикла", onRemove: () => setMissingCycleOnly(false) })
     return chips
-  }, [searchQuery, managerFilter, typeFilter, statusFilter, deadlineFilter, withoutTypeOnly, missingCycleOnly])
+  }, [searchQuery, managerFilter, managers, typeFilter, statusFilter, deadlineFilter, withoutTypeOnly, missingCycleOnly])
 
   const countsByColumn = useMemo(() => {
     const result: Record<string, number> = {
@@ -439,7 +445,7 @@ export default function RedmineDashboardPage() {
 
         {cardMode !== "compact" && (
           <div className="mt-3 text-sm text-muted-foreground">
-            Проектник: <span className="text-foreground">{managerValue || "не назначен"}</span>
+            Проектник: <span className="text-foreground">{managerName || "не назначен"}</span>
           </div>
         )}
 
@@ -697,7 +703,7 @@ export default function RedmineDashboardPage() {
           <Select value={managerFilter} onChange={(event) => setManagerFilter(event.target.value)}>
             <option value="">Все проектники</option>
             {managers.map((manager) => (
-              <option key={manager.id || manager.name} value={manager.name}>{manager.name}</option>
+              <option key={manager.id || manager.name} value={manager.id || manager.name}>{manager.name}</option>
             ))}
           </Select>
         </label>

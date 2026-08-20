@@ -160,8 +160,21 @@ func (db *DB) GetRedmineProjectDashboard(ctx context.Context) ([]models.RedmineP
 		       p.status, p.is_public, COALESCE(p.inferred_manager_id, ''),
 		       COALESCE(p.inferred_manager_name, ''), COALESCE(p.manual_manager_id, ''),
 		       COALESCE(p.manual_manager_name, ''),
-		       COALESCE(NULLIF(p.manual_manager_id, ''), p.inferred_manager_id, ''),
-		       COALESCE(NULLIF(p.manual_manager_name, ''), p.inferred_manager_name, ''),
+		       -- effective_manager_id/name must come from the same source
+		       -- (manual or inferred) as a pair: manual_manager_id can be
+		       -- NULL for a manual assignment made before assignments
+		       -- carried an id (only manager_name used to be sent), and
+		       -- independently coalescing each field would then pair a
+		       -- manually-typed name with a *different* person's inferred
+		       -- id. manual_manager_name presence is the single switch for
+		       -- both fields, matching AssignRedmineProjectManager, which
+		       -- always writes manual_manager_id/name together.
+		       CASE WHEN NULLIF(p.manual_manager_name, '') IS NOT NULL
+		            THEN COALESCE(p.manual_manager_id, '')
+		            ELSE COALESCE(p.inferred_manager_id, '') END,
+		       CASE WHEN NULLIF(p.manual_manager_name, '') IS NOT NULL
+		            THEN p.manual_manager_name
+		            ELSE COALESCE(p.inferred_manager_name, '') END,
 		       COALESCE(p.manual_project_type, ''), p.urgent, COALESCE(p.urgent_reason, ''),
 		       e.id::text, COALESCE(e.event_type, ''), COALESCE(e.service_type, ''),
 		       COALESCE(e.title, ''), e.due_date, e.period_start, e.period_end,
