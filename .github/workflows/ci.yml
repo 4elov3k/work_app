@@ -1,9 +1,11 @@
 # Minimal CI: catch build/lint/test regressions on every PR. Runs on
 # pull_request against any branch, plus push to app/master so a direct push
 # (or a merge) is checked too. No deploy steps, no matrix, no Postgres
-# service — every backend package's tests are pure unit tests that don't
-# touch a live database (see backend/internal/{accounting,docparse,saby,
-# export/updxml,database,zvonari}/*_test.go).
+# service — every backend package with tests today is pure unit tests that
+# don't touch a live database (see backend/internal/{accounting,docparse,
+# saby,export/updxml}/*_test.go). If a future package's tests need a live
+# Postgres, add a `services: postgres:` block to the backend job rather than
+# assuming this holds forever.
 name: CI
 
 on:
