@@ -12,9 +12,9 @@
 
 ## Незакрытые хвосты
 
-Все 4 пункта из предыдущей версии этого раздела закрыты (2026-08-20, ветки `worktree-error-handling-fixes` и `worktree-roadmap-tail-items`, обе запушены — ждут мержа):
+Все 4 пункта из предыдущей версии этого раздела закрыты и смерджены в `app` (2026-08-20):
 
-1. ~~`worktree-error-handling-fixes`~~ — `jsonschema`-подсказки дописаны по аналогии для всех input-структур accounting-mcp (`CreateCounterpartyInput`, `UpdateCounterpartyInput`, `IDInput`, `CreateInvoiceInput`, `CreateActInput`, `CreateContractAppendixInput`), билд и тесты зелёные.
+1. ~~`worktree-error-handling-fixes`~~ — `jsonschema`-подсказки дописаны по аналогии для всех input-структур accounting-mcp (`CreateCounterpartyInput`, `UpdateCounterpartyInput`, `IDInput`, `CreateInvoiceInput`, `CreateActInput`, `CreateContractAppendixInput`); попутным код-ревью найдено и исправлено ещё 10 багов обработки ошибок в этой же ветке (неверный файл при валидации УПД, потеря `CONFIRMATION_MISMATCH` при гонке idempotency-key, нелогируемые ошибки хранилища, 404-классификация по строке вместо типизированной `database.ErrNotFound`, отсутствующий `notFound()` на странице договора и в `FormCus`, дублирование `ApiError`, гонка эффектов на главной странице). Билд и тесты зелёные.
 2. ~~`AGENTS.md` / `CLAUDE.md`~~ — закоммичены как есть: файл сам объясняет, что это задумано фреймворком.
 3. ~~Root README.md~~ — добавлен, описывает стек, структуру трёх фич и запуск фронт+бэк.
 4. ~~Go-зависимости backend~~ — обновлены до актуальных minor/patch версий, `go build`/`vet`/`test ./...` проходят.
@@ -27,10 +27,10 @@
 
 ### 2. Redmine — приоритетное направление
 Это было исходной целью ("нужна интеграция контрольных срезов, отчётных дат"). Технический фундамент уже есть:
-- `redmine_project_control_events` — таблица с событиями (`control_cut`, `report_date`, `roadmap_milestone`), статусами (`planned`/`sent`/`skipped`), циклами по типу проекта
+- `redmine_project_control_events` — таблица с событиями (`control_cut`, `report_date`), статусами (`planned`/`sent`/`skipped`), циклами по типу проекта
 - В этой сессии починена главная опасность (каскадное удаление → пометка `skipped`, история не теряется) и рассинхрон между дашбордом и страницей проекта
 
-Следующие шаги — все 4 закрыты (2026-08-20, ветки `worktree-agent-a44f904047c8f8c26`, `worktree-agent-ab545663279b59fb0`, `worktree-roadmap-tail-items`, запушены, ждут ревью/мержа):
+Следующие шаги — все 4 закрыты и смерджены в `app` (2026-08-20):
 - ~~Уведомления о приближающихся датах~~ — фоновый тикер (`internal/notify`, часовой интервал) шлёт "due soon" на Hermes-эндпоинт (контракт ещё не реализован на стороне Hermes) за `REDMINE_NOTIFY_DAYS_BEFORE` дней до `due_date`, пока `planned`; `notified_at` не даёт слать повторно. No-op, если `REDMINE_NOTIFY_URL` не задан.
 - ~~Разграничение менеджеров с одинаковыми именами~~ — `managers` теперь `{id, name}[]`, дедупликация по ID; оба picker'а (дашборд и страница проекта) шлют `manager_id` в `assignProjectManager`.
 - ~~`roadmap_milestone` event_type~~ — убран из constraint как неиспользуемый (миграция 030): dev-циклы и так различаются через `service_type='dev'` при `event_type='report_date'`.
@@ -43,8 +43,8 @@
 
 ## Инфраструктура и качество
 
-- **Тестовое покрытие frontend — сейчас 0.** В `package.json` нет тестового фреймворка вообще, это ещё не сделано. ~~Backend: `handlers`, `database`, `zvonari`, `redmine`, `pbx`, `transcribe`, `callreport` — без тестов~~ — частично закрыто (2026-08-20, ветка `worktree-agent-aadb06092bd65e0d7`): добавлены юнит-тесты на чистые функции `database.deadlineState`/`dateOnly` и `zvonari.ExtractOutcome`/`ExtractCallType`/`ExtractFraudSuspected`/`callerExtension`, включая regression-тест на баг с legacy пустой строкой в outcome. `handlers`, `redmine`, `pbx`, `transcribe`, `callreport` по-прежнему без тестов (там нет чистых функций без похода в БД/сеть — нужна либо инфраструктура для интеграционных тестов, либо выделение чистой логики).
-- ~~CI отсутствует~~ — закрыто (2026-08-20, ветка `worktree-roadmap-tail-items`): `.github/workflows/ci.yml`, backend (`go build/vet/test`) + frontend (`build/tsc/lint`) на каждый PR.
+- **Тестовое покрытие frontend — сейчас 0.** В `package.json` нет тестового фреймворка вообще, это ещё не сделано. ~~Backend: `handlers`, `database`, `zvonari`, `redmine`, `pbx`, `transcribe`, `callreport` — без тестов~~ — частично закрыто и смерджено (2026-08-20): добавлены юнит-тесты на чистые функции `database.deadlineState`/`dateOnly`/`collectManagerOptions` и `zvonari.ExtractOutcome`/`ExtractCallType`/`ExtractFraudSuspected`/`callerExtension`, включая regression-тест на баг с legacy пустой строкой в outcome. `handlers`, `redmine`, `pbx`, `transcribe`, `callreport` по-прежнему без тестов (там нет чистых функций без похода в БД/сеть — нужна либо инфраструктура для интеграционных тестов, либо выделение чистой логики).
+- ~~CI отсутствует~~ — закрыто и смерджено (2026-08-20): `.github/workflows/ci.yml`, backend (`go build/vet/test`) + frontend (`build/tsc/lint`) на каждый PR.
 - **`docker-compose.yml`** — теперь мигрирует все 30 миграций и не хардкодит пароль Postgres (пофикшено в этой сессии). Стоит подумать о переходе на `golang-migrate`/аналог вместо ручного списка volume-маунтов миграций — сейчас при каждой новой миграции нужно не забыть добавить строку и в `docker-compose.yml`, и в `backend/README.md` (это уже дважды забывали — миграции 018-029 отсутствовали в обоих местах).
 
 ## Гигиена (продолжать практику)
