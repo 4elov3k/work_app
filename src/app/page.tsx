@@ -1,5 +1,5 @@
 "use client"
-import { ChangeEvent, useEffect, useState } from "react";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { LayoutDashboard, Search, Building2, FileText } from "lucide-react";
 
@@ -18,16 +18,29 @@ export default function Home() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  useEffect(()=>{
+  // Guards against the initial load (this effect) and the debounced search
+  // effect below racing each other: whichever of the two fires last used to
+  // win regardless of which one was actually requested most recently — a
+  // slow initial getAll() resolving after a fast search response would
+  // silently overwrite the search result with the unfiltered list. Every
+  // fetch that starts bumps this shared counter and captures its value;
+  // on resolution, a fetch only applies its result if no newer fetch
+  // (from either effect) has started since.
+  const latestRequestId = useRef(0)
+
+  useEffect(() => {
+    const requestId = ++latestRequestId.current
     customersAPI.getAll().then(response => {
+      if (latestRequestId.current !== requestId) return
       setItems(response.data || [])
       setError('')
     }).catch(err => {
       console.error('Failed to load customers:', err)
+      if (latestRequestId.current !== requestId) return
       setItems([])
       setError('Не удалось загрузить список контрагентов. Проверьте соединение с сервером и попробуйте ещё раз.')
     }).finally(() => {
-      setLoading(false)
+      if (latestRequestId.current === requestId) setLoading(false)
     })
   }, [])
 
@@ -37,21 +50,26 @@ export default function Home() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
+      const requestId = ++latestRequestId.current
       if (value.trim() === '') {
         customersAPI.getAll().then(response => {
+          if (latestRequestId.current !== requestId) return
           setItems(response.data || [])
           setError('')
         }).catch(err => {
           console.error('Failed to load customers:', err)
+          if (latestRequestId.current !== requestId) return
           setItems([])
           setError('Не удалось загрузить список контрагентов. Проверьте соединение с сервером и попробуйте ещё раз.')
         })
       } else {
         customersAPI.search(value).then(response => {
+          if (latestRequestId.current !== requestId) return
           setItems(response.data || [])
           setError('')
         }).catch(err => {
           console.error('Failed to search customers:', err)
+          if (latestRequestId.current !== requestId) return
           setItems([])
           setError('Не удалось выполнить поиск контрагентов. Проверьте соединение с сервером и попробуйте ещё раз.')
         })
