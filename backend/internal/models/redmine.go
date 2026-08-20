@@ -109,10 +109,18 @@ type RedmineProjectDashboardItem struct {
 	UpdatedAt             time.Time                   `json:"updated_at"`
 }
 
+// ManagerOption is one entry in the project-dashboard manager picker.
+// It carries both ID and name so that two different people who happen to
+// share the same Redmine display name are not collapsed into one option.
+type ManagerOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type RedmineProjectDashboardResponse struct {
 	Data      []RedmineProjectDashboardItem `json:"data"`
 	Groups    []RedmineProjectGroup         `json:"groups"`
-	Managers  []string                      `json:"managers"`
+	Managers  []ManagerOption               `json:"managers"`
 	SyncedAt  *time.Time                    `json:"synced_at"`
 	Refreshed bool                          `json:"refreshed"`
 }

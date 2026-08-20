@@ -153,15 +153,28 @@ func (db *DB) UpsertRedmineProjectDashboardItem(ctx context.Context, project mod
 	return nil
 }
 
-func (db *DB) GetRedmineProjectDashboard(ctx context.Context) ([]models.RedmineProjectDashboardItem, []string, *time.Time, error) {
+func (db *DB) GetRedmineProjectDashboard(ctx context.Context) ([]models.RedmineProjectDashboardItem, []models.ManagerOption, *time.Time, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT p.redmine_project_id, p.redmine_identifier, p.redmine_project_name,
 		       COALESCE(p.redmine_project_url, ''), COALESCE(p.description, ''),
 		       p.status, p.is_public, COALESCE(p.inferred_manager_id, ''),
 		       COALESCE(p.inferred_manager_name, ''), COALESCE(p.manual_manager_id, ''),
 		       COALESCE(p.manual_manager_name, ''),
-		       COALESCE(NULLIF(p.manual_manager_id, ''), p.inferred_manager_id, ''),
-		       COALESCE(NULLIF(p.manual_manager_name, ''), p.inferred_manager_name, ''),
+		       -- effective_manager_id/name must come from the same source
+		       -- (manual or inferred) as a pair: manual_manager_id can be
+		       -- NULL for a manual assignment made before assignments
+		       -- carried an id (only manager_name used to be sent), and
+		       -- independently coalescing each field would then pair a
+		       -- manually-typed name with a *different* person's inferred
+		       -- id. manual_manager_name presence is the single switch for
+		       -- both fields, matching AssignRedmineProjectManager, which
+		       -- always writes manual_manager_id/name together.
+		       CASE WHEN NULLIF(p.manual_manager_name, '') IS NOT NULL
+		            THEN COALESCE(p.manual_manager_id, '')
+		            ELSE COALESCE(p.inferred_manager_id, '') END,
+		       CASE WHEN NULLIF(p.manual_manager_name, '') IS NOT NULL
+		            THEN p.manual_manager_name
+		            ELSE COALESCE(p.inferred_manager_name, '') END,
 		       COALESCE(p.manual_project_type, ''), p.urgent, COALESCE(p.urgent_reason, ''),
 		       e.id::text, COALESCE(e.event_type, ''), COALESCE(e.service_type, ''),
 		       COALESCE(e.title, ''), e.due_date, e.period_start, e.period_end,
@@ -191,7 +204,6 @@ func (db *DB) GetRedmineProjectDashboard(ctx context.Context) ([]models.RedmineP
 
 	var items []models.RedmineProjectDashboardItem
 	var syncedAt *time.Time
-	managerSet := map[string]bool{}
 	for rows.Next() {
 		var item models.RedmineProjectDashboardItem
 		var eventID sql.NullString
@@ -288,24 +300,58 @@ func (db *DB) GetRedmineProjectDashboard(ctx context.Context) ([]models.RedmineP
 			value := item.SyncedAt
 			syncedAt = &value
 		}
-		if item.EffectiveManagerName != "" {
-			managerSet[item.EffectiveManagerName] = true
-		}
-		if item.InferredManagerName != "" {
-			managerSet[item.InferredManagerName] = true
-		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to iterate redmine project dashboard items: %w", err)
 	}
 
-	managers := make([]string, 0, len(managerSet))
-	for manager := range managerSet {
+	return items, collectManagerOptions(items), syncedAt, nil
+}
+
+// collectManagerOptions builds the deduplicated, sorted list of managers for
+// the project dashboard's manager picker.
+//
+// Managers are deduplicated by ID, not by name: two different people can
+// share the same Redmine display name, and deduping by name alone would
+// silently collapse them into a single dropdown entry (assignment would then
+// pick whichever one happened to win the map iteration). Only when a record
+// has no manager ID at all (legacy/id-less data) do we fall back to using
+// the name as the dedup key, so those entries aren't dropped entirely.
+func collectManagerOptions(items []models.RedmineProjectDashboardItem) []models.ManagerOption {
+	byID := map[string]models.ManagerOption{}
+	byNameOnly := map[string]models.ManagerOption{}
+
+	add := func(id, name string) {
+		if name == "" {
+			return
+		}
+		if id != "" {
+			byID[id] = models.ManagerOption{ID: id, Name: name}
+			return
+		}
+		byNameOnly[name] = models.ManagerOption{ID: "", Name: name}
+	}
+
+	for _, item := range items {
+		add(item.EffectiveManagerID, item.EffectiveManagerName)
+		add(item.InferredManagerID, item.InferredManagerName)
+	}
+
+	managers := make([]models.ManagerOption, 0, len(byID)+len(byNameOnly))
+	for _, manager := range byID {
 		managers = append(managers, manager)
 	}
-	sort.Strings(managers)
-	return items, managers, syncedAt, nil
+	for _, manager := range byNameOnly {
+		managers = append(managers, manager)
+	}
+	sort.Slice(managers, func(i, j int) bool {
+		if managers[i].Name != managers[j].Name {
+			return managers[i].Name < managers[j].Name
+		}
+		return managers[i].ID < managers[j].ID
+	})
+	return managers
 }
 
 func deadlineState(urgent bool, event *models.RedmineProjectControlEvent, now time.Time) string {

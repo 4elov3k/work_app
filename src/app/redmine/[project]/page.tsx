@@ -33,7 +33,7 @@ export default function RedmineProjectPage() {
   const projectId = params.project
   const [project, setProject] = useState<RedmineProjectDashboardItem | null>(null)
   const [groups, setGroups] = useState<RedmineProjectGroup[]>([])
-  const [managers, setManagers] = useState<string[]>([])
+  const [managers, setManagers] = useState<{ id: string; name: string }[]>([])
   const [issues, setIssues] = useState<RedmineIssue[]>([])
   const [documents, setDocuments] = useState<RedmineProjectDocumentsResponse | null>(null)
   const [controlEvents, setControlEvents] = useState<RedmineProjectControlEvent[]>([])
@@ -53,7 +53,7 @@ export default function RedmineProjectPage() {
     try {
       const response = await redmineAPI.getDashboard()
       setGroups(response.groups || [])
-      setManagers([...(response.managers || [])].sort((left, right) => left.localeCompare(right, "ru")))
+      setManagers([...(response.managers || [])].sort((left, right) => left.name.localeCompare(right.name, "ru")))
       setProject((response.data || []).find((item) => item.project_id === projectId) || null)
     } catch (err: unknown) {
       console.error("Failed to load Redmine project:", err)
@@ -137,18 +137,18 @@ export default function RedmineProjectPage() {
     }
   }
 
-  const updateManager = async (managerName: string) => {
+  const updateManager = async (managerId: string, managerName: string) => {
     if (!project) return
     setSaving(true)
     setError("")
     try {
-      await redmineAPI.assignProjectManager(project.project_id, { manager_name: managerName })
+      await redmineAPI.assignProjectManager(project.project_id, { manager_id: managerId, manager_name: managerName })
       setProject({
         ...project,
         manual_manager_name: managerName,
-        manual_manager_id: "",
+        manual_manager_id: managerId,
         effective_manager_name: managerName || project.inferred_manager_name,
-        effective_manager_id: managerName ? "" : project.inferred_manager_id,
+        effective_manager_id: managerName ? managerId : project.inferred_manager_id,
       })
     } catch (err: unknown) {
       console.error("Failed to update project manager:", err)
@@ -316,13 +316,17 @@ export default function RedmineProjectPage() {
           <label className="block space-y-1">
             <span className="text-xs font-medium text-muted-foreground">Задать проектника вручную</span>
             <Select
-              value={project.manual_manager_name || ""}
-              onChange={(event) => updateManager(event.target.value)}
+              value={project.manual_manager_id || project.manual_manager_name || ""}
+              onChange={(event) => {
+                const value = event.target.value
+                const selected = managers.find((manager) => (manager.id || manager.name) === value)
+                updateManager(selected?.id || "", selected?.name || value)
+              }}
               disabled={saving}
             >
               <option value="">Использовать авто-вывод</option>
               {managers.map((manager) => (
-                <option key={manager} value={manager}>{manager}</option>
+                <option key={manager.id || manager.name} value={manager.id || manager.name}>{manager.name}</option>
               ))}
             </Select>
           </label>

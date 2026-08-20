@@ -102,7 +102,7 @@ export interface RedmineProjectDashboardItem {
 export interface RedmineProjectDashboardResponse {
   data: RedmineProjectDashboardItem[];
   groups: RedmineProjectGroup[];
-  managers: string[];
+  managers: { id: string; name: string }[];
   synced_at: string | null;
   refreshed: boolean;
 }

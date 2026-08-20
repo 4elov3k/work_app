@@ -70,7 +70,7 @@ export default function RedmineDashboardPage() {
   const router = useRouter()
   const [items, setItems] = useState<RedmineProjectDashboardItem[]>([])
   const [groups, setGroups] = useState<RedmineProjectGroup[]>([])
-  const [managers, setManagers] = useState<string[]>([])
+  const [managers, setManagers] = useState<{ id: string; name: string }[]>([])
   const [syncedAt, setSyncedAt] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
@@ -92,7 +92,7 @@ export default function RedmineDashboardPage() {
   const applyDashboard = useCallback((response: RedmineProjectDashboardResponse) => {
     setItems(response.data || [])
     setGroups(response.groups || [])
-    setManagers([...(response.managers || [])].sort((left, right) => left.localeCompare(right, "ru")))
+    setManagers([...(response.managers || [])].sort((left, right) => left.name.localeCompare(right.name, "ru")))
     setSyncedAt(response.synced_at)
   }, [])
 
@@ -121,7 +121,10 @@ export default function RedmineDashboardPage() {
         item.name.toLowerCase().includes(needle) ||
         item.identifier.toLowerCase().includes(needle) ||
         item.description.toLowerCase().includes(needle)
-      const matchesManager = !managerFilter || item.effective_manager_name === managerFilter
+      // Keyed by id-or-name (matching the `managers` option keying below) so
+      // two managers sharing a display name filter independently instead of
+      // both matching whichever one the filter's raw name string picks.
+      const matchesManager = !managerFilter || (item.effective_manager_id || item.effective_manager_name) === managerFilter
       const matchesStatus = !statusFilter || groupKeyForItem(item) === statusFilter
       const matchesType = !typeFilter || item.project_type === typeFilter
       const matchesDeadline = !deadlineFilter || item.deadline_state === deadlineFilter
@@ -185,7 +188,10 @@ export default function RedmineDashboardPage() {
   const activeFilterChips = useMemo(() => {
     const chips: { key: string; label: string; onRemove: () => void }[] = []
     if (searchQuery) chips.push({ key: "search", label: `Поиск: «${searchQuery}»`, onRemove: () => setSearchQuery("") })
-    if (managerFilter) chips.push({ key: "manager", label: `Проектник: ${managerFilter}`, onRemove: () => setManagerFilter("") })
+    if (managerFilter) {
+      const managerLabel = managers.find((manager) => (manager.id || manager.name) === managerFilter)?.name || managerFilter
+      chips.push({ key: "manager", label: `Проектник: ${managerLabel}`, onRemove: () => setManagerFilter("") })
+    }
     if (typeFilter) chips.push({ key: "type", label: `Тип: ${projectTypeLabel(typeFilter)}`, onRemove: () => setTypeFilter("") })
     if (statusFilter) {
       const columnTitle = STATUS_COLUMNS.find((column) => column.key === statusFilter)?.title || statusFilter
@@ -198,7 +204,7 @@ export default function RedmineDashboardPage() {
     if (withoutTypeOnly) chips.push({ key: "withoutType", label: "Без типа", onRemove: () => setWithoutTypeOnly(false) })
     if (missingCycleOnly) chips.push({ key: "missingCycle", label: "Без цикла", onRemove: () => setMissingCycleOnly(false) })
     return chips
-  }, [searchQuery, managerFilter, typeFilter, statusFilter, deadlineFilter, withoutTypeOnly, missingCycleOnly])
+  }, [searchQuery, managerFilter, managers, typeFilter, statusFilter, deadlineFilter, withoutTypeOnly, missingCycleOnly])
 
   const countsByColumn = useMemo(() => {
     const result: Record<string, number> = {
@@ -258,15 +264,15 @@ export default function RedmineDashboardPage() {
     await handleStatusChange(item, nextKey)
   }
 
-  const handleManagerChange = async (item: RedmineProjectDashboardItem, managerName: string) => {
+  const handleManagerChange = async (item: RedmineProjectDashboardItem, managerId: string, managerName: string) => {
     setError("")
     try {
-      await redmineAPI.assignProjectManager(item.project_id, { manager_name: managerName })
+      await redmineAPI.assignProjectManager(item.project_id, { manager_id: managerId, manager_name: managerName })
       updateLocalItem(item.project_id, {
         manual_manager_name: managerName,
-        manual_manager_id: "",
+        manual_manager_id: managerId,
         effective_manager_name: managerName || item.inferred_manager_name,
-        effective_manager_id: managerName ? "" : item.inferred_manager_id,
+        effective_manager_id: managerName ? managerId : item.inferred_manager_id,
       })
     } catch (err: unknown) {
       console.error("Failed to update project manager:", err)
@@ -366,7 +372,11 @@ export default function RedmineDashboardPage() {
 
   const renderProject = (item: RedmineProjectDashboardItem) => {
     const currentKey = groupKeyForItem(item)
-    const managerValue = item.manual_manager_name || item.effective_manager_name
+    const managerName = item.manual_manager_name || item.effective_manager_name
+    const managerId = item.manual_manager_id || item.effective_manager_id
+    // Option values are the manager ID when known, falling back to the name
+    // for legacy id-less records — matches the keying in `managers` below.
+    const managerValue = managerId || managerName
     const state = DEADLINE_STATES[item.deadline_state] || DEADLINE_STATES.ok
     const StateIcon = state.icon
     const nextEvent = item.next_control_event
@@ -435,7 +445,7 @@ export default function RedmineDashboardPage() {
 
         {cardMode !== "compact" && (
           <div className="mt-3 text-sm text-muted-foreground">
-            Проектник: <span className="text-foreground">{managerValue || "не назначен"}</span>
+            Проектник: <span className="text-foreground">{managerName || "не назначен"}</span>
           </div>
         )}
 
@@ -554,11 +564,15 @@ export default function RedmineDashboardPage() {
               <span className="text-xs font-medium text-muted-foreground">Проектник</span>
               <Select
                 value={managerValue}
-                onChange={(event) => handleManagerChange(item, event.target.value)}
+                onChange={(event) => {
+                  const value = event.target.value
+                  const selected = managers.find((manager) => (manager.id || manager.name) === value)
+                  handleManagerChange(item, selected?.id || "", selected?.name || value)
+                }}
               >
                 <option value="">Не назначен</option>
                 {managers.map((manager) => (
-                  <option key={manager} value={manager}>{manager}</option>
+                  <option key={manager.id || manager.name} value={manager.id || manager.name}>{manager.name}</option>
                 ))}
               </Select>
             </label>
@@ -689,7 +703,7 @@ export default function RedmineDashboardPage() {
           <Select value={managerFilter} onChange={(event) => setManagerFilter(event.target.value)}>
             <option value="">Все проектники</option>
             {managers.map((manager) => (
-              <option key={manager} value={manager}>{manager}</option>
+              <option key={manager.id || manager.name} value={manager.id || manager.name}>{manager.name}</option>
             ))}
           </Select>
         </label>
