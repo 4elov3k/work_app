@@ -19,9 +19,9 @@ func TestSelectDueSoonControlEvents(t *testing.T) {
 		{
 			name: "outside the N-day window is not selected",
 			candidate: ControlEventNotificationCandidate{
-				EventID:  "outside-window",
-				DueDate:  "2026-09-01", // far more than 3 days out
-				Status:   "planned",
+				EventID:    "outside-window",
+				DueDate:    "2026-09-01", // far more than 3 days out
+				Status:     "planned",
 				NotifiedAt: nil,
 			},
 			wantMatch: false,
@@ -74,9 +74,9 @@ func TestSelectDueSoonControlEvents_MixedBatch(t *testing.T) {
 	notifiedAt := now
 
 	candidates := []ControlEventNotificationCandidate{
-		{EventID: "keep-1", DueDate: "2026-08-20", Status: "planned"},              // due today
-		{EventID: "keep-2", DueDate: "2026-08-15", Status: "planned"},              // overdue, unnotified
-		{EventID: "drop-far", DueDate: "2026-12-01", Status: "planned"},            // far out
+		{EventID: "keep-1", DueDate: "2026-08-20", Status: "planned"},   // due today
+		{EventID: "keep-2", DueDate: "2026-08-15", Status: "planned"},   // overdue, unnotified
+		{EventID: "drop-far", DueDate: "2026-12-01", Status: "planned"}, // far out
 		{EventID: "drop-notified", DueDate: "2026-08-21", Status: "planned", NotifiedAt: &notifiedAt},
 		{EventID: "drop-sent", DueDate: "2026-08-21", Status: "sent"},
 		{EventID: "drop-skipped", DueDate: "2026-08-21", Status: "skipped"},
