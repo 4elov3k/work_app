@@ -28,7 +28,7 @@ func resolveAppendixLine(ctx context.Context, tx *sql.Tx, input models.ContractA
 		err := tx.QueryRowContext(ctx, `SELECT name, unit, section, price FROM services WHERE id = $1`, input.ServiceID).
 			Scan(&name, &unit, &section, &price)
 		if err == sql.ErrNoRows {
-			return line, fmt.Errorf("service not found")
+			return line, fmt.Errorf("service not found: %w", ErrNotFound)
 		}
 		if err != nil {
 			return line, fmt.Errorf("failed to load service: %w", err)
@@ -105,7 +105,7 @@ func (db *DB) CreateContractAppendix(ctx context.Context, req models.CreateContr
 		return nil, fmt.Errorf("failed to check contract: %w", err)
 	}
 	if !contractExists {
-		return nil, fmt.Errorf("contract not found")
+		return nil, fmt.Errorf("contract not found: %w", ErrNotFound)
 	}
 
 	lines := make([]models.ContractAppendixLine, 0, len(req.Lines))
@@ -184,7 +184,7 @@ func (db *DB) GetContractAppendixWithLines(ctx context.Context, id string) (*mod
 		&appendix.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("contract appendix not found")
+		return nil, fmt.Errorf("contract appendix not found: %w", ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get contract appendix: %w", err)
@@ -263,7 +263,7 @@ func (db *DB) UpdateContractAppendix(ctx context.Context, id string, req models.
 		&a.ID, &a.ContractID, &a.Number, &a.Date, &a.Status, &a.TotalAmount, &a.Archived, &a.CreatedAt, &a.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("contract appendix not found")
+		return nil, fmt.Errorf("contract appendix not found: %w", ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to update contract appendix: %w", err)

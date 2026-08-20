@@ -122,7 +122,7 @@ func (db *DB) GetActByID(ctx context.Context, id string) (*models.Act, error) {
 		&act.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("act not found")
+		return nil, fmt.Errorf("act not found: %w", ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get act: %w", err)
@@ -238,12 +238,12 @@ func (db *DB) CreateAct(ctx context.Context, req models.CreateActRequest) (*mode
 	if req.ContractID != "" {
 		contract, err = db.GetContractByID(ctx, req.ContractID)
 		if err != nil {
-			return nil, fmt.Errorf("contract not found")
+			return nil, fmt.Errorf("contract not found: %w", ErrNotFound)
 		}
 	} else if req.CustomerID != "" && req.ContractNumber != "" {
 		contract, err = db.GetContractByCustomerAndNumber(ctx, req.CustomerID, req.ContractNumber)
 		if err != nil {
-			return nil, fmt.Errorf("contract not found")
+			return nil, fmt.Errorf("contract not found: %w", ErrNotFound)
 		}
 		req.ContractID = contract.ID
 	} else {
@@ -564,7 +564,7 @@ func (db *DB) CreateActFromInvoice(ctx context.Context, invoiceID, number, date,
 	var customerID string
 	if err := tx.QueryRowContext(ctx, `SELECT contract_id, customer_id FROM invoices WHERE id = $1`, invoiceID).Scan(&contractID, &customerID); err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("invoice not found")
+			return nil, fmt.Errorf("invoice not found: %w", ErrNotFound)
 		}
 		return nil, fmt.Errorf("failed to get invoice: %w", err)
 	}

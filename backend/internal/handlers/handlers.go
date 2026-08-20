@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/lib/pq"
 
@@ -77,15 +76,12 @@ func isUniqueViolation(err error) bool {
 
 // isRecordNotFoundError reports whether err is the database layer's "X not found"
 // sentinel for a missing row, as opposed to a real database/connection failure.
-// The database package returns a bare "<entity> not found" message for
-// sql.ErrNoRows and wraps everything else (e.g. "failed to get invoice: ...."),
-// so a "not found" suffix reliably distinguishes the two without changing the
-// exact error text other code already matches against.
+// Checked via errors.Is against database.ErrNotFound (wrapped into every
+// "<entity> not found" error the database package returns for sql.ErrNoRows)
+// rather than matching error message text, so rewording one of those
+// messages can't silently break this classification.
 func isRecordNotFoundError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.HasSuffix(err.Error(), "not found")
+	return errors.Is(err, database.ErrNotFound)
 }
 
 // respondNotFoundOrInternal answers a "get by ID" failure as 404 when the
@@ -97,5 +93,20 @@ func respondNotFoundOrInternal(w http.ResponseWriter, err error, notFoundMessage
 		return
 	}
 	log.Printf("internal error: %v", err)
+	respondWithError(w, http.StatusInternalServerError, "Internal server error")
+}
+
+// respondLinkedRecordOrInternal answers a failure to load a record that a
+// parent document merely *references* (e.g. an act's customer or contract)
+// as 400 — a missing reference is a data-integrity problem with the parent,
+// not a 404 on the URL's own resource — and as 500 (logging the real cause)
+// for anything else. Shared by acts.go/invoices.go's export handlers, which
+// both do this same customer-then-contract lookup.
+func respondLinkedRecordOrInternal(w http.ResponseWriter, err error, notFoundMessage, logContext string) {
+	if isRecordNotFoundError(err) {
+		respondWithError(w, http.StatusBadRequest, notFoundMessage)
+		return
+	}
+	log.Printf("%s: %v", logContext, err)
 	respondWithError(w, http.StatusInternalServerError, "Internal server error")
 }

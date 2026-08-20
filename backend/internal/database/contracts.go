@@ -106,7 +106,7 @@ func (db *DB) GetContractByID(ctx context.Context, id string) (*models.Contract,
 		&c.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("contract not found")
+		return nil, fmt.Errorf("contract not found: %w", ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get contract: %w", err)
@@ -138,7 +138,7 @@ func (db *DB) GetContractByCustomerAndNumber(ctx context.Context, customerID, nu
 		&c.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("contract not found")
+		return nil, fmt.Errorf("contract not found: %w", ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get contract: %w", err)

@@ -130,7 +130,7 @@ func (db *DB) GetCustomerByID(ctx context.Context, id string) (*models.Customer,
 	)
 
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("customer not found")
+		return nil, fmt.Errorf("customer not found: %w", ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get customer: %w", err)
@@ -235,7 +235,7 @@ func (db *DB) UpdateCustomerTensorEDOID(ctx context.Context, id, edoID string) e
 		return fmt.Errorf("failed to inspect updated customer rows: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("customer not found")
+		return fmt.Errorf("customer not found: %w", ErrNotFound)
 	}
 	return nil
 }
