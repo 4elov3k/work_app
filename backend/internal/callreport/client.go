@@ -48,10 +48,20 @@ func (c *Client) Configured() bool {
 	return c.baseURL != ""
 }
 
-// AnalyzeCallRequest — запрос на классификацию одного звонка
+// AnalyzeCallRequest — запрос на классификацию одного звонка. DurationSec/
+// TalkTimeSec are the only real signal call_analytics_server.py has for its
+// fraud_suspected heuristic ("автоответчик/меню звучит, и линия НЕ была
+// сброшена вовремя") — without them the model can only guess "was this held
+// too long" from how repetitive the transcript text looks, which is
+// unreliable for short/garbled transcripts (see the 2026-08 investigation
+// that added these fields: a 13s call with one truncated sentence had no
+// textual signal either way and was scored fraud_suspected=false by
+// omission, not by an actual timing judgement).
 type AnalyzeCallRequest struct {
-	CallID     string `json:"call_id"`
-	Transcript string `json:"transcript"`
+	CallID      string `json:"call_id"`
+	Transcript  string `json:"transcript"`
+	DurationSec int    `json:"duration_sec"`
+	TalkTimeSec int    `json:"talk_time_sec"`
 }
 
 // AnalyzeCallResult — результат оценки звонка по скрипту IQ-200 (регламент

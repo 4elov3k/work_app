@@ -517,7 +517,12 @@ func (s *Service) AnalyzeCalls(ctx context.Context, from, to time.Time) (*SyncRe
 
 		reqs := make([]callreport.AnalyzeCallRequest, len(batch))
 		for i, c := range batch {
-			reqs[i] = callreport.AnalyzeCallRequest{CallID: c.ID, Transcript: c.TranscriptText}
+			reqs[i] = callreport.AnalyzeCallRequest{
+				CallID:      c.ID,
+				Transcript:  c.TranscriptText,
+				DurationSec: c.DurationSec,
+				TalkTimeSec: c.TalkTimeSec,
+			}
 		}
 
 		// Belt-and-suspenders alongside callreport.Client's own httpClient.Timeout:
