@@ -17,6 +17,7 @@ func New(service *accounting.Service) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "hermes-accounting", Version: "0.1.0"}, &mcp.ServerOptions{
 		Instructions: "Accounting MCP server for Hermes. Use prepare_* before commit_* for all significant write actions. The seller organization uses без НДС.",
 	})
+	server.AddReceivingMiddleware(logUnknownToolCalls)
 
 	addTool(server, "counterparties.search", "Search counterparties by name, INN, KPP, OGRN, phone, or email.", true, false, true, func(ctx context.Context, input accounting.SearchInput) (any, error) {
 		return service.SearchCounterparties(ctx, input)
@@ -198,6 +199,33 @@ func addTool[In any](server *mcp.Server, name, description string, readOnly bool
 		}
 		return nil, map[string]any{"ok": true, "result": value}, nil
 	})
+}
+
+// logUnknownToolCalls logs tools/call requests naming a tool that isn't
+// registered. This is the real-usage signal the accounting-mcp/docparse
+// growth-point plan in docs/roadmap.md calls for: rather than guessing which
+// operations to add next, log what Hermes actually tried to call that
+// doesn't exist yet, and expand once a pattern shows up here.
+//
+// Business-logic failures from a *registered* tool (e.g. "counterparty not
+// found") are deliberately not logged here — addTool's wrapper turns those
+// into a normal {"ok": false, ...} result rather than a protocol error, so
+// they never reach this middleware as an error, and they aren't the signal
+// this is for (they're expected, already-supported failure paths, not
+// missing operations).
+func logUnknownToolCalls(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		result, err := next(ctx, method, req)
+		if method != "tools/call" || err == nil {
+			return result, err
+		}
+		toolName := "?"
+		if params, ok := req.GetParams().(*mcp.CallToolParamsRaw); ok {
+			toolName = params.Name
+		}
+		log.Printf("mcp: tools/call for unknown or invalid tool %q: %v", toolName, err)
+		return result, err
+	}
 }
 
 func addResources(server *mcp.Server, service *accounting.Service) {
