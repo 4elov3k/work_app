@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -12,6 +14,7 @@ import (
 
 	"invoices-backend/internal/database"
 	"invoices-backend/internal/handlers"
+	"invoices-backend/internal/notify"
 )
 
 func main() {
@@ -43,6 +46,13 @@ func main() {
 
 	// Создание handlers
 	h := handlers.NewHandlers(db)
+
+	// Фоновая рассылка уведомлений о приближающихся контрольных датах
+	// Redmine-проектов через Hermes — no-op, если REDMINE_NOTIFY_URL не
+	// задан (см. notify.RunControlEventDueSoonScheduler).
+	notifyCtx, cancelNotify := context.WithCancel(context.Background())
+	defer cancelNotify()
+	go notify.RunControlEventDueSoonScheduler(notifyCtx, db, notify.NewFromEnv(), time.Hour)
 
 	// Настройка роутера
 	r := chi.NewRouter()
