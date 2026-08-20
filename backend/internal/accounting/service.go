@@ -262,6 +262,7 @@ type CreateActInput struct {
 type RenderFileInput struct {
 	DocumentType string `json:"document_type" jsonschema:"invoice or act"`
 	DocumentID   string `json:"document_id"`
+	FileKind     string `json:"file_kind,omitempty" jsonschema:"optional: pdf or upd_xml; omit to get the most recently stored file of any kind"`
 }
 
 type UpdateDocumentNumberInput struct {
@@ -1418,7 +1419,9 @@ func (s *Service) RenderPDF(ctx context.Context, input RenderFileInput) (*FileRe
 	result, err := s.upsertDocumentFile(ctx, org.ID, docType, input.DocumentID, "pdf", "application/pdf", path, filename, int64(len(data)))
 	if err != nil {
 		_ = os.Remove(path)
-		return nil, appError("STORAGE_ERROR", "Файл сформирован, но не удалось сохранить запись о нём — повторите запрос", true, "Повторите render_pdf")
+		storageErr := appError("STORAGE_ERROR", "Файл сформирован, но не удалось сохранить запись о нём — повторите запрос", true, "Повторите render_pdf")
+		storageErr.UnderlyingError = err.Error()
+		return nil, storageErr
 	}
 	return result, nil
 }
@@ -1457,7 +1460,9 @@ func (s *Service) ExportActUPDXML(ctx context.Context, input IDInput) (*FileResu
 	result, err := s.upsertDocumentFile(ctx, org.ID, "act", input.ID, "upd_xml", "application/xml", path, safeName, int64(len(data)))
 	if err != nil {
 		_ = os.Remove(path)
-		return nil, appError("STORAGE_ERROR", "Файл УПД сформирован, но не удалось сохранить запись о нём — повторите запрос", true, "Повторите acts.export_upd_xml")
+		storageErr := appError("STORAGE_ERROR", "Файл УПД сформирован, но не удалось сохранить запись о нём — повторите запрос", true, "Повторите acts.export_upd_xml")
+		storageErr.UnderlyingError = err.Error()
+		return nil, storageErr
 	}
 	return result, nil
 }
@@ -1483,8 +1488,11 @@ func (s *Service) ValidateActUPDXML(ctx context.Context, input IDInput) (*Valida
 	if err != nil {
 		return nil, appError("XML_VALIDATION_FAILED", err.Error(), true, "Исправьте реквизиты или строки акта")
 	}
-	// Best-effort reference to a previously stored file, if any — validation never writes.
-	file, _ := s.GetFile(ctx, RenderFileInput{DocumentType: "act", DocumentID: input.ID})
+	// Best-effort reference to the previously stored UPD XML file, if any —
+	// validation never writes. Must ask for file_kind="upd_xml" specifically:
+	// an act can also have a "pdf" file stored (acts.render_pdf), and without
+	// this filter GetFile returns whichever was written most recently.
+	file, _ := s.GetFile(ctx, RenderFileInput{DocumentType: "act", DocumentID: input.ID, FileKind: "upd_xml"})
 	if err := xml.Unmarshal(data, new(any)); err != nil {
 		return &ValidationResult{Status: "failed", XMLParse: err.Error(), XSDValidation: "not_run"}, nil
 	}
@@ -1511,13 +1519,19 @@ func (s *Service) GetFile(ctx context.Context, input RenderFileInput) (*FileResu
 	if docType == "" {
 		return nil, appError("VALIDATION_ERROR", "document_type должен быть invoice или act", true, "Исправьте тип документа")
 	}
-	row := s.db.QueryRowContext(ctx, `
+	query := `
 		SELECT id, document_type, document_id::text, file_kind, mime_type, file_name, storage_path, size_bytes
 		FROM document_files
 		WHERE document_type=$1 AND document_id=$2::uuid
-		ORDER BY created_at DESC
-		LIMIT 1
-	`, docType, input.DocumentID)
+	`
+	args := []any{docType, input.DocumentID}
+	if input.FileKind != "" {
+		query += " AND file_kind=$3"
+		args = append(args, input.FileKind)
+	}
+	query += " ORDER BY created_at DESC LIMIT 1"
+
+	row := s.db.QueryRowContext(ctx, query, args...)
 	var f FileResult
 	if err := row.Scan(&f.ID, &f.DocumentType, &f.DocumentID, &f.FileKind, &f.MimeType, &f.FileName, &f.StoragePath, &f.SizeBytes); err != nil {
 		return nil, appError("DOCUMENT_NOT_FOUND", "Файл документа не найден", true, "Сначала вызовите render_pdf или export_upd_xml")
@@ -1797,7 +1811,15 @@ func (s *Service) commitWithConfirmation(ctx context.Context, action string, inp
 			// of surfacing a raw Postgres constraint error.
 			_ = tx.Rollback()
 			existing, lookupErr := s.getIdempotentResultDB(ctx, action, input.IdempotencyKey, payloadHash)
-			if lookupErr == nil && existing != nil {
+			if lookupErr != nil {
+				// A specific, actionable error (e.g. CONFIRMATION_MISMATCH when
+				// the winner used a different payload under the same key) —
+				// surface it as-is rather than masking it with the generic
+				// "retry with the same idempotency_key" advice below, which
+				// would be wrong here: a mismatch needs a *new* key, not a retry.
+				return nil, lookupErr
+			}
+			if existing != nil {
 				return existing, nil
 			}
 			return nil, appError("IDEMPOTENCY_CONFLICT", "Операция с этим idempotency_key уже обрабатывается или обработана параллельным запросом", true, "Повторите запрос с тем же idempotency_key через несколько секунд")
