@@ -1,4 +1,5 @@
 import Link from "next/link"
+import { notFound } from "next/navigation"
 import { ArrowLeft, Home, FileCheck, FileText, FileSpreadsheet, Folder } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -8,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import DocumentList from "../../components/documentList"
 import AppendixList from "./components/appendixList"
 import DeleteContractButton from "./components/deleteContractButton"
-import { contractsAPI, customersAPI } from "@/lib/api.server"
+import { contractsAPI, customersAPI, ApiError } from "@/lib/api.server"
 
 export default async function ContractPage({
   params,
@@ -17,10 +18,17 @@ export default async function ContractPage({
 }) {
   const { customer: customerId, contract: contractId } = await params
 
-  const contractResponse = await contractsAPI.getById(contractId)
+  let contractResponse, customerResponse
+  try {
+    contractResponse = await contractsAPI.getById(contractId)
+    customerResponse = await customersAPI.getById(customerId)
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      notFound()
+    }
+    throw err
+  }
   const contract = contractResponse.data
-
-  const customerResponse = await customersAPI.getById(customerId)
   const customer = customerResponse.data
 
   return (

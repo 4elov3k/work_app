@@ -1,16 +1,10 @@
 // Server-side API client (no cache)
+import { ApiError } from "./api-error"
+export { ApiError } from "./api-error"
+
 const API_BASE = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8080/api"
 
 type FetchOptions = RequestInit & { cache?: RequestCache; next?: { revalidate?: number } }
-
-export class ApiError extends Error {
-  status: number
-  constructor(message: string, status: number) {
-    super(message)
-    this.name = "ApiError"
-    this.status = status
-  }
-}
 
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {

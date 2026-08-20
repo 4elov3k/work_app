@@ -1,4 +1,7 @@
 // API Base URL
+import { ApiError } from './api-error';
+export { ApiError } from './api-error';
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8080/api';
 
 // Типы данных
@@ -307,17 +310,6 @@ export interface NullableSingleResponse<T> {
 export interface ErrorResponse {
   error: string;
   code: number;
-}
-
-// Ошибка API-запроса с сохранённым HTTP-статусом, чтобы вызывающий код мог
-// различать «не найдено» (404) и настоящие сбои сервера/сети.
-export class ApiError extends Error {
-  status: number;
-  constructor(message: string, status: number) {
-    super(message);
-    this.name = 'ApiError';
-    this.status = status;
-  }
 }
 
 // Утилита для обработки ответов
