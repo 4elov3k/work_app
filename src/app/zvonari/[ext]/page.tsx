@@ -158,6 +158,7 @@ export default function ZvonariCallerPage() {
       .then((response) => setHistory(response.data || []))
       .catch((err) => console.error("Failed to load report history:", err))
       .finally(() => setHistoryLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [caller?.id]);
 
   const handleRequestReport = async () => {
