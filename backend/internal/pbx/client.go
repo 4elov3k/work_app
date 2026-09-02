@@ -61,14 +61,15 @@ func (c *Client) ListUsers(ctx context.Context) ([]User, error) {
 		return nil, err
 	}
 	var parsed struct {
-		Status string `json:"status"`
-		Data   []User `json:"data"`
+		Status  string `json:"status"`
+		Data    []User `json:"data"`
+		Comment string `json:"comment"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return nil, fmt.Errorf("onlinepbx user/get.json: parsing response: %w", err)
 	}
 	if parsed.Status != "1" {
-		return nil, fmt.Errorf("onlinepbx user/get.json returned status %s", parsed.Status)
+		return nil, fmt.Errorf("onlinepbx user/get.json returned status %s: %s", parsed.Status, parsed.Comment)
 	}
 	return parsed.Data, nil
 }
@@ -133,14 +134,15 @@ func (c *Client) searchWindow(ctx context.Context, from, to time.Time) ([]CallRe
 		return nil, err
 	}
 	var parsed struct {
-		Status string       `json:"status"`
-		Data   []CallRecord `json:"data"`
+		Status  string       `json:"status"`
+		Data    []CallRecord `json:"data"`
+		Comment string       `json:"comment"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return nil, fmt.Errorf("onlinepbx mongo_history/search.json: parsing response: %w", err)
 	}
 	if parsed.Status != "1" {
-		return nil, fmt.Errorf("onlinepbx mongo_history/search.json returned status %s", parsed.Status)
+		return nil, fmt.Errorf("onlinepbx mongo_history/search.json returned status %s: %s", parsed.Status, parsed.Comment)
 	}
 	return parsed.Data, nil
 }
@@ -165,14 +167,15 @@ func (c *Client) DownloadRecording(ctx context.Context, uuid string) ([]byte, er
 		return nil, fmt.Errorf("requesting recording link: %w", err)
 	}
 	var parsed struct {
-		Status string `json:"status"`
-		Data   string `json:"data"`
+		Status  string `json:"status"`
+		Data    string `json:"data"`
+		Comment string `json:"comment"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return nil, fmt.Errorf("onlinepbx recording link: parsing response: %w", err)
 	}
 	if parsed.Status != "1" {
-		return nil, fmt.Errorf("onlinepbx recording link: request returned status %s", parsed.Status)
+		return nil, fmt.Errorf("onlinepbx recording link: request returned status %s: %s", parsed.Status, parsed.Comment)
 	}
 	if parsed.Data == "" {
 		return nil, ErrNoRecording
@@ -291,10 +294,20 @@ func (c *Client) doPost(ctx context.Context, path string, payload interface{}) (
 	return io.ReadAll(resp.Body)
 }
 
+// isAuthError reports whether body is OnlinePBX's shape for "this session is
+// no longer valid, get a fresh one" — checked via the API's own dedicated
+// `isNotAuth` flag rather than matching specific errorCode strings, which
+// vary by failure reason (observed both "WRONG_AUTH_DATA" for a malformed
+// key and "API_KEY_CHECK_FAILED" for an expired-but-well-formed cached
+// session — errorCode alone previously only caught the former, so a stale
+// cached session in a long-running process never triggered the retry below
+// and every request failed with a bare "status 0" until the backend was
+// restarted).
 func isAuthError(body []byte) bool {
 	var probe struct {
+		IsNotAuth bool   `json:"isNotAuth"`
 		ErrorCode string `json:"errorCode"`
 	}
 	_ = json.Unmarshal(body, &probe)
-	return probe.ErrorCode == "WRONG_AUTH_DATA"
+	return probe.IsNotAuth || probe.ErrorCode == "WRONG_AUTH_DATA"
 }
