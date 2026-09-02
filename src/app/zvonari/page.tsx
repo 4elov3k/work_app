@@ -19,11 +19,11 @@ import {
   CheckCircle2,
   XCircle,
   Cpu,
+  MoreHorizontal,
 } from "lucide-react";
 
 import { zvonariAPI, Caller, ApiError, RetranscribePreview, HealthStatus, StageStatus } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
@@ -35,6 +35,13 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   PERIOD_STORAGE_KEY,
@@ -44,7 +51,7 @@ import {
   formatTrend,
   formatPointTrend,
   computeKpi,
-  PERIOD_PRESETS,
+  PeriodControl,
   OUTCOME_SCRIPT_COMPLETED,
   OUTCOME_STEP1_BROKEN,
   ERROR_KIND_LABELS,
@@ -565,50 +572,14 @@ export default function ZvonariPage() {
           </div>
         </div>
 
-        <Card className="mb-5 border-border">
+        <Card className="mb-5 rounded-lg border-border shadow-none">
           <CardHeader className="pb-3">
             <CardTitle className="text-base font-medium">Синхронизация и анализ</CardTitle>
             <CardDescription>Период для загрузки CDR, транскрибации и классификации звонков</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex flex-wrap items-end gap-3">
-              <div>
-                <label className="mb-1 block text-sm text-muted-foreground">С</label>
-                <Input
-                  type="date"
-                  value={from}
-                  onChange={(e) => setFrom(e.target.value)}
-                  className="h-9 w-40 rounded-md"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm text-muted-foreground">По</label>
-                <Input
-                  type="date"
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                  className="h-9 w-40 rounded-md"
-                />
-              </div>
-              <div className="flex flex-wrap gap-1 rounded-md bg-muted p-1">
-                {PERIOD_PRESETS.map((preset) => {
-                  const active = from === preset.from() && to === preset.to();
-                  return (
-                    <Button
-                      key={preset.label}
-                      variant={active ? "default" : "ghost"}
-                      size="sm"
-                      className={`h-7 rounded-sm transition-colors ${active ? "" : "hover:bg-background"}`}
-                      onClick={() => {
-                        setFrom(preset.from());
-                        setTo(preset.to());
-                      }}
-                    >
-                      {preset.label}
-                    </Button>
-                  );
-                })}
-              </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <PeriodControl from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} />
               <div className="ml-auto flex flex-wrap items-center gap-2">
                 {syncing ? (
                   <Button
@@ -636,37 +607,45 @@ export default function ZvonariPage() {
                   <Sparkles className="mr-2 h-4 w-4" />
                   Проанализировать
                 </Button>
-                <Button
-                  variant="ghost"
-                  onClick={handleRetryFailed}
-                  disabled={syncing}
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  Повторить неудачные
-                </Button>
-                <label
-                  className="flex items-center gap-1.5 self-center text-xs text-muted-foreground"
-                  title="Без записи повтор не помогает — OnlinePBX уже подтвердил, что записи нет"
-                >
-                  <input
-                    type="checkbox"
-                    checked={retryIncludeTerminal}
-                    onChange={(e) => setRetryIncludeTerminal(e.target.checked)}
-                    className="h-3.5 w-3.5 rounded border-input"
-                  />
-                  включая «нет записи»
-                </label>
-                <Button
-                  variant="outline"
-                  onClick={openGpuDialog}
-                  disabled={syncing}
-                  title="Пересчитать транскрипты на GPU — самая дорогая операция, требует подтверждения"
-                  className="border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                >
-                  <Cpu className="mr-2 h-4 w-4" />
-                  Перетранскрибировать на GPU
-                </Button>
+                {/* Редкие/опасные действия — в "⋯ Ещё", а не в ряд с частыми
+                    (zvonari-ui-redesign.md §3: "Два частых действия видимы,
+                    редкие уезжают в DropdownMenu"). */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon" disabled={syncing} aria-label="Ещё действия">
+                      <MoreHorizontal className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-72">
+                    <DropdownMenuItem onSelect={(e) => e.preventDefault()} onClick={handleRetryFailed} className="flex-col items-start gap-1">
+                      <span className="flex items-center gap-2">
+                        <RefreshCw className="h-4 w-4" />
+                        Повторить неудачные
+                      </span>
+                      <label
+                        className="flex items-center gap-1.5 pl-6 text-xs font-normal text-muted-foreground"
+                        onClick={(e) => e.stopPropagation()}
+                        title="Без записи повтор не помогает — OnlinePBX уже подтвердил, что записи нет"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={retryIncludeTerminal}
+                          onChange={(e) => setRetryIncludeTerminal(e.target.checked)}
+                          className="h-3.5 w-3.5 rounded border-input"
+                        />
+                        включая «нет записи»
+                      </label>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={openGpuDialog}
+                      className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+                    >
+                      <Cpu className="mr-2 h-4 w-4" />
+                      Перетранскрибировать на GPU
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
             {Object.keys(stages).length > 0 && (
@@ -848,7 +827,7 @@ export default function ZvonariPage() {
             Звонарей пока нет — нажмите «Синхронизировать», чтобы подтянуть список из OnlinePBX.
           </p>
         ) : (
-          <Card className="overflow-hidden border-border">
+          <Card className="overflow-hidden rounded-lg border-border shadow-none">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">

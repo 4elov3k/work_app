@@ -9,6 +9,7 @@ import {
   Loader2,
   Sparkles,
   ChevronRight,
+  ChevronDown,
   Search,
   ShieldAlert,
   CheckCircle2,
@@ -18,6 +19,7 @@ import {
   Ban,
   HelpCircle,
   Target,
+  Calendar as CalendarIcon,
 } from "lucide-react";
 
 import { Caller, Call, CallAnalytics, StageStatus, PingResult } from "@/lib/api";
@@ -27,6 +29,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 
 // ---------------------------------------------------------------------------
 // Период, тренды
@@ -108,6 +111,72 @@ export const PERIOD_PRESETS: { label: string; from: () => string; to: () => stri
   { label: "Прошлая неделя", from: () => todayISO(-13), to: () => todayISO(-7) },
   { label: "Месяц", from: () => todayISO(-29), to: () => todayISO() },
 ];
+
+function formatPeriodLabel(from: string, to: string): string {
+  const fmt = (iso: string) => {
+    const [, m, d] = iso.split("-");
+    return `${d}.${m}`;
+  };
+  return from === to ? fmt(from) : `${fmt(from)} – ${fmt(to)}`;
+}
+
+// Единый контрол периода: кнопка-триггер + Popover с пресетами и полями
+// "С"/"По" внутри, всё одной высоты и шрифта (zvonari-ui-redesign.md §3,
+// "Даты — через shadcn Popover... чтобы поля и пресеты были одной высоты").
+export function PeriodControl({
+  from,
+  to,
+  onChange,
+  showPresets = true,
+}: {
+  from: string;
+  to: string;
+  onChange: (from: string, to: string) => void;
+  showPresets?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" className="h-8 gap-1.5 font-mono text-xs tabular-nums">
+          <CalendarIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          {formatPeriodLabel(from, to)}
+          <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-auto space-y-3">
+        {showPresets && (
+          <div className="flex flex-wrap gap-1 rounded-md bg-muted p-1">
+            {PERIOD_PRESETS.map((preset) => {
+              const active = from === preset.from() && to === preset.to();
+              return (
+                <Button
+                  key={preset.label}
+                  variant={active ? "default" : "ghost"}
+                  size="sm"
+                  className={`h-7 rounded-sm text-xs ${active ? "" : "hover:bg-background"}`}
+                  onClick={() => onChange(preset.from(), preset.to())}
+                >
+                  {preset.label}
+                </Button>
+              );
+            })}
+          </div>
+        )}
+        <div className="flex items-center gap-2">
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">С</label>
+            <Input type="date" value={from} onChange={(e) => onChange(e.target.value, to)} className="h-8 w-36 text-sm" />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">По</label>
+            <Input type="date" value={to} onChange={(e) => onChange(from, e.target.value)} className="h-8 w-36 text-sm" />
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 // computeKpi aggregates the 4 per-caller endpoint responses into the same
 // summary numbers shown on the KPI cards — factored out (rather than inline
@@ -1038,7 +1107,7 @@ export function KpiCard({
   trend?: { text: string; tone: keyof typeof TREND_TONE_CLASSES };
 }) {
   return (
-    <Card className={`border-l-4 ${KPI_ACCENTS[accent]}`}>
+    <Card className={`rounded-lg border-l-4 shadow-none ${KPI_ACCENTS[accent]}`}>
       <CardContent className="pt-5">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">

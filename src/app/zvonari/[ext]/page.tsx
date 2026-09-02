@@ -6,7 +6,6 @@ import { ArrowLeft, Download, FileBarChart, History, Loader2, Sparkles } from "l
 
 import { zvonariAPI, Caller, CallerReport, Call } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -14,6 +13,7 @@ import {
   loadStoredPeriod,
   todayISO,
   OUTCOME_SCRIPT_COMPLETED,
+  PeriodControl,
   ScriptTrack,
   trackSegmentsFromDistribution,
   ScriptFunnel,
@@ -308,10 +308,8 @@ export default function ZvonariCallerPage() {
             <span className="text-muted-foreground">/</span>
             <span className="font-medium">{caller.name}</span>
             <span className="text-muted-foreground">· {caller.pbx_extension}</span>
-            <div className="ml-auto flex items-center gap-1.5">
-              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-8 w-36 text-xs" />
-              <span className="text-muted-foreground">–</span>
-              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-8 w-36 text-xs" />
+            <div className="ml-auto">
+              <PeriodControl from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} showPresets={false} />
             </div>
           </div>
 
@@ -371,7 +369,7 @@ export default function ZvonariCallerPage() {
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <Card className="border-border">
+                <Card className="rounded-lg border-border shadow-none">
                   <CardContent className="pt-5">
                     <h4 className="mb-3 text-sm font-medium">Путь по скрипту</h4>
                     <div className="mb-4">
@@ -392,7 +390,7 @@ export default function ZvonariCallerPage() {
                     )}
                   </CardContent>
                 </Card>
-                <Card className="border-border">
+                <Card className="rounded-lg border-border shadow-none">
                   <CardContent className="pt-5">
                     <h4 className="mb-3 flex items-center gap-1.5 text-sm font-medium">
                       <FileBarChart className="h-4 w-4 text-primary" />
@@ -460,7 +458,7 @@ export default function ZvonariCallerPage() {
 
           <TabsContent value="reports" className="mt-4 space-y-3">
             {report && (
-              <Card className="border-border">
+              <Card className="rounded-lg border-border shadow-none">
                 <CardContent className="pt-5">
                   <h4 className="mb-2 flex items-center gap-1.5 text-sm font-medium">
                     <FileBarChart className="h-4 w-4 text-primary" />
