@@ -152,6 +152,21 @@ export interface SyncCallsResult {
   analyze_errors: number;
 }
 
+export type StageState = "idle" | "running" | "done" | "failed";
+
+// StageStatus — одна из трёх фаз конвейера (sync/transcribe/analyze),
+// независимая от того, какая именно фоновая задача сейчас идёт: например
+// "transcribe" отражает последнюю транскрибацию независимо от того, была
+// ли она частью полного синка или отдельного повтора (задача 1,
+// zvonari-improvements.md).
+export interface StageStatus {
+  state: StageState;
+  done?: number;
+  total?: number;
+  started_at?: string;
+  finished_at?: string;
+}
+
 export interface SyncStatus {
   running: boolean;
   paused: boolean;
@@ -161,6 +176,7 @@ export interface SyncStatus {
   processed?: number;
   result?: SyncCallsResult;
   error?: string;
+  stages?: Record<string, StageStatus>;
 }
 
 export const zvonariAPI = {

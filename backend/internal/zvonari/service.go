@@ -38,13 +38,29 @@ type Service struct {
 	paused   bool
 	resumeCh chan struct{}
 
+	// stages holds the last known state of each pipeline phase
+	// (sync/transcribe/analyze), guarded by syncMu like syncStatus —
+	// separate from it because a new job overwrites syncStatus wholesale on
+	// start (see startBackgroundJob) but stages must persist across
+	// different job kinds: starting an analyze run shouldn't blank out what
+	// the last sync/transcribe run left behind (задача 1,
+	// zvonari-improvements.md — see StageStatus).
+	stages map[string]*StageStatus
+
 	healthMu       sync.Mutex
 	healthCache    *HealthStatus
 	healthCachedAt time.Time
 }
 
 func NewService(db *database.DB, pbxClient *pbx.Client, transcribeClient *transcribe.Client, callreportClient *callreport.Client) *Service {
-	return &Service{db: db, pbx: pbxClient, transcribe: transcribeClient, callreport: callreportClient}
+	return &Service{
+		db: db, pbx: pbxClient, transcribe: transcribeClient, callreport: callreportClient,
+		stages: map[string]*StageStatus{
+			"sync":       {State: StageIdle},
+			"transcribe": {State: StageIdle},
+			"analyze":    {State: StageIdle},
+		},
+	}
 }
 
 func (s *Service) Configured() bool {
@@ -66,6 +82,91 @@ type SyncStatus struct {
 	Processed      int         `json:"processed,omitempty"`
 	Result         *SyncResult `json:"result,omitempty"`
 	Error          string      `json:"error,omitempty"`
+	// Stages breaks the single Processed/TotalToProcess pair above into the
+	// three actual pipeline phases (задача 1, zvonari-improvements.md) — the
+	// frontend renders one bar per stage instead of one bar whose meaning
+	// silently depends on which button was last clicked. Kept alongside the
+	// flat fields above rather than replacing them (additive change).
+	Stages map[string]StageStatus `json:"stages,omitempty"`
+}
+
+// StageState is one segment of the pipeline: sync (CDR fetch), transcribe
+// (Whisper), analyze (Hermes classification) — see задача 1.
+type StageState string
+
+const (
+	StageIdle    StageState = "idle"
+	StageRunning StageState = "running"
+	StageDone    StageState = "done"
+	StageFailed  StageState = "failed"
+)
+
+// StageStatus is the state of one pipeline phase, independent of which job
+// (sync/retry-failed/retranscribe-gpu/analyze) is currently running — e.g.
+// "transcribe" reflects the last transcription work regardless of whether
+// it ran as part of a full sync or a standalone retry.
+type StageStatus struct {
+	State      StageState `json:"state"`
+	Done       int        `json:"done,omitempty"`
+	Total      int        `json:"total,omitempty"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+// markStageRunning resets one stage to a fresh in-progress run — called at
+// the point each phase actually starts doing work (not necessarily at job
+// start: SyncCalls starts "sync" immediately but "transcribe" only once CDR
+// fetch finishes and it knows how many calls need processing).
+func (s *Service) markStageRunning(name string) {
+	now := time.Now()
+	s.syncMu.Lock()
+	s.stages[name] = &StageStatus{State: StageRunning, StartedAt: &now}
+	s.syncMu.Unlock()
+}
+
+// markStageDone marks a stage finished successfully with a final done/total.
+func (s *Service) markStageDone(name string, done, total int) {
+	now := time.Now()
+	s.syncMu.Lock()
+	st := s.stages[name]
+	if st == nil {
+		st = &StageStatus{}
+		s.stages[name] = st
+	}
+	st.State = StageDone
+	st.Done = done
+	st.Total = total
+	st.FinishedAt = &now
+	s.syncMu.Unlock()
+}
+
+// markStageFailed marks a stage finished unsuccessfully, keeping whatever
+// Done/Total it had accumulated so far (a partial run still shows progress).
+func (s *Service) markStageFailed(name string) {
+	now := time.Now()
+	s.syncMu.Lock()
+	st := s.stages[name]
+	if st == nil {
+		st = &StageStatus{}
+		s.stages[name] = st
+	}
+	st.State = StageFailed
+	st.FinishedAt = &now
+	s.syncMu.Unlock()
+}
+
+// snapshotStages copies the stages map for a GetSyncStatus response — must
+// be called with syncMu held, since StageStatus values (not pointers) are
+// what cross the API boundary so a caller can never observe a torn read of
+// a stage still being mutated concurrently.
+func (s *Service) snapshotStagesLocked() map[string]StageStatus {
+	out := make(map[string]StageStatus, len(s.stages))
+	for k, v := range s.stages {
+		if v != nil {
+			out[k] = *v
+		}
+	}
+	return out
 }
 
 // startBackgroundJob runs job in the background and returns immediately.
@@ -135,6 +236,7 @@ func (s *Service) StartRetryFailed(from, to time.Time, includeTerminal bool) boo
 func (s *Service) GetSyncStatus() SyncStatus {
 	s.syncMu.Lock()
 	status := s.syncStatus
+	status.Stages = s.snapshotStagesLocked()
 	s.syncMu.Unlock()
 	status.Paused = s.IsPaused()
 	return status
@@ -283,14 +385,17 @@ func (s *Service) SyncCalls(ctx context.Context, from, to time.Time) (*SyncResul
 	if !s.pbx.Configured() {
 		return nil, fmt.Errorf("PBX не настроен (нет PBX_API_TOKEN/PBX_DOMAIN)")
 	}
+	s.markStageRunning("sync")
 
 	callersSynced, err := s.SyncCallers(ctx)
 	if err != nil {
+		s.markStageFailed("sync")
 		return nil, err
 	}
 
 	records, err := s.pbx.SearchHistory(ctx, from, to)
 	if err != nil {
+		s.markStageFailed("sync")
 		return nil, fmt.Errorf("pbx.SearchHistory: %w", err)
 	}
 
@@ -323,6 +428,7 @@ func (s *Service) SyncCalls(ctx context.Context, from, to time.Time) (*SyncResul
 			HangupCause:        rec.HangupCause,
 		})
 		if err != nil {
+			s.markStageFailed("sync")
 			return result, fmt.Errorf("inserting call %s: %w", rec.UUID, err)
 		}
 		if !inserted {
@@ -332,6 +438,7 @@ func (s *Service) SyncCalls(ctx context.Context, from, to time.Time) (*SyncResul
 		result.CallsNew++
 		toProcess = append(toProcess, pending{call: call, uuid: rec.UUID})
 	}
+	s.markStageDone("sync", len(records), len(records))
 
 	s.processConcurrently(ctx, toProcess, result)
 
@@ -451,9 +558,11 @@ func (s *Service) RetranscribePreview(ctx context.Context, from, to time.Time, o
 // to maxConcurrentProcessing at once, and keeps the live sync-status
 // progress counters (TotalToProcess/Processed) up to date as it goes.
 func (s *Service) processConcurrently(ctx context.Context, toProcess []pending, result *SyncResult) {
+	now := time.Now()
 	s.syncMu.Lock()
 	s.syncStatus.TotalToProcess = len(toProcess)
 	s.syncStatus.Processed = 0
+	s.stages["transcribe"] = &StageStatus{State: StageRunning, Total: len(toProcess), StartedAt: &now}
 	s.syncMu.Unlock()
 
 	var wg sync.WaitGroup
@@ -469,10 +578,12 @@ func (s *Service) processConcurrently(ctx context.Context, toProcess []pending, 
 			s.transcribeOnly(ctx, call, uuid, &mu, result)
 			s.syncMu.Lock()
 			s.syncStatus.Processed++
+			s.stages["transcribe"].Done++
 			s.syncMu.Unlock()
 		}(p.call, p.uuid)
 	}
 	wg.Wait()
+	s.markStageDone("transcribe", len(toProcess), len(toProcess))
 }
 
 // transcribeOnly downloads and transcribes one call via local Whisper —
@@ -563,9 +674,11 @@ func (s *Service) AnalyzeCalls(ctx context.Context, from, to time.Time) (*SyncRe
 	}
 
 	result := &SyncResult{CallsFound: len(calls)}
+	now := time.Now()
 	s.syncMu.Lock()
 	s.syncStatus.TotalToProcess = len(calls)
 	s.syncStatus.Processed = 0
+	s.stages["analyze"] = &StageStatus{State: StageRunning, Total: len(calls), StartedAt: &now}
 	s.syncMu.Unlock()
 
 	for start := 0; start < len(calls); start += analyzeBatchSize {
@@ -604,6 +717,7 @@ func (s *Service) AnalyzeCalls(ctx context.Context, from, to time.Time) (*SyncRe
 			result.AnalyzeErrors += len(batch)
 			s.syncMu.Lock()
 			s.syncStatus.Processed += len(batch)
+			s.stages["analyze"].Done += len(batch)
 			s.syncMu.Unlock()
 			continue
 		}
@@ -623,10 +737,12 @@ func (s *Service) AnalyzeCalls(ctx context.Context, from, to time.Time) (*SyncRe
 			}
 			s.syncMu.Lock()
 			s.syncStatus.Processed++
+			s.stages["analyze"].Done++
 			s.syncMu.Unlock()
 		}
 	}
 
+	s.markStageDone("analyze", len(calls), len(calls))
 	return result, nil
 }
 

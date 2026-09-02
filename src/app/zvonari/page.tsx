@@ -30,7 +30,7 @@ import {
   Cpu,
 } from "lucide-react";
 
-import { zvonariAPI, Caller, CallerReport, Call, CallAnalytics, ApiError, RetranscribePreview, HealthStatus, PingResult } from "@/lib/api";
+import { zvonariAPI, Caller, CallerReport, Call, CallAnalytics, ApiError, RetranscribePreview, HealthStatus, PingResult, StageStatus } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -1021,6 +1021,43 @@ function KpiCard({
 // Tooltip-компонента — в проекте нет shadcn tooltip.tsx, а нативный
 // title уже используется как тултип везде на этой странице (см. кнопки
 // перетранскрибации/переанализа на строке звонка).
+// STAGE_ORDER/STAGE_LABELS — задача 1, zvonari-improvements.md: три
+// независимые полосы (sync/transcribe/analyze) вместо одной, чей смысл
+// раньше молча зависел от того, какая кнопка была нажата последней.
+const STAGE_ORDER = ["sync", "transcribe", "analyze"];
+const STAGE_LABELS: Record<string, string> = {
+  sync: "Синк",
+  transcribe: "Транскрибация",
+  analyze: "Анализ",
+};
+
+function StageBar({ label, stage }: { label: string; stage?: StageStatus }) {
+  const state = stage?.state ?? "idle";
+  const barClass =
+    state === "failed" ? "bg-destructive" : state === "running" ? "bg-primary" : state === "done" ? "bg-success" : "bg-muted-foreground/20";
+  const total = stage?.total ?? 0;
+  const done = stage?.done ?? 0;
+  const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : state === "running" ? undefined : 0;
+  const stateLabel = state === "running" ? "выполняется" : state === "done" ? "готово" : state === "failed" ? "ошибка" : "не запускалась";
+  return (
+    <div className="min-w-0 flex-1">
+      <div className="mb-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1.5 truncate">
+          {state === "running" && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" />}
+          {label}
+        </span>
+        <span className="shrink-0 tabular-nums">{total > 0 ? `${done}/${total}` : stateLabel}</span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+        <div
+          className={`h-full rounded-full transition-all duration-500 ${barClass} ${pct === undefined ? "w-1/3 animate-pulse" : ""}`}
+          style={pct !== undefined ? { width: `${pct}%` } : undefined}
+        />
+      </div>
+    </div>
+  );
+}
+
 function HealthDot({ label, ping }: { label: string; ping?: PingResult }) {
   const className = !ping || !ping.configured
     ? "bg-muted-foreground/30"
@@ -1091,7 +1128,6 @@ export default function ZvonariPage() {
   const [pausing, setPausing] = useState(false);
   const [syncError, setSyncError] = useState("");
   const [syncMessage, setSyncMessage] = useState("");
-  const [syncProgress, setSyncProgress] = useState<{ total: number; processed: number } | null>(null);
 
   const [callCounts, setCallCounts] = useState<Record<string, number>>({});
   const [statusCounts, setStatusCounts] = useState<Record<string, Record<string, number>>>({});
@@ -1192,15 +1228,58 @@ export default function ZvonariPage() {
 
   const period = useMemo(() => ({ from, to }), [from, to]);
 
-  // Tracks the currently-running poll interval so pollSyncStatus can be
-  // called safely from multiple places (mount check, 409-race retry,
-  // job-start) without ever having two intervals ticking at once, and so
-  // it can be torn down on unmount instead of leaking.
-  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Задача 1/2 (zvonari-improvements.md): три независимые полосы вместо
+  // одной — sync/transcribe/analyze, каждая со своим состоянием, видна даже
+  // когда неактивна (серая), а не скрыта.
+  const [stages, setStages] = useState<Record<string, StageStatus>>({});
+
+  // pollNextRef — self-rescheduling setTimeout (not setInterval) so the
+  // delay between polls can change: 3s on success, doubling up to 30s on a
+  // status-endpoint error, so a flaky backend doesn't get hammered every 3s
+  // forever (задача 2). Tracks the currently-scheduled timer so
+  // pollSyncStatus can be called safely from multiple places (mount check,
+  // 409-race retry, job-start) without ever having two timers ticking at
+  // once, and so it can be torn down on unmount instead of leaking.
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollBackoffRef = useRef(3000);
+  // pollActiveRef tracks "a job is known to still be running" independent
+  // of the timer itself, so the visibility handler below knows whether to
+  // resume polling when the tab comes back — it can't just check
+  // pollTimeoutRef, since that's intentionally cleared while hidden.
+  const pollActiveRef = useRef(false);
+  // Counters/KPIs refresh at most every 15s even though the status poll
+  // itself runs every 3s — full aggregate queries are heavier than the
+  // single status endpoint, and nobody needs them updating faster than they
+  // can read them (задача 2).
+  const lastLiveRefreshRef = useRef(0);
+
+  const clearPoll = () => {
+    if (pollTimeoutRef.current) {
+      clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
+    }
+  };
+
   useEffect(() => {
-    return () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    return () => clearPoll();
+  }, []);
+
+  // Стоп на скрытой вкладке (задача 2: "неактивная вкладка не долбит
+  // бэкенд"), резюме сразу при возврате, если задача всё ещё идёт —
+  // runPollTick/scheduleNextPoll определены ниже в этом же компоненте, но
+  // замыкание разрешается в момент срабатывания события (не в момент
+  // объявления), когда они уже присвоены.
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        clearPoll();
+      } else if (pollActiveRef.current && !pollTimeoutRef.current) {
+        scheduleNextPoll(0);
+      }
     };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // pollSyncStatus's setInterval closure is created once per background job
@@ -1321,46 +1400,61 @@ export default function ZvonariPage() {
   // минуты — сотни звонков), поэтому опрашиваем статус вместо того, чтобы
   // держать один долгий запрос — иначе прокси/браузер обрывает соединение
   // раньше, чем бэкенд успевает закончить.
-  const pollSyncStatus = () => {
-    // Idempotent: if a poll is already running (e.g. the mount check and a
-    // 409 retry both call this), replace it instead of ticking twice.
-    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-    pollIntervalRef.current = setInterval(async () => {
-      try {
-        const response = await zvonariAPI.getSyncStatus();
-        const status = response.data;
-        if (status.total_to_process) {
-          setSyncProgress({ total: status.total_to_process, processed: status.processed ?? 0 });
-        }
-        setPaused(status.paused ?? false);
+  const scheduleNextPoll = (delay: number) => {
+    clearPoll();
+    if (document.hidden) return; // возобновит onVisibilityChange, когда вкладка снова активна
+    pollTimeoutRef.current = setTimeout(runPollTick, delay);
+  };
+
+  const runPollTick = async () => {
+    try {
+      const response = await zvonariAPI.getSyncStatus();
+      const status = response.data;
+      pollBackoffRef.current = 3000; // успешный ответ — сброс backoff
+      setPaused(status.paused ?? false);
+      setStages(status.stages || {});
+      const now = Date.now();
+      if (now - lastLiveRefreshRef.current >= 15000) {
+        lastLiveRefreshRef.current = now;
         refreshLiveData();
-        if (!status.running) {
-          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-          pollIntervalRef.current = null;
-          setSyncing(false);
-          setPaused(false);
-          setSyncProgress(null);
-          if (status.error) {
-            setSyncError(status.error);
-          } else if (status.result) {
-            const r = status.result;
-            const parts = [`найдено: ${r.calls_found}`];
-            if (r.calls_new) parts.push(`новых: ${r.calls_new}`);
-            if (r.calls_skipped) parts.push(`пропущено: ${r.calls_skipped}`);
-            if (r.transcribe_errors) parts.push(`ошибок транскрибации: ${r.transcribe_errors}`);
-            if (r.analyze_errors) parts.push(`ошибок анализа: ${r.analyze_errors}`);
-            setSyncMessage(parts.join(", "));
-          }
-          loadCallers();
-        }
-      } catch (err) {
-        console.error("Sync status poll failed:", err);
-        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-        setSyncing(false);
-        setSyncProgress(null);
       }
-    }, 3000);
+      if (!status.running) {
+        pollActiveRef.current = false;
+        clearPoll();
+        setSyncing(false);
+        setPaused(false);
+        if (status.error) {
+          setSyncError(status.error);
+        } else if (status.result) {
+          const r = status.result;
+          const parts = [`найдено: ${r.calls_found}`];
+          if (r.calls_new) parts.push(`новых: ${r.calls_new}`);
+          if (r.calls_skipped) parts.push(`пропущено: ${r.calls_skipped}`);
+          if (r.transcribe_errors) parts.push(`ошибок транскрибации: ${r.transcribe_errors}`);
+          if (r.analyze_errors) parts.push(`ошибок анализа: ${r.analyze_errors}`);
+          setSyncMessage(parts.join(", "));
+        }
+        loadCallers();
+        refreshLiveData(); // финальное обновление сразу, не дожидаясь 15с throttle
+        return;
+      }
+      scheduleNextPoll(3000);
+    } catch (err) {
+      console.error("Sync status poll failed:", err);
+      // Экспоненциальный backoff при ошибках статус-эндпоинта, максимум 30с
+      // (задача 2) — вместо того чтобы сдаваться после первой же ошибки,
+      // как раньше (это молча останавливало прогресс на середине).
+      const nextDelay = Math.min(30000, pollBackoffRef.current * 2);
+      pollBackoffRef.current = nextDelay;
+      scheduleNextPoll(nextDelay);
+    }
+  };
+
+  const pollSyncStatus = () => {
+    pollActiveRef.current = true;
+    pollBackoffRef.current = 3000;
+    lastLiveRefreshRef.current = 0;
+    scheduleNextPoll(3000);
   };
 
   // При открытии страницы проверяем, не идёт ли уже фоновая задача.
@@ -1369,6 +1463,7 @@ export default function ZvonariPage() {
     zvonariAPI
       .getSyncStatus()
       .then((response) => {
+        setStages(response.data.stages || {});
         if (response.data.running) {
           setSyncing(true);
           setPaused(response.data.paused ?? false);
@@ -1877,31 +1972,18 @@ export default function ZvonariPage() {
                 </Button>
               </div>
             </div>
-            {syncing && (
+            {Object.keys(stages).length > 0 && (
               <div className="mt-4">
-                <div className="mb-1 flex justify-between text-xs text-muted-foreground">
-                  <span className={`inline-flex items-center gap-1.5 ${paused ? "text-warning" : ""}`}>
-                    {paused ? <Pause className="h-3 w-3" /> : <Loader2 className="h-3 w-3 animate-spin" />}
-                    {paused ? "На паузе" : "Обработка звонков"}
-                  </span>
-                  {syncProgress && syncProgress.total > 0 && (
-                    <span>
-                      {syncProgress.processed} / {syncProgress.total} (
-                      {Math.min(100, Math.round((syncProgress.processed / syncProgress.total) * 100))}%)
-                    </span>
-                  )}
-                </div>
-                <div className="h-2 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${
-                      paused ? "bg-warning" : "bg-primary"
-                    } ${!syncProgress || syncProgress.total === 0 ? "w-1/3 animate-pulse" : ""}`}
-                    style={
-                      syncProgress && syncProgress.total > 0
-                        ? { width: `${Math.min(100, (syncProgress.processed / syncProgress.total) * 100)}%` }
-                        : undefined
-                    }
-                  />
+                {paused && (
+                  <p className="mb-2 flex items-center gap-1.5 text-xs text-warning">
+                    <Pause className="h-3 w-3" />
+                    На паузе — прогресс сохранён
+                  </p>
+                )}
+                <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
+                  {STAGE_ORDER.map((name) => (
+                    <StageBar key={name} label={STAGE_LABELS[name]} stage={stages[name]} />
+                  ))}
                 </div>
               </div>
             )}
