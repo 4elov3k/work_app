@@ -114,13 +114,43 @@ func (h *Handlers) RetryFailedCalls(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// RetranscribeAllCalls обрабатывает POST /api/zvonari/calls/retranscribe-gpu?from=&to=
-// Массово (пере)транскрибирует ВСЕ звонки за период, включая уже готовые —
-// в отличие от /retry-failed (только сломанные/необработанные). Транскрибация
-// уже сама предпочитает GPU-бокс, если он настроен (TRANSCRIBE_SERVICE_GPU_URL)
-// и доступен, иначе тихо падает на локальный CPU — нужен для того, чтобы
-// задним числом переснять качество транскриптов, сделанных раньше на CPU.
-// Тот же общий "слот" фоновой задачи, что и у /sync, /retry-failed, /analyze.
+// onlyCPUParam reads the `only_cpu` query flag shared by the GPU-retranscribe
+// preview and start endpoints — defaults to true (the safer choice: skip
+// calls already redone on GPU) so an old client/bookmark without the param
+// doesn't accidentally fall back to a full-period re-run.
+func onlyCPUParam(r *http.Request) bool {
+	v := r.URL.Query().Get("only_cpu")
+	return v != "false"
+}
+
+// GetRetranscribePreview обрабатывает GET /api/zvonari/calls/retranscribe-gpu/preview?from=&to=&only_cpu=
+// Отдаёт числа для подтверждения перед запуском самой дорогой операции в
+// системе: сколько звонков реально попадёт в перегон и сколько из них уже
+// было на GPU, плюс грубую оценку длительности.
+func (h *Handlers) GetRetranscribePreview(w http.ResponseWriter, r *http.Request) {
+	from, to, err := parseRangeParams(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	preview, err := h.zvonari.RetranscribePreview(r.Context(), from, to, onlyCPUParam(r))
+	if err != nil {
+		log.Printf("GetRetranscribePreview failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to build retranscribe preview")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": preview})
+}
+
+// RetranscribeAllCalls обрабатывает POST /api/zvonari/calls/retranscribe-gpu?from=&to=&only_cpu=
+// Массово (пере)транскрибирует звонки за период — по умолчанию только те,
+// что ещё не были на GPU (only_cpu=true), либо вообще все при only_cpu=false,
+// включая уже готовые — в отличие от /retry-failed (только сломанные/
+// необработанные). Транскрибация уже сама предпочитает GPU-бокс, если он
+// настроен (TRANSCRIBE_SERVICE_GPU_URL) и доступен, иначе тихо падает на
+// локальный CPU. Тот же общий "слот" фоновой задачи, что и у /sync,
+// /retry-failed, /analyze.
 func (h *Handlers) RetranscribeAllCalls(w http.ResponseWriter, r *http.Request) {
 	from, to, err := parseRangeParams(r)
 	if err != nil {
@@ -128,7 +158,7 @@ func (h *Handlers) RetranscribeAllCalls(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	started := h.zvonari.StartRetranscribeAll(from, to)
+	started := h.zvonari.StartRetranscribeAll(from, to, onlyCPUParam(r))
 	if !started {
 		respondWithJSON(w, http.StatusConflict, map[string]interface{}{
 			"data": map[string]string{"status": "already_running"},

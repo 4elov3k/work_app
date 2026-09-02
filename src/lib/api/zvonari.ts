@@ -110,8 +110,19 @@ export interface Call {
   transcript_status: string;
   transcript_text?: string;
   analytics_json?: CallAnalytics;
+  // engine — каким сервисом фактически транскрибирован звонок ("cpu"/"gpu"),
+  // пусто пока не транскрибирован.
+  engine?: string;
+  transcribed_at?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface RetranscribePreview {
+  total: number;
+  already_gpu: number;
+  only_cpu_total: number;
+  estimated_minutes: number;
 }
 
 export interface SyncCallsResult {
@@ -193,12 +204,21 @@ export const zvonariAPI = {
     return handleResponse<SingleResponse<{ status: string }>>(response);
   },
 
-  // Массово ПЕРЕтранскрибировать вообще все звонки периода, включая уже
-  // готовые (в отличие от retryFailed) — транскрибация сама предпочитает
-  // GPU-бокс, если он настроен и доступен. Для задним числом улучшения
-  // качества транскриптов, сделанных раньше на CPU. Тоже фоновая задача.
-  retranscribeAllGpu: async (from: string, to: string): Promise<SingleResponse<{ status: string }>> => {
-    const params = new URLSearchParams({ from, to });
+  // Оценка перед запуском перетранскрибации: сколько звонков реально
+  // попадёт в перегон и сколько из них уже было на GPU — для диалога
+  // подтверждения, чтобы случайный клик не гонял тысячи звонков вслепую.
+  getRetranscribePreview: async (from: string, to: string, onlyCpu: boolean): Promise<SingleResponse<RetranscribePreview>> => {
+    const params = new URLSearchParams({ from, to, only_cpu: String(onlyCpu) });
+    const response = await fetch(`${API_BASE}/zvonari/calls/retranscribe-gpu/preview?${params.toString()}`);
+    return handleResponse<SingleResponse<RetranscribePreview>>(response);
+  },
+
+  // Массово ПЕРЕтранскрибировать звонки периода — по умолчанию только те, что
+  // ещё не были на GPU (onlyCpu=true), либо вообще все при onlyCpu=false,
+  // включая уже готовые (в отличие от retryFailed) — транскрибация сама
+  // предпочитает GPU-бокс, если он настроен и доступен. Тоже фоновая задача.
+  retranscribeAllGpu: async (from: string, to: string, onlyCpu: boolean): Promise<SingleResponse<{ status: string }>> => {
+    const params = new URLSearchParams({ from, to, only_cpu: String(onlyCpu) });
     const response = await fetch(`${API_BASE}/zvonari/calls/retranscribe-gpu?${params.toString()}`, { method: 'POST' });
     return handleResponse<SingleResponse<{ status: string }>>(response);
   },

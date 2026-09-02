@@ -30,12 +30,20 @@ import {
   Cpu,
 } from "lucide-react";
 
-import { zvonariAPI, Caller, CallerReport, Call, CallAnalytics, ApiError } from "@/lib/api";
+import { zvonariAPI, Caller, CallerReport, Call, CallAnalytics, ApiError, RetranscribePreview } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 
 // Период (from/to) переживает перезагрузку страницы через localStorage —
 // без этого при каждом обновлении фильтр молча слетал обратно на дефолтную
@@ -1267,11 +1275,46 @@ export default function ZvonariPage() {
       () => zvonariAPI.retryFailed(period.from, period.to),
       "Повтор запущен, это может занять несколько минут..."
     );
-  const handleRetranscribeGpu = () =>
+  // "Перетранскрибировать на GPU" — самая дорогая операция в системе (может
+  // пересчитать тысячи звонков за один клик), поэтому вместо прямого запуска
+  // сперва показываем диалог подтверждения с реальными числами — см.
+  // openGpuDialog/confirmGpuRetranscribe и zvonari-improvements.md, задача 4.
+  const [gpuDialogOpen, setGpuDialogOpen] = useState(false);
+  const [gpuOnlyCpu, setGpuOnlyCpu] = useState(true);
+  const [gpuPreview, setGpuPreview] = useState<RetranscribePreview | null>(null);
+  const [gpuPreviewLoading, setGpuPreviewLoading] = useState(false);
+
+  const loadGpuPreview = (onlyCpu: boolean) => {
+    setGpuPreviewLoading(true);
+    zvonariAPI
+      .getRetranscribePreview(period.from, period.to, onlyCpu)
+      .then((response) => setGpuPreview(response.data))
+      .catch((err) => {
+        console.error("Failed to load retranscribe preview:", err);
+        setGpuPreview(null);
+      })
+      .finally(() => setGpuPreviewLoading(false));
+  };
+
+  const openGpuDialog = () => {
+    setGpuDialogOpen(true);
+    loadGpuPreview(gpuOnlyCpu);
+  };
+
+  const toggleGpuOnlyCpu = (value: boolean) => {
+    setGpuOnlyCpu(value);
+    loadGpuPreview(value);
+  };
+
+  const confirmGpuRetranscribe = () => {
+    setGpuDialogOpen(false);
     runBackgroundJob(
-      () => zvonariAPI.retranscribeAllGpu(period.from, period.to),
-      "Перетранскрибация запущена — все звонки периода будут пересняты (GPU, если доступен)..."
+      () => zvonariAPI.retranscribeAllGpu(period.from, period.to, gpuOnlyCpu),
+      gpuOnlyCpu
+        ? "Перетранскрибация запущена — звонки, ещё не снятые на GPU, будут пересняты (GPU, если доступен)..."
+        : "Перетранскрибация запущена — ВСЕ звонки периода будут пересняты заново (GPU, если доступен)..."
     );
+  };
   const handleAnalyze = () =>
     runBackgroundJob(
       () => zvonariAPI.analyzeCalls(period.from, period.to),
@@ -1634,11 +1677,11 @@ export default function ZvonariPage() {
                   Повторить неудачные
                 </Button>
                 <Button
-                  variant="ghost"
-                  onClick={handleRetranscribeGpu}
+                  variant="outline"
+                  onClick={openGpuDialog}
                   disabled={syncing}
-                  title="Перетранскрибировать ВСЕ звонки периода (включая уже готовые) — использует GPU-бокс, если он настроен и доступен"
-                  className="text-muted-foreground transition-transform hover:text-foreground active:scale-95"
+                  title="Пересчитать транскрипты на GPU — самая дорогая операция, требует подтверждения"
+                  className="border-destructive/50 text-destructive transition-transform hover:bg-destructive/10 hover:text-destructive active:scale-95"
                 >
                   <Cpu className="mr-2 h-4 w-4" />
                   Перетранскрибировать на GPU
@@ -1679,6 +1722,65 @@ export default function ZvonariPage() {
             {syncMessage && !syncing && <p className="mt-3 text-sm text-muted-foreground">{syncMessage}</p>}
           </CardContent>
         </Card>
+
+      <Dialog open={gpuDialogOpen} onOpenChange={setGpuDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Cpu className="h-5 w-5" />
+              Перетранскрибировать на GPU
+            </DialogTitle>
+            <DialogDescription>
+              Пересчитывает транскрипты заново — самая дорогая операция в системе. Проверьте объём перед запуском.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={gpuOnlyCpu}
+                onChange={(e) => toggleGpuOnlyCpu(e.target.checked)}
+                className="h-4 w-4 rounded border-input"
+              />
+              Только те, что делались на CPU
+            </label>
+            {gpuPreviewLoading ? (
+              <p className="flex items-center gap-2 text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Считаем...
+              </p>
+            ) : gpuPreview ? (
+              <div className="rounded-md bg-muted/50 p-3">
+                <p>
+                  Будет пересчитано{" "}
+                  <span className="font-semibold tabular-nums">
+                    {gpuOnlyCpu ? gpuPreview.only_cpu_total : gpuPreview.total}
+                  </span>{" "}
+                  звонков за {period.from} – {period.to}
+                  {gpuOnlyCpu && gpuPreview.already_gpu > 0 && (
+                    <> (из {gpuPreview.total}, {gpuPreview.already_gpu} уже на GPU и будут пропущены)</>
+                  )}
+                  .
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  Примерная длительность (по CPU-скорости, GPU обычно быстрее): ~
+                  {gpuPreview.estimated_minutes < 1 ? "меньше минуты" : `${Math.ceil(gpuPreview.estimated_minutes)} мин`}
+                </p>
+              </div>
+            ) : (
+              <p className="text-muted-foreground">Не удалось посчитать оценку — можно всё равно продолжить.</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setGpuDialogOpen(false)}>
+              Отмена
+            </Button>
+            <Button variant="destructive" onClick={confirmGpuRetranscribe}>
+              Запустить перетранскрибацию
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {callers.length > 0 && (
         <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-6">

@@ -351,19 +351,22 @@ func (s *Service) RetryFailedCalls(ctx context.Context, from, to time.Time) (*Sy
 }
 
 // allTranscriptStatuses covers every value transcript_status can hold —
-// used by RetranscribeAll to force every call in a period back through
-// transcribeOnly regardless of its current status, not just the
-// broken/pending ones RetryFailedCalls targets.
+// used by RetryFailedCalls's "терминальные" variant to force every call in a
+// period back through transcribeOnly regardless of its current status.
 var allTranscriptStatuses = []string{"done", "failed", "no_recording", "pending", "transcribing"}
 
-// RetranscribeAll force-retranscribes every call in [from, to) — including
-// ones already transcript_status='done' — via transcribeOnly, which always
+// RetranscribeAll force-retranscribes calls in [from, to] — including ones
+// already transcript_status='done' — via transcribeOnly, which always
 // prefers the GPU box (see transcribe.Client.Transcribe) when
 // TRANSCRIBE_SERVICE_GPU_URL is configured and falls back to the local CPU
 // service otherwise. Exists for backfilling better transcripts once a GPU
-// box comes online after calls were already transcribed on CPU/small.
-func (s *Service) RetranscribeAll(ctx context.Context, from, to time.Time) (*SyncResult, error) {
-	calls, err := s.db.ListCallsByStatusPeriod(ctx, allTranscriptStatuses, from, to)
+// box comes online after calls were already transcribed on CPU. onlyCPU
+// restricts the run to calls not already transcribed on GPU — the default
+// in the UI's confirmation dialog, since re-running calls already done on
+// GPU is rarely useful and this is the most expensive operation in the
+// system (see RetranscribePreview).
+func (s *Service) RetranscribeAll(ctx context.Context, from, to time.Time, onlyCPU bool) (*SyncResult, error) {
+	calls, err := s.db.ListCallsForRetranscribe(ctx, from, to, onlyCPU)
 	if err != nil {
 		return nil, fmt.Errorf("listing calls to retranscribe: %w", err)
 	}
@@ -380,10 +383,49 @@ func (s *Service) RetranscribeAll(ctx context.Context, from, to time.Time) (*Syn
 }
 
 // StartRetranscribeAll launches RetranscribeAll in the background — see startBackgroundJob.
-func (s *Service) StartRetranscribeAll(from, to time.Time) bool {
+func (s *Service) StartRetranscribeAll(from, to time.Time, onlyCPU bool) bool {
 	return s.startBackgroundJob(func(ctx context.Context) (*SyncResult, error) {
-		return s.RetranscribeAll(ctx, from, to)
+		return s.RetranscribeAll(ctx, from, to, onlyCPU)
 	})
+}
+
+// RetranscribePreview is what the frontend calls before actually starting a
+// GPU retranscribe run, to show "будет пересчитано N звонков (из них M уже
+// на GPU), ~T" instead of firing the most expensive operation in the system
+// blind (see zvonari-improvements.md, задача 4). The time estimate is a
+// rough one: total audio duration of the affected calls divided by the
+// measured single-stream CPU throughput documented on maxConcurrentProcessing
+// (~2x realtime) — GPU is faster but by an amount that varies by hardware
+// and isn't measured anywhere in this codebase, so this deliberately quotes
+// the more conservative (CPU) bound rather than a number that could
+// undersell how long a CPU fallback run would actually take.
+type RetranscribePreview struct {
+	Total            int     `json:"total"`
+	AlreadyGPU       int     `json:"already_gpu"`
+	OnlyCPUTotal     int     `json:"only_cpu_total"`
+	EstimatedMinutes float64 `json:"estimated_minutes"`
+}
+
+// assumedCPURealtimeFactor mirrors the 2.07x single-stream measurement
+// documented on maxConcurrentProcessing above.
+const assumedCPURealtimeFactor = 2.0
+
+func (s *Service) RetranscribePreview(ctx context.Context, from, to time.Time, onlyCPU bool) (*RetranscribePreview, error) {
+	total, alreadyGPU, onlyCPUTotal, avgDurationSec, err := s.db.RetranscribePreviewCounts(ctx, from, to)
+	if err != nil {
+		return nil, err
+	}
+	count := total
+	if onlyCPU {
+		count = onlyCPUTotal
+	}
+	estimatedMinutes := float64(count) * avgDurationSec / assumedCPURealtimeFactor / 60
+	return &RetranscribePreview{
+		Total:            total,
+		AlreadyGPU:       alreadyGPU,
+		OnlyCPUTotal:     onlyCPUTotal,
+		EstimatedMinutes: estimatedMinutes,
+	}, nil
 }
 
 // processConcurrently runs transcribeAndAnalyze for each pending call, up
@@ -460,7 +502,7 @@ func (s *Service) transcribeOnly(ctx context.Context, call *models.Call, pbxUUID
 		mu.Unlock()
 		return
 	}
-	if err := s.db.SetCallTranscript(ctx, call.ID, tr.Text); err != nil {
+	if err := s.db.SetCallTranscript(ctx, call.ID, tr.Text, tr.Engine); err != nil {
 		log.Printf("zvonari: saving transcript failed for call %s: %v", pbxUUID, err)
 	}
 }

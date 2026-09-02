@@ -19,8 +19,12 @@ type Call struct {
 	TranscriptStatus   string          `json:"transcript_status"`
 	TranscriptText     string          `json:"transcript_text,omitempty"`
 	AnalyticsJSON      json.RawMessage `json:"analytics_json,omitempty"`
-	CreatedAt          time.Time       `json:"created_at"`
-	UpdatedAt          time.Time       `json:"updated_at"`
+	// Engine — какой движок фактически транскрибировал этот звонок
+	// ("cpu" / "gpu"), пусто пока звонок ещё не транскрибирован.
+	Engine        string     `json:"engine,omitempty"`
+	TranscribedAt *time.Time `json:"transcribed_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 // CallListResponse представляет ответ со списком звонков

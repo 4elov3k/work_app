@@ -170,6 +170,7 @@ func main() {
 			r.Post("/zvonari/sync/pause", h.PauseZvonariSync)
 			r.Post("/zvonari/sync/resume", h.ResumeZvonariSync)
 			r.Post("/zvonari/calls/retry-failed", h.RetryFailedCalls)
+			r.Get("/zvonari/calls/retranscribe-gpu/preview", h.GetRetranscribePreview)
 			r.Post("/zvonari/calls/retranscribe-gpu", h.RetranscribeAllCalls)
 			r.Post("/zvonari/calls/analyze", h.AnalyzeCalls)
 			r.Get("/zvonari/calls/status-counts", h.GetCallStatusCounts)

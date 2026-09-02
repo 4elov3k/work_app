@@ -70,6 +70,10 @@ func (c *Client) Configured() bool {
 
 type Result struct {
 	Text string `json:"text"`
+	// Engine — какой сервис фактически ответил на этот запрос: "gpu" или
+	// "cpu". Не приходит от Hermes (тот просто отвечает {text}) — это
+	// Client сам знает, на какой из двух baseURL успешно достучался.
+	Engine string `json:"-"`
 }
 
 // Transcribe tries the optional GPU box first (if configured), and falls
@@ -83,6 +87,7 @@ func (c *Client) Transcribe(ctx context.Context, filename string, audio []byte) 
 	if c.gpuBaseURL != "" {
 		result, err := c.transcribeAt(ctx, c.gpuClient, c.gpuBaseURL, c.gpuToken, filename, audio)
 		if err == nil {
+			result.Engine = "gpu"
 			return result, nil
 		}
 		if c.baseURL == "" {
@@ -91,7 +96,12 @@ func (c *Client) Transcribe(ctx context.Context, filename string, audio []byte) 
 		log.Printf("transcribe: GPU service unavailable, falling back to CPU: %v", err)
 	}
 
-	return c.transcribeAt(ctx, c.httpClient, c.baseURL, c.token, filename, audio)
+	result, err := c.transcribeAt(ctx, c.httpClient, c.baseURL, c.token, filename, audio)
+	if err != nil {
+		return nil, err
+	}
+	result.Engine = "cpu"
+	return result, nil
 }
 
 func (c *Client) transcribeAt(ctx context.Context, client *http.Client, baseURL, token, filename string, audio []byte) (*Result, error) {

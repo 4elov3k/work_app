@@ -46,16 +46,18 @@ func (db *DB) InsertCall(ctx context.Context, call models.Call) (*models.Call, b
 func (db *DB) GetCallByID(ctx context.Context, id string) (*models.Call, error) {
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
-		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json, created_at, updated_at
+		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json,
+		       COALESCE(engine, ''), transcribed_at, created_at, updated_at
 		FROM calls
 		WHERE id = $1
 	`
 	var c models.Call
 	var analytics []byte
+	var transcribedAt sql.NullTime
 	err := db.QueryRowContext(ctx, query, id).Scan(
 		&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
 		&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
-		&c.TranscriptText, &analytics, &c.CreatedAt, &c.UpdatedAt,
+		&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("call not found")
@@ -65,6 +67,9 @@ func (db *DB) GetCallByID(ctx context.Context, id string) (*models.Call, error) 
 	}
 	if len(analytics) > 0 {
 		c.AnalyticsJSON = json.RawMessage(analytics)
+	}
+	if transcribedAt.Valid {
+		c.TranscribedAt = &transcribedAt.Time
 	}
 	return &c, nil
 }
@@ -82,11 +87,14 @@ func (db *DB) SetCallTranscriptStatus(ctx context.Context, id, status string) er
 	return nil
 }
 
-// SetCallTranscript stores the Whisper transcript and marks the call done.
-func (db *DB) SetCallTranscript(ctx context.Context, id, text string) error {
+// SetCallTranscript stores the Whisper transcript and marks the call done,
+// recording which engine (cpu/gpu) actually produced it and when — see
+// transcribe.Client.Transcribe, which reports back whichever of its two
+// configured backends answered.
+func (db *DB) SetCallTranscript(ctx context.Context, id, text, engine string) error {
 	_, err := db.ExecContext(ctx,
-		`UPDATE calls SET transcript_text = $2, transcript_status = 'done', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-		id, text,
+		`UPDATE calls SET transcript_text = $2, transcript_status = 'done', engine = $3, transcribed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+		id, text, engine,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update transcript: %w", err)
@@ -261,7 +269,8 @@ func (db *DB) CountFraudSuspectedByCaller(ctx context.Context, from, to time.Tim
 func (db *DB) ListCallsByStatusPeriod(ctx context.Context, statuses []string, from, to time.Time) ([]models.Call, error) {
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
-		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json, created_at, updated_at
+		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json,
+		       COALESCE(engine, ''), transcribed_at, created_at, updated_at
 		FROM calls
 		WHERE transcript_status = ANY($1) AND started_at >= $2 AND started_at < $3
 		ORDER BY started_at
@@ -276,15 +285,19 @@ func (db *DB) ListCallsByStatusPeriod(ctx context.Context, statuses []string, fr
 	for rows.Next() {
 		var c models.Call
 		var analytics []byte
+		var transcribedAt sql.NullTime
 		if err := rows.Scan(
 			&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
 			&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
-			&c.TranscriptText, &analytics, &c.CreatedAt, &c.UpdatedAt,
+			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan call: %w", err)
 		}
 		if len(analytics) > 0 {
 			c.AnalyticsJSON = json.RawMessage(analytics)
+		}
+		if transcribedAt.Valid {
+			c.TranscribedAt = &transcribedAt.Time
 		}
 		calls = append(calls, c)
 	}
@@ -306,7 +319,8 @@ func (db *DB) ListCallsByStatusPeriod(ctx context.Context, statuses []string, fr
 func (db *DB) ListCallsNeedingAnalysis(ctx context.Context, from, to time.Time) ([]models.Call, error) {
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
-		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json, created_at, updated_at
+		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json,
+		       COALESCE(engine, ''), transcribed_at, created_at, updated_at
 		FROM calls
 		WHERE transcript_status = 'done'
 		  AND (analytics_json IS NULL OR NOT (analytics_json ? 'category' OR analytics_json ? 'call_type'))
@@ -323,15 +337,19 @@ func (db *DB) ListCallsNeedingAnalysis(ctx context.Context, from, to time.Time) 
 	for rows.Next() {
 		var c models.Call
 		var analytics []byte
+		var transcribedAt sql.NullTime
 		if err := rows.Scan(
 			&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
 			&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
-			&c.TranscriptText, &analytics, &c.CreatedAt, &c.UpdatedAt,
+			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan call: %w", err)
 		}
 		if len(analytics) > 0 {
 			c.AnalyticsJSON = json.RawMessage(analytics)
+		}
+		if transcribedAt.Valid {
+			c.TranscribedAt = &transcribedAt.Time
 		}
 		calls = append(calls, c)
 	}
@@ -341,10 +359,83 @@ func (db *DB) ListCallsNeedingAnalysis(ctx context.Context, from, to time.Time) 
 	return calls, nil
 }
 
+// ListCallsForRetranscribe returns every call in [from, to), for the "GPU
+// retranscribe" bulk job — regardless of transcript_status, since the point
+// is to redo transcripts that already exist too. When onlyCPU is true,
+// excludes calls already transcribed on GPU (the default in the UI's
+// confirmation dialog — see zvonari-improvements.md, задача 4).
+func (db *DB) ListCallsForRetranscribe(ctx context.Context, from, to time.Time, onlyCPU bool) ([]models.Call, error) {
+	query := `
+		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
+		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json,
+		       COALESCE(engine, ''), transcribed_at, created_at, updated_at
+		FROM calls
+		WHERE started_at >= $1 AND started_at < $2
+	`
+	if onlyCPU {
+		query += ` AND engine IS DISTINCT FROM 'gpu'`
+	}
+	query += ` ORDER BY started_at`
+
+	rows, err := db.QueryContext(ctx, query, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query calls to retranscribe: %w", err)
+	}
+	defer rows.Close()
+
+	var calls []models.Call
+	for rows.Next() {
+		var c models.Call
+		var analytics []byte
+		var transcribedAt sql.NullTime
+		if err := rows.Scan(
+			&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
+			&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
+			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.CreatedAt, &c.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan call: %w", err)
+		}
+		if len(analytics) > 0 {
+			c.AnalyticsJSON = json.RawMessage(analytics)
+		}
+		if transcribedAt.Valid {
+			c.TranscribedAt = &transcribedAt.Time
+		}
+		calls = append(calls, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating calls: %w", err)
+	}
+	return calls, nil
+}
+
+// RetranscribePreviewCounts reports, for the "Перетранскрибировать на GPU"
+// confirmation dialog, how many calls in [from, to) would be re-run under
+// each of the two possible scopes (all calls vs only ones not yet done on
+// GPU), plus the average call duration to size a rough time estimate from —
+// see zvonari.Service.RetranscribePreview.
+func (db *DB) RetranscribePreviewCounts(ctx context.Context, from, to time.Time) (total, alreadyGPU int, onlyCPUTotal int, avgDurationSec float64, err error) {
+	query := `
+		SELECT
+			count(*),
+			count(*) FILTER (WHERE engine = 'gpu'),
+			count(*) FILTER (WHERE engine IS DISTINCT FROM 'gpu'),
+			COALESCE(avg(duration_sec), 0)
+		FROM calls
+		WHERE started_at >= $1 AND started_at < $2
+	`
+	err = db.QueryRowContext(ctx, query, from, to).Scan(&total, &alreadyGPU, &onlyCPUTotal, &avgDurationSec)
+	if err != nil {
+		return 0, 0, 0, 0, fmt.Errorf("failed to count calls for retranscribe preview: %w", err)
+	}
+	return total, alreadyGPU, onlyCPUTotal, avgDurationSec, nil
+}
+
 func (db *DB) ListCallsByCallerPeriod(ctx context.Context, callerID string, from, to time.Time) ([]models.Call, error) {
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
-		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json, created_at, updated_at
+		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json,
+		       COALESCE(engine, ''), transcribed_at, created_at, updated_at
 		FROM calls
 		WHERE caller_id = $1 AND started_at >= $2 AND started_at < $3
 		ORDER BY started_at
@@ -359,15 +450,19 @@ func (db *DB) ListCallsByCallerPeriod(ctx context.Context, callerID string, from
 	for rows.Next() {
 		var c models.Call
 		var analytics []byte
+		var transcribedAt sql.NullTime
 		if err := rows.Scan(
 			&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
 			&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
-			&c.TranscriptText, &analytics, &c.CreatedAt, &c.UpdatedAt,
+			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan call: %w", err)
 		}
 		if len(analytics) > 0 {
 			c.AnalyticsJSON = json.RawMessage(analytics)
+		}
+		if transcribedAt.Valid {
+			c.TranscribedAt = &transcribedAt.Time
 		}
 		calls = append(calls, c)
 	}
