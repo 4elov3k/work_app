@@ -310,7 +310,7 @@ export default function ZvonariPage() {
           if (r.calls_skipped) parts.push(`пропущено: ${r.calls_skipped}`);
           if (r.transcribe_errors) parts.push(`ошибок транскрибации: ${r.transcribe_errors}`);
           if (r.analyze_errors) parts.push(`ошибок анализа: ${r.analyze_errors}`);
-          setSyncMessage(parts.join(", "));
+          setSyncMessage(`${ACTION_DONE_LABELS[lastActionRef.current]}: ${parts.join(", ")}`);
         }
         loadCallers();
         refreshLiveData();
@@ -356,10 +356,24 @@ export default function ZvonariPage() {
      
   }, [from, to]);
 
+  // Кнопка и её результат называются одинаково (zvonari-ui-redesign.md §4):
+  // жмём "Проанализировать" → по завершении видим "Проанализировано: ...",
+  // а не одну и ту же безликую сводку независимо от того, что запускали.
+  type BackgroundAction = "sync" | "retry" | "gpu" | "analyze";
+  const ACTION_DONE_LABELS: Record<BackgroundAction, string> = {
+    sync: "Синхронизировано",
+    retry: "Повторено",
+    gpu: "Перетранскрибировано",
+    analyze: "Проанализировано",
+  };
+  const lastActionRef = useRef<BackgroundAction>("sync");
+
   const runBackgroundJob = async (
     starter: () => Promise<{ data: { status: string } }>,
-    startMessage: string
+    startMessage: string,
+    action: BackgroundAction
   ) => {
+    lastActionRef.current = action;
     setSyncing(true);
     setPaused(false);
     setSyncError("");
@@ -382,19 +396,22 @@ export default function ZvonariPage() {
   const handleSync = () =>
     runBackgroundJob(
       () => zvonariAPI.sync(period.from, period.to),
-      "Синхронизация запущена, это может занять несколько минут..."
+      "Синхронизация запущена, это может занять несколько минут...",
+      "sync"
     );
   const handleRetryFailed = () =>
     runBackgroundJob(
       () => zvonariAPI.retryFailed(period.from, period.to, retryIncludeTerminal),
       retryIncludeTerminal
         ? "Повтор запущен (включая «нет записи»), это может занять несколько минут..."
-        : "Повтор запущен, это может занять несколько минут..."
+        : "Повтор запущен, это может занять несколько минут...",
+      "retry"
     );
   const handleAnalyze = () =>
     runBackgroundJob(
       () => zvonariAPI.analyzeCalls(period.from, period.to),
-      "Анализ запущен — классифицируем готовые транскрипты..."
+      "Анализ запущен — классифицируем готовые транскрипты...",
+      "analyze"
     );
 
   const [gpuDialogOpen, setGpuDialogOpen] = useState(false);
@@ -430,7 +447,8 @@ export default function ZvonariPage() {
       () => zvonariAPI.retranscribeAllGpu(period.from, period.to, gpuOnlyCpu),
       gpuOnlyCpu
         ? "Перетранскрибация запущена — звонки, ещё не снятые на GPU, будут пересняты (GPU, если доступен)..."
-        : "Перетранскрибация запущена — ВСЕ звонки периода будут пересняты заново (GPU, если доступен)..."
+        : "Перетранскрибация запущена — ВСЕ звонки периода будут пересняты заново (GPU, если доступен)...",
+      "gpu"
     );
   };
 
