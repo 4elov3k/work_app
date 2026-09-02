@@ -539,7 +539,12 @@ interface CallFilters {
   search: string;
 }
 
-const EMPTY_FILTERS: CallFilters = { status: "", callType: "", direction: "", search: "" };
+// search живёт в родительском компоненте (не здесь), чтобы попадать в URL —
+// см. onSearchChange в CallDetailList и синхронизацию query-параметров в
+// ZvonariPage (задача 5, zvonari-improvements.md). status/callType/direction
+// в URL не идут, поэтому остаются локальным состоянием этого компонента.
+type LocalCallFilters = Omit<CallFilters, "search">;
+const EMPTY_LOCAL_FILTERS: LocalCallFilters = { status: "", callType: "", direction: "" };
 
 // CallOutcome uses "" to mean "not yet analyzed" (see zvonari.ts), which
 // collides with the roadmap filter's own "no filter selected" sentinel —
@@ -587,6 +592,10 @@ function CallDetailList({
   onAnalyze,
   roadmapFilter,
   onClearRoadmapFilter,
+  search,
+  onSearchChange,
+  page,
+  onPageChange,
 }: {
   calls: Call[];
   retranscribingIds: Set<string>;
@@ -595,10 +604,17 @@ function CallDetailList({
   onAnalyze: (callId: string) => void;
   roadmapFilter: string;
   onClearRoadmapFilter: () => void;
+  // search/page живут в родительском ZvonariPage, а не здесь — попадают в
+  // URL (query-параметры q/page), чтобы ссылка на отфильтрованный список
+  // открывалась у другого человека в том же виде (задача 5).
+  search: string;
+  onSearchChange: (value: string) => void;
+  page: number;
+  onPageChange: (page: number) => void;
 }) {
-  const [filters, setFilters] = useState<CallFilters>(EMPTY_FILTERS);
+  const [localFilters, setLocalFilters] = useState<LocalCallFilters>(EMPTY_LOCAL_FILTERS);
   const [expandedCallId, setExpandedCallId] = useState<string | null>(null);
-  const [page, setPage] = useState(0);
+  const filters: CallFilters = useMemo(() => ({ ...localFilters, search }), [localFilters, search]);
   const filtered = useMemo(() => filterCalls(calls, filters, roadmapFilter), [calls, filters, roadmapFilter]);
   // Some periods return hundreds of calls (each with a full transcript) —
   // rendering them all into one unvirtualized table is genuinely slow, so
@@ -609,18 +625,25 @@ function CallDetailList({
     () => filtered.slice(currentPage * CALLS_PAGE_SIZE, (currentPage + 1) * CALLS_PAGE_SIZE),
     [filtered, currentPage]
   );
-  // Reset to page 1 when the filters or the underlying call list change —
-  // done during render (React's documented pattern for this) rather than
-  // an effect, which would cause an extra commit.
-  const [resetTrackedOn, setResetTrackedOn] = useState({ filters, calls, roadmapFilter });
-  if (
-    resetTrackedOn.filters !== filters ||
-    resetTrackedOn.calls !== calls ||
-    resetTrackedOn.roadmapFilter !== roadmapFilter
-  ) {
-    setResetTrackedOn({ filters, calls, roadmapFilter });
-    setPage(0);
-  }
+  // Reset to page 1 when the filters or the underlying call list change.
+  // page now lives in the parent (see onPageChange) so it can round-trip
+  // through the URL, so this can no longer be the render-phase
+  // local-state-adjustment trick the previous version used (that pattern is
+  // only sound for a component's own state, not a parent's) — an effect
+  // triggers the reset instead; `currentPage`'s Math.min clamp above already
+  // keeps the visible page in range for the one render before it fires.
+  const resetTrackedOn = useRef({ filters, calls, roadmapFilter });
+  useEffect(() => {
+    if (
+      resetTrackedOn.current.filters !== filters ||
+      resetTrackedOn.current.calls !== calls ||
+      resetTrackedOn.current.roadmapFilter !== roadmapFilter
+    ) {
+      resetTrackedOn.current = { filters, calls, roadmapFilter };
+      onPageChange(0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters, calls, roadmapFilter]);
 
   const callTypes = useMemo(() => {
     const set = new Set<string>();
@@ -642,14 +665,14 @@ function CallDetailList({
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Поиск по тексту или номеру"
-            value={filters.search}
-            onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
+            value={search}
+            onChange={(e) => onSearchChange(e.target.value)}
             className="h-8 w-56 bg-card pl-7 text-sm"
           />
         </div>
         <select
-          value={filters.status}
-          onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
+          value={localFilters.status}
+          onChange={(e) => setLocalFilters((f) => ({ ...f, status: e.target.value }))}
           className={selectClass}
         >
           <option value="">Все статусы</option>
@@ -660,8 +683,8 @@ function CallDetailList({
           ))}
         </select>
         <select
-          value={filters.callType}
-          onChange={(e) => setFilters((f) => ({ ...f, callType: e.target.value }))}
+          value={localFilters.callType}
+          onChange={(e) => setLocalFilters((f) => ({ ...f, callType: e.target.value }))}
           className={selectClass}
         >
           <option value="">Все типы звонков</option>
@@ -672,8 +695,8 @@ function CallDetailList({
           ))}
         </select>
         <select
-          value={filters.direction}
-          onChange={(e) => setFilters((f) => ({ ...f, direction: e.target.value }))}
+          value={localFilters.direction}
+          onChange={(e) => setLocalFilters((f) => ({ ...f, direction: e.target.value }))}
           className={selectClass}
         >
           <option value="">Все направления</option>
@@ -683,13 +706,14 @@ function CallDetailList({
             </option>
           ))}
         </select>
-        {(filters.status || filters.callType || filters.direction || filters.search || roadmapFilter) && (
+        {(localFilters.status || localFilters.callType || localFilters.direction || search || roadmapFilter) && (
           <Button
             variant="ghost"
             size="sm"
             className="h-8 text-muted-foreground transition-colors hover:text-foreground"
             onClick={() => {
-              setFilters(EMPTY_FILTERS);
+              setLocalFilters(EMPTY_LOCAL_FILTERS);
+              onSearchChange("");
               onClearRoadmapFilter();
             }}
           >
@@ -851,7 +875,7 @@ function CallDetailList({
                   size="sm"
                   className="h-7 px-2"
                   disabled={currentPage === 0}
-                  onClick={() => setPage(currentPage - 1)}
+                  onClick={() => onPageChange(currentPage - 1)}
                 >
                   Назад
                 </Button>
@@ -860,7 +884,7 @@ function CallDetailList({
                   size="sm"
                   className="h-7 px-2"
                   disabled={currentPage >= pageCount - 1}
-                  onClick={() => setPage(currentPage + 1)}
+                  onClick={() => onPageChange(currentPage + 1)}
                 >
                   Вперёд
                 </Button>
@@ -911,6 +935,7 @@ interface CallerStats {
 }
 
 type SortKey = "name" | "total" | "donePct" | "scriptCompleted" | "step1Broken" | "fraud" | "problem";
+const SORT_KEYS: SortKey[] = ["name", "total", "donePct", "scriptCompleted", "step1Broken", "fraud", "problem"];
 
 const KPI_ACCENTS = {
   neutral: "border-l-border",
@@ -1018,11 +1043,72 @@ export default function ZvonariPage() {
   // changes (see toggleExpand) so a stage picked for one звонарь doesn't
   // leak into the next one's call list.
   const [roadmapFilter, setRoadmapFilter] = useState("");
+  // Живут здесь (не внутри CallDetailList), чтобы попадать в URL как q/page
+  // — задача 5, zvonari-improvements.md: ссылку на отфильтрованный список
+  // звонков конкретного звонаря можно переслать, и она откроется в том же
+  // виде. Сбрасываются при смене звонаря/периода вместе с roadmapFilter.
+  const [callSearch, setCallSearch] = useState("");
+  const [callPage, setCallPage] = useState(0);
   const [retranscribingIds, setRetranscribingIds] = useState<Set<string>>(new Set());
   const [analyzingIds, setAnalyzingIds] = useState<Set<string>>(new Set());
 
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  // Задача 5 (zvonari-improvements.md): период/сортировка/раскрытый звонарь/
+  // фильтр по исходу/поиск/страница переживают перезагрузку и попадают в
+  // ссылку, которую можно переслать. Восстанавливаем из query-параметров
+  // один раз после монтирования (после localStorage выше — URL специфичнее
+  // и должен победить, если он вообще есть); toggleExpand определён ниже в
+  // этом же компоненте, но замыкание разрешается в момент вызова эффекта
+  // (после монтирования), когда он уже присвоен — не в момент объявления.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlFrom = params.get("from");
+    const urlTo = params.get("to");
+    if (urlFrom && urlTo) {
+      setFrom(urlFrom);
+      setTo(urlTo);
+    }
+    const urlSort = params.get("sort");
+    if (urlSort && (SORT_KEYS as string[]).includes(urlSort)) {
+      setSortKey(urlSort as SortKey);
+    }
+    const urlDir = params.get("dir");
+    if (urlDir === "asc" || urlDir === "desc") setSortDir(urlDir);
+    const urlZvonar = params.get("zvonar");
+    // Открываем звонаря так же, как клик по строке (подтягивает дорожку
+    // скрипта) — список звонков всё равно требует отдельного клика
+    // "Показать звонки" даже для человека, открывшего страницу напрямую,
+    // так что ссылка это поведение не меняет.
+    if (urlZvonar) toggleExpand(urlZvonar);
+    const urlOutcome = params.get("outcome");
+    if (urlOutcome) setRoadmapFilter(urlOutcome);
+    const urlQ = params.get("q");
+    if (urlQ) setCallSearch(urlQ);
+    const urlPage = params.get("page");
+    const parsedPage = urlPage ? parseInt(urlPage, 10) : NaN;
+    if (!isNaN(parsedPage) && parsedPage >= 0) setCallPage(parsedPage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Пишем состояние обратно в URL через replaceState (не через Next-роутер,
+  // чтобы не триггерить навигацию/повторный рендер страницы) — история
+  // браузера не засоряется, но перезагрузка или пересланная ссылка
+  // воспроизводят ровно то, что было на экране.
+  useEffect(() => {
+    const params = new URLSearchParams();
+    params.set("from", from);
+    params.set("to", to);
+    params.set("sort", sortKey);
+    params.set("dir", sortDir);
+    if (expandedId) params.set("zvonar", expandedId);
+    if (roadmapFilter) params.set("outcome", roadmapFilter);
+    if (callSearch) params.set("q", callSearch);
+    if (callPage > 0) params.set("page", String(callPage));
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState(null, "", newUrl);
+  }, [from, to, sortKey, sortDir, expandedId, roadmapFilter, callSearch, callPage]);
 
   const period = useMemo(() => ({ from, to }), [from, to]);
 
@@ -1348,6 +1434,8 @@ export default function ZvonariPage() {
     const next = expandedId === callerId ? null : callerId;
     setExpandedId(next);
     setRoadmapFilter("");
+    setCallSearch("");
+    setCallPage(0);
     if (next && !panels[next]?.distribution && !panels[next]?.distributionLoading) {
       updatePanel(next, { distributionLoading: true });
       zvonariAPI
@@ -2126,6 +2214,10 @@ export default function ZvonariPage() {
                                   )}
                                   <CallDetailList
                                     calls={panel.calls}
+                                    search={callSearch}
+                                    onSearchChange={setCallSearch}
+                                    page={callPage}
+                                    onPageChange={setCallPage}
                                     retranscribingIds={retranscribingIds}
                                     onRetranscribe={(callId) => handleRetranscribeCall(caller.id, callId)}
                                     analyzingIds={analyzingIds}
