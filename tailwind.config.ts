@@ -10,7 +10,8 @@ export default {
   theme: {
   	extend: {
   		fontFamily: {
-  			sans: ['"IBM Plex Sans"', "ui-sans-serif", "system-ui", "sans-serif"]
+  			sans: ['"IBM Plex Sans"', "ui-sans-serif", "system-ui", "sans-serif"],
+  			mono: ['"IBM Plex Mono"', "ui-monospace", "monospace"]
   		},
   		colors: {
   			background: 'hsl(var(--background))',
@@ -51,6 +52,7 @@ export default {
   				DEFAULT: 'hsl(var(--warning))',
   				foreground: 'hsl(var(--warning-foreground))'
   			},
+  			na: 'hsl(var(--na))',
   			border: 'hsl(var(--border))',
   			input: 'hsl(var(--input))',
   			ring: 'hsl(var(--ring))',
