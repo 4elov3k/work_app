@@ -90,6 +90,15 @@ func (h *Handlers) ResumeZvonariSync(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": h.zvonari.GetSyncStatus()})
 }
 
+// StopZvonariSync обрабатывает POST /api/zvonari/sync/stop — в отличие от
+// паузы, реально прерывает текущую фоновую задачу: обрывает то, что сейчас
+// в процессе, а не только останавливает перед следующим шагом. Уже
+// сохранённый прогресс (обработанные звонки) не теряется.
+func (h *Handlers) StopZvonariSync(w http.ResponseWriter, r *http.Request) {
+	h.zvonari.Stop()
+	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": h.zvonari.GetSyncStatus()})
+}
+
 // RetryFailedCalls обрабатывает POST /api/zvonari/calls/retry-failed?from=&to=&include_terminal=
 // Массово (пере)запускает транскрибацию+аналитику для всех звонков за период
 // с восстановимым статусом (failed/pending/transcribing) — работает в фоне,

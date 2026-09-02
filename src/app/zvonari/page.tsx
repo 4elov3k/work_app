@@ -20,6 +20,7 @@ import {
   XCircle,
   Cpu,
   MoreHorizontal,
+  Square,
 } from "lucide-react";
 
 import { zvonariAPI, Caller, ApiError, RetranscribePreview, HealthStatus, StageStatus } from "@/lib/api";
@@ -492,6 +493,22 @@ export default function ZvonariPage() {
     }
   };
 
+  // В отличие от паузы — реально прерывает задачу вместо ожидания её конца.
+  // Не ждём отдельного статуса: следующий тик поллинга сам увидит
+  // running=false и подчистит syncing/автоцепочку (см. runPollTick) — как
+  // и при обычном завершении задачи.
+  const [stopping, setStopping] = useState(false);
+  const handleStop = async () => {
+    setStopping(true);
+    try {
+      await zvonariAPI.stopSync();
+    } catch (err) {
+      console.error("Stop failed:", err);
+    } finally {
+      setStopping(false);
+    }
+  };
+
   const callerStats: CallerStats[] = useMemo(() => {
     return callers.map((caller) => {
       const total = callCounts[caller.id] ?? 0;
@@ -621,21 +638,33 @@ export default function ZvonariPage() {
               <PeriodControl from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} />
               <div className="ml-auto flex flex-wrap items-center gap-2">
                 {syncing ? (
-                  <Button
-                    onClick={handlePauseResume}
-                    disabled={pausing}
-                    variant={paused ? "default" : "outline"}
-                    className={paused ? "" : "border-warning text-warning hover:bg-warning/10 hover:text-warning"}
-                  >
-                    {pausing ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : paused ? (
-                      <Play className="mr-2 h-4 w-4" />
-                    ) : (
-                      <Pause className="mr-2 h-4 w-4" />
-                    )}
-                    {paused ? "Продолжить" : "Пауза"}
-                  </Button>
+                  <>
+                    <Button
+                      onClick={handlePauseResume}
+                      disabled={pausing || stopping}
+                      variant={paused ? "default" : "outline"}
+                      className={paused ? "" : "border-warning text-warning hover:bg-warning/10 hover:text-warning"}
+                    >
+                      {pausing ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : paused ? (
+                        <Play className="mr-2 h-4 w-4" />
+                      ) : (
+                        <Pause className="mr-2 h-4 w-4" />
+                      )}
+                      {paused ? "Продолжить" : "Пауза"}
+                    </Button>
+                    <Button
+                      onClick={handleStop}
+                      disabled={stopping}
+                      variant="outline"
+                      title="В отличие от паузы — обрывает текущую задачу совсем, не только ждёт. Уже сделанный прогресс не теряется."
+                      className="border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      {stopping ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Square className="mr-2 h-4 w-4" />}
+                      Остановить
+                    </Button>
+                  </>
                 ) : (
                   <Button onClick={handleProcessPeriod} title="Синхронизация, транскрибация и анализ подряд, без ручных кликов между этапами">
                     <RefreshCw className="mr-2 h-4 w-4" />

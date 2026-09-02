@@ -221,6 +221,14 @@ export const zvonariAPI = {
     return handleResponse<SingleResponse<SyncStatus>>(response);
   },
 
+  // В отличие от паузы — реально прерывает задачу (обрывает то, что сейчас
+  // выполняется), а не просто останавливает перед следующим шагом.
+  // Уже сохранённый прогресс не теряется.
+  stopSync: async (): Promise<SingleResponse<SyncStatus>> => {
+    const response = await fetch(`${API_BASE}/zvonari/sync/stop`, { method: 'POST' });
+    return handleResponse<SingleResponse<SyncStatus>>(response);
+  },
+
   // Число синхронизированных звонков за период по каждому звонарю (для счётчика на карточках)
   getCallCounts: async (from: string, to: string): Promise<SingleResponse<Record<string, number>>> => {
     const params = new URLSearchParams({ from, to });

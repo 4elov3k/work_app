@@ -38,6 +38,12 @@ type Service struct {
 	paused   bool
 	resumeCh chan struct{}
 
+	// cancelFunc cancels the context passed into the currently running
+	// background job, if any — set by startBackgroundJob, cleared once the
+	// job's goroutine returns. Guarded by syncMu alongside syncStatus, since
+	// "is a job running" and "how do I stop it" are the same piece of state.
+	cancelFunc context.CancelFunc
+
 	// stages holds the last known state of each pipeline phase
 	// (sync/transcribe/analyze), guarded by syncMu like syncStatus —
 	// separate from it because a new job overwrites syncStatus wholesale on
@@ -173,9 +179,12 @@ func (s *Service) snapshotStagesLocked() map[string]StageStatus {
 // Returns false if one is already running — a sync and a retry-failed run
 // share this same slot so they never run concurrently against each other
 // either (both hammer OnlinePBX/Hermes and both write to the same rows).
-// The background run uses its own context, detached from the triggering
-// HTTP request, so a client disconnect (browser closed, proxy idle-timeout)
-// can't abort a batch that's minutes into transcribing/analyzing calls.
+// The background run uses a context detached from the triggering HTTP
+// request (so a client disconnect can't abort a batch minutes into
+// transcribing/analyzing calls) but derived from context.Background() via
+// WithCancel, so an explicit Stop() call can still abort it — unlike Pause,
+// which only stops the loop from starting the *next* item, Stop cancels
+// whatever's in flight right now too.
 func (s *Service) startBackgroundJob(job func(ctx context.Context) (*SyncResult, error)) bool {
 	s.syncMu.Lock()
 	if s.syncStatus.Running {
@@ -184,6 +193,8 @@ func (s *Service) startBackgroundJob(job func(ctx context.Context) (*SyncResult,
 	}
 	startedAt := time.Now()
 	s.syncStatus = SyncStatus{Running: true, StartedAt: &startedAt}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cancelFunc = cancel
 	s.syncMu.Unlock()
 
 	s.pauseMu.Lock()
@@ -191,7 +202,7 @@ func (s *Service) startBackgroundJob(job func(ctx context.Context) (*SyncResult,
 	s.pauseMu.Unlock()
 
 	go func() {
-		result, err := job(context.Background())
+		result, err := job(ctx)
 		finishedAt := time.Now()
 
 		s.syncMu.Lock()
@@ -199,14 +210,41 @@ func (s *Service) startBackgroundJob(job func(ctx context.Context) (*SyncResult,
 		s.syncStatus.Running = false
 		s.syncStatus.FinishedAt = &finishedAt
 		s.syncStatus.Result = result
+		s.cancelFunc = nil
 		if err != nil {
-			log.Printf("zvonari: background job failed: %v", err)
-			s.syncStatus.Error = err.Error()
+			if ctx.Err() != nil {
+				log.Printf("zvonari: background job stopped by user")
+				s.syncStatus.Error = "остановлено пользователем"
+			} else {
+				log.Printf("zvonari: background job failed: %v", err)
+				s.syncStatus.Error = err.Error()
+			}
 		} else {
 			s.syncStatus.Error = ""
 		}
 	}()
 
+	return true
+}
+
+// Stop cancels the currently running background job, if any — in-flight
+// PBX/transcribe/analytics HTTP calls abort (their context is this same
+// job context, see SyncCalls/RetryFailedCalls/RetranscribeAll/AnalyzeCalls),
+// and the processing loops (processConcurrently, AnalyzeCalls' batch loop)
+// stop starting new work once they notice ctx is done. Whatever a call/batch
+// already finished before Stop was called stays saved — same durability
+// guarantee Pause already relies on. Returns false if nothing was running.
+func (s *Service) Stop() bool {
+	s.syncMu.Lock()
+	cancel := s.cancelFunc
+	s.syncMu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel()
+	// A paused job's loop is blocked on waitIfPaused's select, which also
+	// listens on ctx.Done() — cancelling is enough to unblock it too, no
+	// need to separately clear the pause flag.
 	return true
 }
 
@@ -570,6 +608,13 @@ func (s *Service) processConcurrently(ctx context.Context, toProcess []pending, 
 	sem := make(chan struct{}, maxConcurrentProcessing)
 	for _, p := range toProcess {
 		s.waitIfPaused(ctx)
+		// Stop() cancels ctx — without this check the loop would keep
+		// spawning goroutines that immediately fail (ctx already done),
+		// misrecording each remaining call as a real download/transcribe
+		// error instead of just "never attempted".
+		if ctx.Err() != nil {
+			break
+		}
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(call *models.Call, uuid string) {
@@ -583,7 +628,11 @@ func (s *Service) processConcurrently(ctx context.Context, toProcess []pending, 
 		}(p.call, p.uuid)
 	}
 	wg.Wait()
-	s.markStageDone("transcribe", len(toProcess), len(toProcess))
+	if ctx.Err() != nil {
+		s.markStageFailed("transcribe")
+	} else {
+		s.markStageDone("transcribe", len(toProcess), len(toProcess))
+	}
 }
 
 // transcribeOnly downloads and transcribes one call via local Whisper —
@@ -683,6 +732,11 @@ func (s *Service) AnalyzeCalls(ctx context.Context, from, to time.Time) (*SyncRe
 
 	for start := 0; start < len(calls); start += analyzeBatchSize {
 		s.waitIfPaused(ctx)
+		// Stop() cancels ctx — don't start another batch once cancelled;
+		// the in-flight one (if any) already aborted via batchCtx below.
+		if ctx.Err() != nil {
+			break
+		}
 		end := start + analyzeBatchSize
 		if end > len(calls) {
 			end = len(calls)
@@ -742,7 +796,11 @@ func (s *Service) AnalyzeCalls(ctx context.Context, from, to time.Time) (*SyncRe
 		}
 	}
 
-	s.markStageDone("analyze", len(calls), len(calls))
+	if ctx.Err() != nil {
+		s.markStageFailed("analyze")
+	} else {
+		s.markStageDone("analyze", len(calls), len(calls))
+	}
 	return result, nil
 }
 
