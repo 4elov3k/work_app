@@ -117,13 +117,17 @@ func (s *Service) StartSync(from, to time.Time) bool {
 }
 
 // StartRetryFailed re-attempts transcribe+analyze, in the background, for
-// every existing call in [from, to) stuck on "failed"/"no_recording"/
-// "pending"/"transcribing" — the bulk counterpart to RetranscribeCall, for
-// clearing a backlog (e.g. after a bug fix, or a batch of backend restarts
-// mid-sync) without clicking through each call one at a time.
-func (s *Service) StartRetryFailed(from, to time.Time) bool {
+// every existing call in [from, to) stuck on a recoverable status — the bulk
+// counterpart to RetranscribeCall, for clearing a backlog (e.g. after a bug
+// fix, or a batch of backend restarts mid-sync) without clicking through
+// each call one at a time. includeTerminal additionally retries
+// "no_recording" calls — off by default, since a missing recording almost
+// never becomes available by retrying (OnlinePBX already confirmed there's
+// nothing to fetch) and previously made "Повторить неудачные" silently
+// re-hammer calls that could never succeed (задача 6, zvonari-improvements.md).
+func (s *Service) StartRetryFailed(from, to time.Time, includeTerminal bool) bool {
 	return s.startBackgroundJob(func(ctx context.Context) (*SyncResult, error) {
-		return s.RetryFailedCalls(ctx, from, to)
+		return s.RetryFailedCalls(ctx, from, to, includeTerminal)
 	})
 }
 
@@ -334,11 +338,22 @@ func (s *Service) SyncCalls(ctx context.Context, from, to time.Time) (*SyncResul
 	return result, nil
 }
 
+// recoverableStatuses are transcript_status values where retrying can
+// actually help — unlike "no_recording", where OnlinePBX already confirmed
+// there's nothing to fetch, so a retry can only ever repeat the same result.
+var recoverableStatuses = []string{"failed", "pending", "transcribing"}
+
 // RetryFailedCalls re-runs transcribe+analyze for every existing call in
-// [from, to) whose transcript_status isn't "done" — the bulk counterpart to
-// a single RetranscribeCall, for clearing a backlog in one go.
-func (s *Service) RetryFailedCalls(ctx context.Context, from, to time.Time) (*SyncResult, error) {
-	calls, err := s.db.ListCallsByStatusPeriod(ctx, []string{"failed", "no_recording", "pending", "transcribing"}, from, to)
+// [from, to) stuck on a recoverable status — the bulk counterpart to a
+// single RetranscribeCall, for clearing a backlog in one go. includeTerminal
+// additionally sweeps up "no_recording" calls, as a separate explicit choice
+// rather than the default (задача 6, zvonari-improvements.md).
+func (s *Service) RetryFailedCalls(ctx context.Context, from, to time.Time, includeTerminal bool) (*SyncResult, error) {
+	statuses := recoverableStatuses
+	if includeTerminal {
+		statuses = allTranscriptStatuses
+	}
+	calls, err := s.db.ListCallsByStatusPeriod(ctx, statuses, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("listing calls to retry: %w", err)
 	}
@@ -355,8 +370,8 @@ func (s *Service) RetryFailedCalls(ctx context.Context, from, to time.Time) (*Sy
 }
 
 // allTranscriptStatuses covers every value transcript_status can hold —
-// used by RetryFailedCalls's "терминальные" variant to force every call in a
-// period back through transcribeOnly regardless of its current status.
+// used by RetryFailedCalls's includeTerminal variant to also sweep up
+// "no_recording" calls on top of the recoverable ones.
 var allTranscriptStatuses = []string{"done", "failed", "no_recording", "pending", "transcribing"}
 
 // RetranscribeAll force-retranscribes calls in [from, to] — including ones
@@ -485,10 +500,10 @@ func (s *Service) transcribeOnly(ctx context.Context, call *models.Call, pbxUUID
 	if err != nil {
 		if errors.Is(err, pbx.ErrNoRecording) {
 			log.Printf("zvonari: no recording for call %s", pbxUUID)
-			_ = s.db.SetCallTranscriptStatus(ctx, call.ID, "no_recording")
+			_ = s.db.SetCallTranscriptError(ctx, call.ID, "no_recording", "no_recording", "")
 		} else {
 			log.Printf("zvonari: failed to download recording for call %s: %v", pbxUUID, err)
-			_ = s.db.SetCallTranscriptStatus(ctx, call.ID, "failed")
+			_ = s.db.SetCallTranscriptError(ctx, call.ID, "failed", "download_failed", err.Error())
 			mu.Lock()
 			result.TranscribeErrors++
 			mu.Unlock()
@@ -500,7 +515,7 @@ func (s *Service) transcribeOnly(ctx context.Context, call *models.Call, pbxUUID
 	tr, err := s.transcribe.Transcribe(ctx, pbxUUID+".mp3", audio)
 	if err != nil {
 		log.Printf("zvonari: transcribe failed for call %s: %v", pbxUUID, err)
-		_ = s.db.SetCallTranscriptStatus(ctx, call.ID, "failed")
+		_ = s.db.SetCallTranscriptError(ctx, call.ID, "failed", "transcribe_failed", err.Error())
 		mu.Lock()
 		result.TranscribeErrors++
 		mu.Unlock()
@@ -760,6 +775,12 @@ func (s *Service) ListReports(ctx context.Context, callerID string, limit int) (
 // per card without a request per caller.
 func (s *Service) CallCounts(ctx context.Context, from, to time.Time) (map[string]int, error) {
 	return s.db.CountCallsByCallerPeriod(ctx, from, to)
+}
+
+// ErrorBreakdown returns how many calls in [from, to) failed for each reason
+// (error_kind), across every caller — задача 6, zvonari-improvements.md.
+func (s *Service) ErrorBreakdown(ctx context.Context, from, to time.Time) (map[string]int, error) {
+	return s.db.GetErrorBreakdown(ctx, from, to)
 }
 
 // CallStatusCounts returns, per caller, a breakdown of calls by

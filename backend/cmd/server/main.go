@@ -174,6 +174,7 @@ func main() {
 			r.Get("/zvonari/calls/retranscribe-gpu/preview", h.GetRetranscribePreview)
 			r.Post("/zvonari/calls/retranscribe-gpu", h.RetranscribeAllCalls)
 			r.Post("/zvonari/calls/analyze", h.AnalyzeCalls)
+			r.Get("/zvonari/calls/error-breakdown", h.GetErrorBreakdown)
 			r.Get("/zvonari/calls/status-counts", h.GetCallStatusCounts)
 			r.Get("/zvonari/calls/count", h.GetCallCounts)
 			r.Get("/zvonari/calls/outcomes", h.GetOutcomeCounts)

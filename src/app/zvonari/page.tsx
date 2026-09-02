@@ -165,6 +165,16 @@ const DIRECTION_LABELS: Record<string, string> = {
   local: "внутренний",
 };
 
+// Причины ошибки транскрибации (error_kind, задача 6 zvonari-improvements.md)
+// — терминальные не лечатся повтором, поэтому помечены отдельно для
+// подсказки рядом со сводкой.
+const ERROR_KIND_LABELS: Record<string, string> = {
+  no_recording: "нет записи",
+  download_failed: "не скачалась запись",
+  transcribe_failed: "ошибка транскрибации",
+};
+const TERMINAL_ERROR_KINDS = new Set(["no_recording"]);
+
 const STATUS_LABELS: Record<string, string> = {
   done: "готово",
   failed: "ошибка",
@@ -560,7 +570,7 @@ const UNANALYZED_FRAUD_FILTER = "__fraud__";
 // roadmapFilter is a single value covering both outcome stages and the two
 // side callouts (unanalyzed, fraud) — see ScriptRoadmap, which replaced the
 // separate outcome dropdown and "только фрод" toggle this list used to have.
-function filterCalls(calls: Call[], filters: CallFilters, roadmapFilter: string): Call[] {
+function filterCalls(calls: Call[], filters: CallFilters, roadmapFilter: string, errorKindFilter: string): Call[] {
   return calls.filter((call) => {
     if (filters.status && call.transcript_status !== filters.status) return false;
     if (filters.callType && (call.analytics_json?.call_type || "") !== filters.callType) return false;
@@ -571,6 +581,7 @@ function filterCalls(calls: Call[], filters: CallFilters, roadmapFilter: string)
     } else if (roadmapFilter && (call.analytics_json?.outcome || "") !== roadmapFilter) {
       return false;
     }
+    if (errorKindFilter && call.error_kind !== errorKindFilter) return false;
     if (filters.direction && call.direction !== filters.direction) return false;
     if (filters.search) {
       const q = filters.search.toLowerCase();
@@ -592,6 +603,8 @@ function CallDetailList({
   onAnalyze,
   roadmapFilter,
   onClearRoadmapFilter,
+  errorKindFilter,
+  onClearErrorKindFilter,
   search,
   onSearchChange,
   page,
@@ -604,6 +617,10 @@ function CallDetailList({
   onAnalyze: (callId: string) => void;
   roadmapFilter: string;
   onClearRoadmapFilter: () => void;
+  // Причина ошибки (error_kind) — задача 6, выбирается из сводки под
+  // блоком синхронизации, живёт в родителе так же, как roadmapFilter.
+  errorKindFilter: string;
+  onClearErrorKindFilter: () => void;
   // search/page живут в родительском ZvonariPage, а не здесь — попадают в
   // URL (query-параметры q/page), чтобы ссылка на отфильтрованный список
   // открывалась у другого человека в том же виде (задача 5).
@@ -615,7 +632,10 @@ function CallDetailList({
   const [localFilters, setLocalFilters] = useState<LocalCallFilters>(EMPTY_LOCAL_FILTERS);
   const [expandedCallId, setExpandedCallId] = useState<string | null>(null);
   const filters: CallFilters = useMemo(() => ({ ...localFilters, search }), [localFilters, search]);
-  const filtered = useMemo(() => filterCalls(calls, filters, roadmapFilter), [calls, filters, roadmapFilter]);
+  const filtered = useMemo(
+    () => filterCalls(calls, filters, roadmapFilter, errorKindFilter),
+    [calls, filters, roadmapFilter, errorKindFilter]
+  );
   // Some periods return hundreds of calls (each with a full transcript) —
   // rendering them all into one unvirtualized table is genuinely slow, so
   // paginate client-side rather than pulling in a virtualization library.
@@ -632,18 +652,19 @@ function CallDetailList({
   // only sound for a component's own state, not a parent's) — an effect
   // triggers the reset instead; `currentPage`'s Math.min clamp above already
   // keeps the visible page in range for the one render before it fires.
-  const resetTrackedOn = useRef({ filters, calls, roadmapFilter });
+  const resetTrackedOn = useRef({ filters, calls, roadmapFilter, errorKindFilter });
   useEffect(() => {
     if (
       resetTrackedOn.current.filters !== filters ||
       resetTrackedOn.current.calls !== calls ||
-      resetTrackedOn.current.roadmapFilter !== roadmapFilter
+      resetTrackedOn.current.roadmapFilter !== roadmapFilter ||
+      resetTrackedOn.current.errorKindFilter !== errorKindFilter
     ) {
-      resetTrackedOn.current = { filters, calls, roadmapFilter };
+      resetTrackedOn.current = { filters, calls, roadmapFilter, errorKindFilter };
       onPageChange(0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters, calls, roadmapFilter]);
+  }, [filters, calls, roadmapFilter, errorKindFilter]);
 
   const callTypes = useMemo(() => {
     const set = new Set<string>();
@@ -706,7 +727,15 @@ function CallDetailList({
             </option>
           ))}
         </select>
-        {(localFilters.status || localFilters.callType || localFilters.direction || search || roadmapFilter) && (
+        {errorKindFilter && (
+          <Badge variant="outline" className="gap-1 border-destructive/40 bg-destructive/10 text-destructive">
+            Причина: {ERROR_KIND_LABELS[errorKindFilter] || errorKindFilter}
+            <button type="button" onClick={onClearErrorKindFilter} aria-label="Сбросить фильтр по причине" className="ml-0.5">
+              ×
+            </button>
+          </Badge>
+        )}
+        {(localFilters.status || localFilters.callType || localFilters.direction || search || roadmapFilter || errorKindFilter) && (
           <Button
             variant="ghost"
             size="sm"
@@ -715,6 +744,7 @@ function CallDetailList({
               setLocalFilters(EMPTY_LOCAL_FILTERS);
               onSearchChange("");
               onClearRoadmapFilter();
+              onClearErrorKindFilter();
             }}
           >
             Сбросить
@@ -1093,6 +1123,12 @@ export default function ZvonariPage() {
   // виде. Сбрасываются при смене звонаря/периода вместе с roadmapFilter.
   const [callSearch, setCallSearch] = useState("");
   const [callPage, setCallPage] = useState(0);
+  // Причина ошибки, выбранная в сводке под блоком синхронизации (задача 6) —
+  // тот же паттерн единственного значения на всю страницу, что у
+  // roadmapFilter, потому что раскрыт всегда только один звонарь.
+  const [errorKindFilter, setErrorKindFilter] = useState("");
+  const [errorBreakdown, setErrorBreakdown] = useState<Record<string, number>>({});
+  const [retryIncludeTerminal, setRetryIncludeTerminal] = useState(false);
   const [retranscribingIds, setRetranscribingIds] = useState<Set<string>>(new Set());
   const [analyzingIds, setAnalyzingIds] = useState<Set<string>>(new Set());
 
@@ -1228,6 +1264,10 @@ export default function ZvonariPage() {
         console.error("Failed to load fraud counts:", err);
         setAggregatesError("Не удалось загрузить статистику по звонкам — показанные цифры могут быть неполными.");
       });
+    zvonariAPI
+      .getErrorBreakdown(periodFrom, periodTo)
+      .then((response) => setErrorBreakdown(response.data || {}))
+      .catch((err) => console.error("Failed to load error breakdown:", err));
   };
 
   // Same 4 requests as loadAggregates, for the comparison period — kept
@@ -1402,8 +1442,10 @@ export default function ZvonariPage() {
     );
   const handleRetryFailed = () =>
     runBackgroundJob(
-      () => zvonariAPI.retryFailed(period.from, period.to),
-      "Повтор запущен, это может занять несколько минут..."
+      () => zvonariAPI.retryFailed(period.from, period.to, retryIncludeTerminal),
+      retryIncludeTerminal
+        ? "Повтор запущен (включая «нет записи»), это может занять несколько минут..."
+        : "Повтор запущен, это может занять несколько минут..."
     );
   // "Перетранскрибировать на GPU" — самая дорогая операция в системе (может
   // пересчитать тысячи звонков за один клик), поэтому вместо прямого запуска
@@ -1478,6 +1520,7 @@ export default function ZvonariPage() {
     const next = expandedId === callerId ? null : callerId;
     setExpandedId(next);
     setRoadmapFilter("");
+    setErrorKindFilter("");
     setCallSearch("");
     setCallPage(0);
     if (next && !panels[next]?.distribution && !panels[next]?.distributionLoading) {
@@ -1813,6 +1856,15 @@ export default function ZvonariPage() {
                   <RefreshCw className="mr-2 h-4 w-4" />
                   Повторить неудачные
                 </Button>
+                <label className="flex items-center gap-1.5 self-center text-xs text-muted-foreground" title="Без записи повтор не помогает — OnlinePBX уже подтвердил, что записи нет">
+                  <input
+                    type="checkbox"
+                    checked={retryIncludeTerminal}
+                    onChange={(e) => setRetryIncludeTerminal(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-input"
+                  />
+                  включая «нет записи»
+                </label>
                 <Button
                   variant="outline"
                   onClick={openGpuDialog}
@@ -1857,6 +1909,28 @@ export default function ZvonariPage() {
               <p className="mt-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{syncError}</p>
             )}
             {syncMessage && !syncing && <p className="mt-3 text-sm text-muted-foreground">{syncMessage}</p>}
+            {Object.keys(errorBreakdown).length > 0 && (
+              <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
+                <span className="text-xs text-muted-foreground">Ошибки по причинам:</span>
+                {Object.entries(errorBreakdown)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([kind, count]) => (
+                    <button
+                      key={kind}
+                      type="button"
+                      onClick={() => setErrorKindFilter((current) => (current === kind ? "" : kind))}
+                      title={TERMINAL_ERROR_KINDS.has(kind) ? "Повтором не лечится" : "Клик — отфильтровать список звонков"}
+                      className={`rounded-md border px-2 py-1 text-xs transition-colors ${
+                        errorKindFilter === kind
+                          ? "border-destructive bg-destructive/15 text-destructive"
+                          : "border-border bg-destructive/5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      }`}
+                    >
+                      {ERROR_KIND_LABELS[kind] || kind} — {count}
+                    </button>
+                  ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -2273,6 +2347,8 @@ export default function ZvonariPage() {
                                     onAnalyze={(callId) => handleAnalyzeCall(caller.id, callId)}
                                     roadmapFilter={roadmapFilter}
                                     onClearRoadmapFilter={() => setRoadmapFilter("")}
+                                    errorKindFilter={errorKindFilter}
+                                    onClearErrorKindFilter={() => setErrorKindFilter("")}
                                   />
                                 </div>
                               )}

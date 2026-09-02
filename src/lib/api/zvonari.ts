@@ -114,6 +114,11 @@ export interface Call {
   // пусто пока не транскрибирован.
   engine?: string;
   transcribed_at?: string;
+  // error_kind — причина последней ошибки транскрибации
+  // (no_recording/download_failed/transcribe_failed), пусто если готов или
+  // ещё не обрабатывался.
+  error_kind?: string;
+  last_error?: string;
   created_at: string;
   updated_at: string;
 }
@@ -215,13 +220,23 @@ export const zvonariAPI = {
     return handleResponse<SingleResponse<Record<string, Record<string, number>>>>(response);
   },
 
-  // Массово повторить транскрибацию для всех звонков за период со статусом
-  // failed/no_recording/pending/transcribing. Тоже фоновая задача — статус
-  // через getSyncStatus.
-  retryFailed: async (from: string, to: string): Promise<SingleResponse<{ status: string }>> => {
-    const params = new URLSearchParams({ from, to });
+  // Массово повторить транскрибацию для всех звонков за период с
+  // восстановимым статусом (failed/pending/transcribing) — includeTerminal
+  // дополнительно берёт no_recording, что обычно бессмысленно (запись
+  // действительно отсутствует), поэтому отдельный явный выбор, а не
+  // умолчание. Тоже фоновая задача — статус через getSyncStatus.
+  retryFailed: async (from: string, to: string, includeTerminal: boolean): Promise<SingleResponse<{ status: string }>> => {
+    const params = new URLSearchParams({ from, to, include_terminal: String(includeTerminal) });
     const response = await fetch(`${API_BASE}/zvonari/calls/retry-failed?${params.toString()}`, { method: 'POST' });
     return handleResponse<SingleResponse<{ status: string }>>(response);
+  },
+
+  // Разбивка неудачных звонков по причине (error_kind) за период, по всем
+  // звонарям — сводка под блоком синхронизации.
+  getErrorBreakdown: async (from: string, to: string): Promise<SingleResponse<Record<string, number>>> => {
+    const params = new URLSearchParams({ from, to });
+    const response = await fetch(`${API_BASE}/zvonari/calls/error-breakdown?${params.toString()}`);
+    return handleResponse<SingleResponse<Record<string, number>>>(response);
   },
 
   // Оценка перед запуском перетранскрибации: сколько звонков реально

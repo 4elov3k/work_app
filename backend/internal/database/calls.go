@@ -47,7 +47,7 @@ func (db *DB) GetCallByID(ctx context.Context, id string) (*models.Call, error) 
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
 		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json,
-		       COALESCE(engine, ''), transcribed_at, created_at, updated_at
+		       COALESCE(engine, ''), transcribed_at, COALESCE(error_kind, ''), COALESCE(last_error, ''), created_at, updated_at
 		FROM calls
 		WHERE id = $1
 	`
@@ -57,7 +57,7 @@ func (db *DB) GetCallByID(ctx context.Context, id string) (*models.Call, error) 
 	err := db.QueryRowContext(ctx, query, id).Scan(
 		&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
 		&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
-		&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.CreatedAt, &c.UpdatedAt,
+		&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.ErrorKind, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("call not found")
@@ -87,19 +87,70 @@ func (db *DB) SetCallTranscriptStatus(ctx context.Context, id, status string) er
 	return nil
 }
 
+// SetCallTranscriptError records a failed transcription attempt with why —
+// error_kind is the closed set used for grouping in GetErrorBreakdown
+// ("no_recording"/"download_failed"/"transcribe_failed"), lastError is the
+// raw error text for the call's own detail view. Separate from
+// SetCallTranscriptStatus because a bare status transition (e.g. "pending"
+// -> "transcribing") isn't an error and shouldn't touch these fields.
+func (db *DB) SetCallTranscriptError(ctx context.Context, id, status, errorKind, lastError string) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE calls SET transcript_status = $2, error_kind = $3, last_error = $4, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+		id, status, errorKind, lastError,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to record transcript error: %w", err)
+	}
+	return nil
+}
+
 // SetCallTranscript stores the Whisper transcript and marks the call done,
 // recording which engine (cpu/gpu) actually produced it and when — see
 // transcribe.Client.Transcribe, which reports back whichever of its two
-// configured backends answered.
+// configured backends answered. Clears any previous error_kind/last_error:
+// a successful (re)transcription supersedes whatever went wrong last time.
 func (db *DB) SetCallTranscript(ctx context.Context, id, text, engine string) error {
 	_, err := db.ExecContext(ctx,
-		`UPDATE calls SET transcript_text = $2, transcript_status = 'done', engine = $3, transcribed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+		`UPDATE calls SET transcript_text = $2, transcript_status = 'done', engine = $3, transcribed_at = CURRENT_TIMESTAMP,
+		       error_kind = NULL, last_error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
 		id, text, engine,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update transcript: %w", err)
 	}
 	return nil
+}
+
+// GetErrorBreakdown counts calls in [from, to) by error_kind, across every
+// caller — the "сводка ошибок по причинам" summary under the sync block
+// (задача 6, zvonari-improvements.md), so a red status line becomes actual
+// reasons instead of one undifferentiated "ошибка".
+func (db *DB) GetErrorBreakdown(ctx context.Context, from, to time.Time) (map[string]int, error) {
+	query := `
+		SELECT error_kind, count(*)
+		FROM calls
+		WHERE error_kind IS NOT NULL AND started_at >= $1 AND started_at < $2
+		GROUP BY error_kind
+	`
+	rows, err := db.QueryContext(ctx, query, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count errors by kind: %w", err)
+	}
+	defer rows.Close()
+
+	counts := map[string]int{}
+	for rows.Next() {
+		var kind string
+		var count int
+		if err := rows.Scan(&kind, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan error kind count: %w", err)
+		}
+		counts[kind] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating error kind counts: %w", err)
+	}
+	return counts, nil
 }
 
 // SetCallAnalytics stores Hermes' per-call ChatGPT classification.
@@ -270,7 +321,7 @@ func (db *DB) ListCallsByStatusPeriod(ctx context.Context, statuses []string, fr
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
 		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json,
-		       COALESCE(engine, ''), transcribed_at, created_at, updated_at
+		       COALESCE(engine, ''), transcribed_at, COALESCE(error_kind, ''), COALESCE(last_error, ''), created_at, updated_at
 		FROM calls
 		WHERE transcript_status = ANY($1) AND started_at >= $2 AND started_at < $3
 		ORDER BY started_at
@@ -289,7 +340,7 @@ func (db *DB) ListCallsByStatusPeriod(ctx context.Context, statuses []string, fr
 		if err := rows.Scan(
 			&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
 			&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
-			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.CreatedAt, &c.UpdatedAt,
+			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.ErrorKind, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan call: %w", err)
 		}
@@ -320,7 +371,7 @@ func (db *DB) ListCallsNeedingAnalysis(ctx context.Context, from, to time.Time) 
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
 		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json,
-		       COALESCE(engine, ''), transcribed_at, created_at, updated_at
+		       COALESCE(engine, ''), transcribed_at, COALESCE(error_kind, ''), COALESCE(last_error, ''), created_at, updated_at
 		FROM calls
 		WHERE transcript_status = 'done'
 		  AND (analytics_json IS NULL OR NOT (analytics_json ? 'category' OR analytics_json ? 'call_type'))
@@ -341,7 +392,7 @@ func (db *DB) ListCallsNeedingAnalysis(ctx context.Context, from, to time.Time) 
 		if err := rows.Scan(
 			&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
 			&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
-			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.CreatedAt, &c.UpdatedAt,
+			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.ErrorKind, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan call: %w", err)
 		}
@@ -368,7 +419,7 @@ func (db *DB) ListCallsForRetranscribe(ctx context.Context, from, to time.Time, 
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
 		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json,
-		       COALESCE(engine, ''), transcribed_at, created_at, updated_at
+		       COALESCE(engine, ''), transcribed_at, COALESCE(error_kind, ''), COALESCE(last_error, ''), created_at, updated_at
 		FROM calls
 		WHERE started_at >= $1 AND started_at < $2
 	`
@@ -391,7 +442,7 @@ func (db *DB) ListCallsForRetranscribe(ctx context.Context, from, to time.Time, 
 		if err := rows.Scan(
 			&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
 			&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
-			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.CreatedAt, &c.UpdatedAt,
+			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.ErrorKind, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan call: %w", err)
 		}
@@ -435,7 +486,7 @@ func (db *DB) ListCallsByCallerPeriod(ctx context.Context, callerID string, from
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
 		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json,
-		       COALESCE(engine, ''), transcribed_at, created_at, updated_at
+		       COALESCE(engine, ''), transcribed_at, COALESCE(error_kind, ''), COALESCE(last_error, ''), created_at, updated_at
 		FROM calls
 		WHERE caller_id = $1 AND started_at >= $2 AND started_at < $3
 		ORDER BY started_at
@@ -454,7 +505,7 @@ func (db *DB) ListCallsByCallerPeriod(ctx context.Context, callerID string, from
 		if err := rows.Scan(
 			&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
 			&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
-			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.CreatedAt, &c.UpdatedAt,
+			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.ErrorKind, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan call: %w", err)
 		}

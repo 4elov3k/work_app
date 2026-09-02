@@ -90,11 +90,13 @@ func (h *Handlers) ResumeZvonariSync(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": h.zvonari.GetSyncStatus()})
 }
 
-// RetryFailedCalls обрабатывает POST /api/zvonari/calls/retry-failed?from=&to=
+// RetryFailedCalls обрабатывает POST /api/zvonari/calls/retry-failed?from=&to=&include_terminal=
 // Массово (пере)запускает транскрибацию+аналитику для всех звонков за период
-// со статусом failed/no_recording/pending/transcribing — работает в фоне,
+// с восстановимым статусом (failed/pending/transcribing) — работает в фоне,
 // как и /sync, статус — тот же GET /api/zvonari/sync/status (это один и тот
 // же "слот" фоновой задачи, синк и повтор не бегут одновременно).
+// include_terminal=true дополнительно берёт no_recording — отдельным явным
+// выбором, а не по умолчанию, так как повтор его не лечит (задача 6).
 func (h *Handlers) RetryFailedCalls(w http.ResponseWriter, r *http.Request) {
 	from, to, err := parseRangeParams(r)
 	if err != nil {
@@ -102,7 +104,8 @@ func (h *Handlers) RetryFailedCalls(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	started := h.zvonari.StartRetryFailed(from, to)
+	includeTerminal := r.URL.Query().Get("include_terminal") == "true"
+	started := h.zvonari.StartRetryFailed(from, to, includeTerminal)
 	if !started {
 		respondWithJSON(w, http.StatusConflict, map[string]interface{}{
 			"data": map[string]string{"status": "already_running"},
@@ -202,6 +205,26 @@ func (h *Handlers) AnalyzeCalls(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) GetZvonariHealth(w http.ResponseWriter, r *http.Request) {
 	status := h.zvonari.Health(r.Context())
 	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": status})
+}
+
+// GetErrorBreakdown обрабатывает GET /api/zvonari/calls/error-breakdown?from=&to=
+// Разбивка неудачных звонков по причине (error_kind) за период, по всем
+// звонарям — сводка под блоком синхронизации вместо одной красной строки
+// "ошибка" (задача 6, zvonari-improvements.md).
+func (h *Handlers) GetErrorBreakdown(w http.ResponseWriter, r *http.Request) {
+	from, to, err := parseRangeParams(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	counts, err := h.zvonari.ErrorBreakdown(r.Context(), from, to)
+	if err != nil {
+		log.Printf("GetErrorBreakdown failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to get error breakdown")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": counts})
 }
 
 // GetCallStatusCounts обрабатывает GET /api/zvonari/calls/status-counts?from=&to=

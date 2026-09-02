@@ -23,8 +23,14 @@ type Call struct {
 	// ("cpu" / "gpu"), пусто пока звонок ещё не транскрибирован.
 	Engine        string     `json:"engine,omitempty"`
 	TranscribedAt *time.Time `json:"transcribed_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	// ErrorKind/LastError — причина последней ошибки транскрибации
+	// (no_recording/download_failed/transcribe_failed), пусто если звонок
+	// готов или ещё не обрабатывался. Успешная (пере)транскрибация чистит
+	// оба поля — см. SetCallTranscript.
+	ErrorKind string    `json:"error_kind,omitempty"`
+	LastError string    `json:"last_error,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // CallListResponse представляет ответ со списком звонков
