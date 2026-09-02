@@ -301,6 +301,12 @@ export default function ZvonariPage() {
         clearPoll();
         setSyncing(false);
         setPaused(false);
+        // Цепочка "Обработать период": синк успешно завершился — сразу
+        // запускаем анализ, вместо того чтобы ждать ручного клика. Обрыв
+        // цепочки при ошибке синка/транскрибации — анализировать нечего,
+        // если синк не смог даже дойти до конца.
+        const shouldChainAnalyze = autoChainAnalyzeRef.current && lastActionRef.current === "sync" && !status.error;
+        autoChainAnalyzeRef.current = false;
         if (status.error) {
           setSyncError(status.error);
         } else if (status.result) {
@@ -314,6 +320,9 @@ export default function ZvonariPage() {
         }
         loadCallers();
         refreshLiveData();
+        if (shouldChainAnalyze) {
+          handleAnalyze();
+        }
         return;
       }
       scheduleNextPoll(3000);
@@ -367,6 +376,11 @@ export default function ZvonariPage() {
     analyze: "Проанализировано",
   };
   const lastActionRef = useRef<BackgroundAction>("sync");
+  // "Обработать период" — синк (сам включает транскрибацию) сразу вслед за
+  // собой запускает анализ, без ручного клика на втором этапе. Ref, а не
+  // state: должен быть виден внутри runPollTick сразу после того, как синк
+  // завершится, без риска забежать вперёд стейта одного и того же тика.
+  const autoChainAnalyzeRef = useRef(false);
 
   const runBackgroundJob = async (
     starter: () => Promise<{ data: { status: string } }>,
@@ -399,6 +413,13 @@ export default function ZvonariPage() {
       "Синхронизация запущена, это может занять несколько минут...",
       "sync"
     );
+  // Основная кнопка: синк (+транскрибация) сразу вслед за собой запускает
+  // анализ по завершении — см. runPollTick, ветка !status.running. Не
+  // отдельная задача на бэкенде, а фронтовая цепочка двух существующих.
+  const handleProcessPeriod = () => {
+    autoChainAnalyzeRef.current = true;
+    handleSync();
+  };
   const handleRetryFailed = () =>
     runBackgroundJob(
       () => zvonariAPI.retryFailed(period.from, period.to, retryIncludeTerminal),
@@ -616,12 +637,12 @@ export default function ZvonariPage() {
                     {paused ? "Продолжить" : "Пауза"}
                   </Button>
                 ) : (
-                  <Button onClick={handleSync}>
+                  <Button onClick={handleProcessPeriod} title="Синхронизация, транскрибация и анализ подряд, без ручных кликов между этапами">
                     <RefreshCw className="mr-2 h-4 w-4" />
-                    Синхронизировать
+                    Обработать период
                   </Button>
                 )}
-                <Button variant="secondary" onClick={handleAnalyze} disabled={syncing}>
+                <Button variant="secondary" onClick={handleAnalyze} disabled={syncing} title="Только анализ — например, переоценить уже готовые транскрипты после правки регламента">
                   <Sparkles className="mr-2 h-4 w-4" />
                   Проанализировать
                 </Button>
@@ -842,7 +863,7 @@ export default function ZvonariPage() {
           </div>
         ) : callers.length === 0 ? (
           <p className="text-muted-foreground">
-            Звонарей пока нет — нажмите «Синхронизировать», чтобы подтянуть список из OnlinePBX.
+            Звонарей пока нет — нажмите «Обработать период», чтобы подтянуть список из OnlinePBX.
           </p>
         ) : (
           <Card className="overflow-hidden rounded-lg border-border shadow-none">
