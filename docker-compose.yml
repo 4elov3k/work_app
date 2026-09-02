@@ -42,6 +42,8 @@ services:
       - ./backend/migrations/029_zvonari.sql:/docker-entrypoint-initdb.d/029_zvonari.sql
       - ./backend/migrations/030_drop_unused_roadmap_milestone_event_type.sql:/docker-entrypoint-initdb.d/030_drop_unused_roadmap_milestone_event_type.sql
       - ./backend/migrations/031_redmine_control_event_notified_at.sql:/docker-entrypoint-initdb.d/031_redmine_control_event_notified_at.sql
+      - ./backend/migrations/032_zvonari_engine_tracking.sql:/docker-entrypoint-initdb.d/032_zvonari_engine_tracking.sql
+      - ./backend/migrations/033_zvonari_error_kind.sql:/docker-entrypoint-initdb.d/033_zvonari_error_kind.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U invoices_user -d invoices_db"]
       interval: 10s
