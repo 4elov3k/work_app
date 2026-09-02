@@ -30,7 +30,7 @@ import {
   Cpu,
 } from "lucide-react";
 
-import { zvonariAPI, Caller, CallerReport, Call, CallAnalytics, ApiError, RetranscribePreview } from "@/lib/api";
+import { zvonariAPI, Caller, CallerReport, Call, CallAnalytics, ApiError, RetranscribePreview, HealthStatus, PingResult } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -985,11 +985,55 @@ function KpiCard({
   );
 }
 
+// Точка-индикатор здоровья одного внешнего сервиса (задача 7,
+// zvonari-improvements.md) — зелёная/красная/серая вместо гадания по тексту
+// ошибки синхронизации, отвечает ли вообще сервис. title вместо
+// Tooltip-компонента — в проекте нет shadcn tooltip.tsx, а нативный
+// title уже используется как тултип везде на этой странице (см. кнопки
+// перетранскрибации/переанализа на строке звонка).
+function HealthDot({ label, ping }: { label: string; ping?: PingResult }) {
+  const className = !ping || !ping.configured
+    ? "bg-muted-foreground/30"
+    : ping.ok
+    ? "bg-success"
+    : "bg-destructive";
+  const title = !ping
+    ? `${label}: проверяем...`
+    : !ping.configured
+    ? `${label}: не настроен`
+    : ping.ok
+    ? `${label}: в порядке`
+    : `${label}: недоступен${ping.error ? ` (${ping.error})` : ""}`;
+  return <span title={title} className={`inline-block h-2.5 w-2.5 rounded-full ${className}`} />;
+}
+
 export default function ZvonariPage() {
   const [callers, setCallers] = useState<Caller[]>([]);
   const [loadingCallers, setLoadingCallers] = useState(true);
   const [listError, setListError] = useState("");
   const [aggregatesError, setAggregatesError] = useState("");
+
+  // Здоровье внешних сервисов (задача 7) — опрашиваем раз в 30с (совпадает с
+  // кешем на бэкенде, так что чаще смысла не имеет); первая проверка сразу
+  // при монтировании, не дожидаясь первого тика интервала.
+  const [health, setHealth] = useState<HealthStatus | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const check = () => {
+      zvonariAPI
+        .getHealth()
+        .then((response) => {
+          if (!cancelled) setHealth(response.data);
+        })
+        .catch((err) => console.error("Health check failed:", err));
+    };
+    check();
+    const interval = setInterval(check, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
 
   const [from, setFrom] = useState(todayISO(-6));
   const [to, setTo] = useState(todayISO());
@@ -1670,6 +1714,11 @@ export default function ZvonariPage() {
                 <Phone className="h-5 w-5" />
               </span>
               <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Звонари</h1>
+              <span className="flex items-center gap-1.5 rounded-full border border-border/70 bg-card px-2 py-1">
+                <HealthDot label="Транскрибация (CPU)" ping={health?.transcribe_cpu} />
+                <HealthDot label="Транскрибация (GPU)" ping={health?.transcribe_gpu} />
+                <HealthDot label="Аналитика (Hermes)" ping={health?.analytics} />
+              </span>
             </div>
             <p className="mt-2 text-muted-foreground">
               Звонки из OnlinePBX, транскрибация (Whisper локально) и аналитика по запросу через Hermes

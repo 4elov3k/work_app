@@ -118,6 +118,19 @@ export interface Call {
   updated_at: string;
 }
 
+export interface PingResult {
+  configured: boolean;
+  ok: boolean;
+  error?: string;
+}
+
+export interface HealthStatus {
+  transcribe_cpu: PingResult;
+  transcribe_gpu: PingResult;
+  analytics: PingResult;
+  checked_at: string;
+}
+
 export interface RetranscribePreview {
   total: number;
   already_gpu: number;
@@ -146,6 +159,13 @@ export interface SyncStatus {
 }
 
 export const zvonariAPI = {
+  // Здоровье внешних сервисов (транскрибация CPU/GPU, аналитика Hermes) —
+  // кешируется на бэкенде на 30с, для точек-индикаторов в шапке.
+  getHealth: async (): Promise<SingleResponse<HealthStatus>> => {
+    const response = await fetch(`${API_BASE}/zvonari/health`);
+    return handleResponse<SingleResponse<HealthStatus>>(response);
+  },
+
   // Получить список звонарей (синхронизируется из OnlinePBX)
   getCallers: async (): Promise<SingleResponse<Caller[]>> => {
     const response = await fetch(`${API_BASE}/zvonari/callers`);

@@ -164,6 +164,7 @@ func main() {
 
 		// Звонари (OnlinePBX CDR + Hermes transcribe/analytics)
 		r.Group(func(r chi.Router) {
+			r.Get("/zvonari/health", h.GetZvonariHealth)
 			r.Get("/zvonari/callers", h.GetCallers)
 			r.Post("/zvonari/sync", h.SyncZvonariCalls)
 			r.Get("/zvonari/sync/status", h.GetZvonariSyncStatus)

@@ -194,6 +194,16 @@ func (h *Handlers) AnalyzeCalls(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetZvonariHealth обрабатывает GET /api/zvonari/health — пингует
+// hermes_call_transcribe (CPU и, если настроен, GPU-бокс) и
+// hermes_call_analytics с таймаутом 2с и кешем на 30с, чтобы в шапке можно
+// было сразу показать, что не отвечает, вместо того чтобы гадать по ошибке
+// синхронизации/анализа (задача 7, zvonari-improvements.md).
+func (h *Handlers) GetZvonariHealth(w http.ResponseWriter, r *http.Request) {
+	status := h.zvonari.Health(r.Context())
+	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": status})
+}
+
 // GetCallStatusCounts обрабатывает GET /api/zvonari/calls/status-counts?from=&to=
 // Разбивка звонков по transcript_status на каждого звонаря за период —
 // сколько реально готово/упало/без записи/в очереди, а не просто общий счётчик.

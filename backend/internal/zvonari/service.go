@@ -37,6 +37,10 @@ type Service struct {
 	pauseMu  sync.Mutex
 	paused   bool
 	resumeCh chan struct{}
+
+	healthMu       sync.Mutex
+	healthCache    *HealthStatus
+	healthCachedAt time.Time
 }
 
 func NewService(db *database.DB, pbxClient *pbx.Client, transcribeClient *transcribe.Client, callreportClient *callreport.Client) *Service {
@@ -835,6 +839,49 @@ func ExtractCallType(raw json.RawMessage) string {
 		return ""
 	}
 	return parsed.CallType
+}
+
+// healthCacheTTL matches zvonari-improvements.md задача 7: a cached result
+// no older than this is returned as-is instead of re-pinging every service
+// on every poll from the header's status dots.
+const healthCacheTTL = 30 * time.Second
+
+// HealthStatus reports whether each external service the "Звонари" pipeline
+// depends on is reachable — see задача 7: "если анализ падает, сразу видно,
+// что это не приложение".
+type HealthStatus struct {
+	TranscribeCPU transcribe.PingResult `json:"transcribe_cpu"`
+	TranscribeGPU transcribe.PingResult `json:"transcribe_gpu"`
+	Analytics     callreport.PingResult `json:"analytics"`
+	CheckedAt     time.Time             `json:"checked_at"`
+}
+
+// Health pings the CPU/GPU transcribe services and the call-analytics
+// service, all three concurrently (each already bounded by its own 2s
+// timeout), and caches the result for healthCacheTTL so the header's status
+// dots don't hammer every configured service on every poll.
+func (s *Service) Health(ctx context.Context) HealthStatus {
+	s.healthMu.Lock()
+	if s.healthCache != nil && time.Since(s.healthCachedAt) < healthCacheTTL {
+		cached := *s.healthCache
+		s.healthMu.Unlock()
+		return cached
+	}
+	s.healthMu.Unlock()
+
+	var wg sync.WaitGroup
+	status := HealthStatus{CheckedAt: time.Now()}
+	wg.Add(3)
+	go func() { defer wg.Done(); status.TranscribeCPU = s.transcribe.PingCPU() }()
+	go func() { defer wg.Done(); status.TranscribeGPU = s.transcribe.PingGPU() }()
+	go func() { defer wg.Done(); status.Analytics = s.callreport.Ping(ctx) }()
+	wg.Wait()
+
+	s.healthMu.Lock()
+	s.healthCache = &status
+	s.healthCachedAt = status.CheckedAt
+	s.healthMu.Unlock()
+	return status
 }
 
 // ExtractFraudSuspected reads analytics_json.fraud_suspected — set when

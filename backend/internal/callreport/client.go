@@ -48,6 +48,47 @@ func (c *Client) Configured() bool {
 	return c.baseURL != ""
 }
 
+// healthPingTimeout bounds how long the /zvonari/health endpoint waits for
+// this service before reporting it down — deliberately short, since this is
+// polled from the UI and a hung analytics service shouldn't make the whole
+// health check (and the page rendering it) hang too.
+const healthPingTimeout = 2 * time.Second
+
+// PingResult is shared by transcribe.Client's PingCPU/PingGPU and this
+// method — Configured distinguishes "not set up" (grey in the UI) from
+// Configured&&!OK ("down", red).
+type PingResult struct {
+	Configured bool   `json:"configured"`
+	OK         bool   `json:"ok"`
+	Error      string `json:"error,omitempty"`
+}
+
+// Ping checks hermes_call_analytics's /health endpoint — see
+// zvonari-improvements.md, задача 7 (индикатор здоровья внешних сервисов).
+func (c *Client) Ping(ctx context.Context) PingResult {
+	if c.baseURL == "" {
+		return PingResult{Configured: false}
+	}
+	ctx, cancel := context.WithTimeout(ctx, healthPingTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/health", nil)
+	if err != nil {
+		return PingResult{Configured: true, Error: err.Error()}
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := (&http.Client{Timeout: healthPingTimeout}).Do(req)
+	if err != nil {
+		return PingResult{Configured: true, Error: err.Error()}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return PingResult{Configured: true, Error: fmt.Sprintf("HTTP %d", resp.StatusCode)}
+	}
+	return PingResult{Configured: true, OK: true}
+}
+
 // AnalyzeCallRequest — запрос на классификацию одного звонка. DurationSec/
 // TalkTimeSec are the only real signal call_analytics_server.py has for its
 // fraud_suspected heuristic ("автоответчик/меню звучит, и линия НЕ была

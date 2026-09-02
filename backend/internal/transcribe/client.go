@@ -68,6 +68,51 @@ func (c *Client) Configured() bool {
 	return c.baseURL != "" || c.gpuBaseURL != ""
 }
 
+// healthPingTimeout bounds how long the /zvonari/health endpoint waits for
+// each transcribe backend before reporting it down.
+const healthPingTimeout = 2 * time.Second
+
+// PingResult mirrors callreport.Client's — Configured distinguishes "not set
+// up" (grey in the UI, e.g. no GPU box) from Configured&&!OK ("down", red).
+type PingResult struct {
+	Configured bool   `json:"configured"`
+	OK         bool   `json:"ok"`
+	Error      string `json:"error,omitempty"`
+}
+
+func pingHealth(baseURL, token string) PingResult {
+	if baseURL == "" {
+		return PingResult{Configured: false}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), healthPingTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/health", nil)
+	if err != nil {
+		return PingResult{Configured: true, Error: err.Error()}
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := (&http.Client{Timeout: healthPingTimeout}).Do(req)
+	if err != nil {
+		return PingResult{Configured: true, Error: err.Error()}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return PingResult{Configured: true, Error: fmt.Sprintf("HTTP %d", resp.StatusCode)}
+	}
+	return PingResult{Configured: true, OK: true}
+}
+
+// PingCPU checks the always-on CPU transcribe service's /health endpoint —
+// see zvonari-improvements.md, задача 7.
+func (c *Client) PingCPU() PingResult { return pingHealth(c.baseURL, c.token) }
+
+// PingGPU checks the optional on-LAN GPU box's /health endpoint — reports
+// Configured=false (not down) when TRANSCRIBE_SERVICE_GPU_URL isn't set,
+// since an unconfigured GPU box isn't an outage.
+func (c *Client) PingGPU() PingResult { return pingHealth(c.gpuBaseURL, c.gpuToken) }
+
 type Result struct {
 	Text string `json:"text"`
 	// Engine — какой сервис фактически ответил на этот запрос: "gpu" или
