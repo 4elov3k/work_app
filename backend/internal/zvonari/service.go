@@ -750,6 +750,7 @@ func (s *Service) AnalyzeCalls(ctx context.Context, from, to time.Time) (*SyncRe
 				Transcript:  c.TranscriptText,
 				DurationSec: c.DurationSec,
 				TalkTimeSec: c.TalkTimeSec,
+				Direction:   c.Direction,
 			}
 		}
 
@@ -853,6 +854,7 @@ func (s *Service) AnalyzeCall(ctx context.Context, callID string) (*models.Call,
 		Transcript:  call.TranscriptText,
 		DurationSec: call.DurationSec,
 		TalkTimeSec: call.TalkTimeSec,
+		Direction:   call.Direction,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("analyzing call: %w", err)

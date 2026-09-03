@@ -103,6 +103,11 @@ type AnalyzeCallRequest struct {
 	Transcript  string `json:"transcript"`
 	DurationSec int    `json:"duration_sec"`
 	TalkTimeSec int    `json:"talk_time_sec"`
+	// Direction ("inbound"/"outbound") lets the rubric tell a warm contact
+	// (client called in, or replying to something they themselves started)
+	// from a cold one — see the LPR-confirmation tiers in the regulation's
+	// §5.2.1 (added 2026-09, "zvonari-lpr-criteria").
+	Direction string `json:"direction"`
 }
 
 // AnalyzeCallResult — результат оценки звонка по скрипту IQ-200 (регламент
