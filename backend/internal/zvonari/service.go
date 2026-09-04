@@ -833,6 +833,19 @@ func (s *Service) RetranscribeCall(ctx context.Context, callID string) (*models.
 	return s.db.GetCallByID(ctx, callID)
 }
 
+// RecordingURL resolves a fresh short-lived signed OnlinePBX URL for a
+// call's audio, for handlers that want to redirect a human straight to it
+// (e.g. a "listen" link in an export) rather than proxy the bytes. The
+// signed URL expires in ~30 minutes, so it must be resolved at click time,
+// not cached or embedded directly into a document meant to be opened later.
+func (s *Service) RecordingURL(ctx context.Context, callID string) (string, error) {
+	call, err := s.db.GetCallByID(ctx, callID)
+	if err != nil {
+		return "", err
+	}
+	return s.pbx.RecordingURL(ctx, call.PBXUUID)
+}
+
 // AnalyzeCall (re)runs Hermes analysis for one existing call, on demand from
 // the UI — AnalyzeCalls' ListCallsNeedingAnalysis only ever picks up calls
 // that don't already have analytics_json.call_type set, so a call that was

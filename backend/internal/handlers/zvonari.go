@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"invoices-backend/internal/models"
+	"invoices-backend/internal/pbx"
 	"invoices-backend/internal/zvonari"
 )
 
@@ -349,6 +351,28 @@ func (h *Handlers) RetranscribeCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondWithJSON(w, http.StatusOK, models.CallResponse{Data: *call})
+}
+
+// GetCallRecording обрабатывает GET /api/zvonari/calls/{id}/recording —
+// резолвит свежую подписанную ссылку OnlinePBX на запись звонка и
+// редиректит на неё. Отдаём редирект, а не сами байты, и не кэшируем URL:
+// ссылка OnlinePBX живёт ~30 минут, так что каждый переход по этому
+// постоянному линку (например, из выгрузки в Excel) должен резолвить её
+// заново — тогда сама выгрузка остаётся рабочей сколько угодно долго.
+func (h *Handlers) GetCallRecording(w http.ResponseWriter, r *http.Request) {
+	callID := chi.URLParam(r, "id")
+
+	link, err := h.zvonari.RecordingURL(r.Context(), callID)
+	if err != nil {
+		if errors.Is(err, pbx.ErrNoRecording) {
+			respondWithError(w, http.StatusNotFound, "Для этого звонка нет записи")
+			return
+		}
+		log.Printf("GetCallRecording failed: %v", err)
+		respondNotFoundOrInternal(w, err, "Call not found")
+		return
+	}
+	http.Redirect(w, r, link, http.StatusFound)
 }
 
 // AnalyzeCall обрабатывает POST /api/zvonari/calls/{id}/analyze
