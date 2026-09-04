@@ -23,7 +23,7 @@ import {
   Volume2,
 } from "lucide-react";
 
-import { Caller, Call, CallAnalytics, StageStatus, PingResult, zvonariAPI } from "@/lib/api";
+import { Caller, Call, CallAnalytics, StageStatus, PingResult } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { CallDrawer } from "./_call_drawer";
 
 // ---------------------------------------------------------------------------
 // Период, тренды
@@ -782,7 +783,8 @@ export function CallDetailList({
   onPageChange: (page: number) => void;
 }) {
   const [localFilters, setLocalFilters] = useState<LocalCallFilters>(EMPTY_LOCAL_FILTERS);
-  const [expandedCallId, setExpandedCallId] = useState<string | null>(null);
+  const [openCallId, setOpenCallId] = useState<string | null>(null);
+  const [openTab, setOpenTab] = useState<"steps" | "transcript">("steps");
   const filters: CallFilters = useMemo(() => ({ ...localFilters, search }), [localFilters, search]);
   const filtered = useMemo(
     () => filterCalls(calls, filters, roadmapFilter, errorKindFilter),
@@ -794,6 +796,26 @@ export function CallDetailList({
     () => filtered.slice(currentPage * CALLS_PAGE_SIZE, (currentPage + 1) * CALLS_PAGE_SIZE),
     [filtered, currentPage]
   );
+  const openCall = filtered.find((c) => c.id === openCallId) ?? null;
+
+  function openDrawer(callId: string, tab: "steps" | "transcript" = "steps") {
+    setOpenCallId(callId);
+    setOpenTab(tab);
+  }
+
+  // Предыдущий/следующий работает по всему отфильтрованному списку, не
+  // только по текущей странице — на границе страницы заодно переключает
+  // onPageChange, чтобы таблица под панелью не расходилась с тем, что в ней
+  // открыто.
+  function navigateDrawer(direction: 1 | -1) {
+    const idx = filtered.findIndex((c) => c.id === openCallId);
+    if (idx < 0) return;
+    const nextIdx = idx + direction;
+    if (nextIdx < 0 || nextIdx >= filtered.length) return;
+    setOpenCallId(filtered[nextIdx].id);
+    const nextPage = Math.floor(nextIdx / CALLS_PAGE_SIZE);
+    if (nextPage !== currentPage) onPageChange(nextPage);
+  }
   // page живёт в родителе (участвует в URL) — сброс на смену
   // фильтров/списка через эффект, не через render-phase adjustment (тот
   // приём годится только для собственного state компонента).
@@ -931,29 +953,29 @@ export function CallDetailList({
                 const isAnalyzing = analyzingIds.has(call.id);
                 const analytics = call.analytics_json;
                 const isFraud = !!analytics?.fraud_suspected;
-                const isExpanded = expandedCallId === call.id;
+                const isOpen = openCallId === call.id;
                 const notDone = call.transcript_status !== "done";
                 return (
                   <Fragment key={call.id}>
                     <TableRow
                       role="button"
                       tabIndex={0}
-                      className={`h-11 cursor-pointer transition-colors hover:bg-accent/50 ${isExpanded ? "bg-accent/30" : ""} ${
+                      className={`h-11 cursor-pointer transition-colors hover:bg-accent/50 ${isOpen ? "bg-accent/30" : ""} ${
                         isFraud ? "border-l-4 border-l-destructive" : ""
                       }`}
-                      onClick={() => setExpandedCallId(isExpanded ? null : call.id)}
+                      onClick={() => openDrawer(call.id)}
                       onKeyDown={(event) => {
                         if (event.target !== event.currentTarget) return
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault()
-                          setExpandedCallId(isExpanded ? null : call.id)
+                          openDrawer(call.id)
                         }
                       }}
                     >
                       <TableCell>
                         <ChevronRight
                           className={`h-4 w-4 text-muted-foreground transition-transform duration-150 ${
-                            isExpanded ? "rotate-90 text-primary" : ""
+                            isOpen ? "rotate-90 text-primary" : ""
                           }`}
                         />
                       </TableCell>
@@ -997,7 +1019,10 @@ export function CallDetailList({
                               className="h-7 px-2 text-muted-foreground transition-transform hover:text-foreground active:scale-95"
                               disabled={call.transcript_status === "no_recording"}
                               aria-label="Прослушать запись"
-                              onClick={() => window.open(zvonariAPI.recordingUrl(call.id), "_blank", "noopener,noreferrer")}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openDrawer(call.id, "transcript");
+                              }}
                             >
                               <Volume2 className="h-3.5 w-3.5" />
                             </Button>
@@ -1038,21 +1063,6 @@ export function CallDetailList({
                         </Tooltip>
                       </TableCell>
                     </TableRow>
-                    {isExpanded && (
-                      <TableRow className="hover:bg-transparent">
-                        <TableCell colSpan={6} className="bg-accent/10">
-                          <div className="space-y-2 py-1">
-                            {analytics?.steps && <StepBreakdown analytics={analytics} />}
-                            {call.hangup_cause && !analytics?.steps && (
-                              <p className="text-xs text-muted-foreground">Причина завершения: {call.hangup_cause}</p>
-                            )}
-                            <p className="whitespace-pre-wrap rounded-md bg-muted/50 p-2 text-sm text-muted-foreground">
-                              {call.transcript_text || "Транскрипт недоступен"}
-                            </p>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    )}
                   </Fragment>
                 );
               })}
@@ -1087,6 +1097,17 @@ export function CallDetailList({
           )}
         </div>
       )}
+      <CallDrawer
+        call={openCall}
+        calls={filtered}
+        initialTab={openTab}
+        onClose={() => setOpenCallId(null)}
+        onNavigate={navigateDrawer}
+        onRetranscribe={onRetranscribe}
+        onAnalyze={onAnalyze}
+        isRetranscribing={!!openCallId && retranscribingIds.has(openCallId)}
+        isAnalyzing={!!openCallId && analyzingIds.has(openCallId)}
+      />
     </div>
   );
 }

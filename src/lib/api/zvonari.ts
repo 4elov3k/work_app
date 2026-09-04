@@ -97,6 +97,17 @@ export interface CallAnalytics {
   category?: string;
 }
 
+// CallTranscriptSegment — один "ход" реплики с таймкодом (transcribe.Segment
+// на бэкенде). speaker — номер говорящего при диаризации на стороне Hermes,
+// null иначе. Отсутствует (Call.transcript_segments === undefined) на
+// звонках, расшифрованных до этого поля — там есть только transcript_text.
+export interface CallTranscriptSegment {
+  start: number;
+  end: number;
+  speaker: number | null;
+  text: string;
+}
+
 export interface Call {
   id: string;
   pbx_uuid: string;
@@ -109,6 +120,7 @@ export interface Call {
   hangup_cause: string;
   transcript_status: string;
   transcript_text?: string;
+  transcript_segments?: CallTranscriptSegment[];
   analytics_json?: CallAnalytics;
   // engine — каким сервисом фактически транскрибирован звонок ("cpu"/"gpu"),
   // пусто пока не транскрибирован.
