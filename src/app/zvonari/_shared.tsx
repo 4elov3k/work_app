@@ -20,9 +20,10 @@ import {
   HelpCircle,
   Target,
   Calendar as CalendarIcon,
+  Volume2,
 } from "lucide-react";
 
-import { Caller, Call, CallAnalytics, StageStatus, PingResult } from "@/lib/api";
+import { Caller, Call, CallAnalytics, StageStatus, PingResult, zvonariAPI } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -988,6 +989,23 @@ export function CallDetailList({
                         </div>
                       </TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()} className="whitespace-nowrap">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-muted-foreground transition-transform hover:text-foreground active:scale-95"
+                              disabled={call.transcript_status === "no_recording"}
+                              aria-label="Прослушать запись"
+                              onClick={() => window.open(zvonariAPI.recordingUrl(call.id), "_blank", "noopener,noreferrer")}
+                            >
+                              <Volume2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {call.transcript_status === "no_recording" ? "Нет записи" : "Прослушать запись"}
+                          </TooltipContent>
+                        </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button

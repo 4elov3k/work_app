@@ -362,4 +362,9 @@ export const zvonariAPI = {
     const params = new URLSearchParams({ from, to });
     return `${API_BASE}/zvonari/callers/${callerId}/export.csv?${params.toString()}`;
   },
+
+  // Ссылка на прослушивание записи одного звонка — бэкенд резолвит свежую
+  // подписанную ссылку OnlinePBX и редиректит на неё, так что этот URL
+  // можно открывать напрямую (window.open), без fetch.
+  recordingUrl: (callId: string): string => `${API_BASE}/zvonari/calls/${callId}/recording`,
 };
