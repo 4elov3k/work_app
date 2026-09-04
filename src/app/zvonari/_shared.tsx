@@ -413,7 +413,7 @@ export function trackSegmentsFromDistribution(distribution: Record<string, numbe
 // Разбор по шагам конкретного звонка (раскрытая строка)
 // ---------------------------------------------------------------------------
 
-function stepStatusMeta(status: string | undefined): { icon: ReactNode; className: string } {
+export function stepStatusMeta(status: string | undefined): { icon: ReactNode; className: string } {
   switch (status) {
     case "Выполнен":
     case "Использован":
@@ -1103,9 +1103,7 @@ export function CallDetailList({
         initialTab={openTab}
         onClose={() => setOpenCallId(null)}
         onNavigate={navigateDrawer}
-        onRetranscribe={onRetranscribe}
         onAnalyze={onAnalyze}
-        isRetranscribing={!!openCallId && retranscribingIds.has(openCallId)}
         isAnalyzing={!!openCallId && analyzingIds.has(openCallId)}
       />
     </div>
