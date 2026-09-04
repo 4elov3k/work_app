@@ -156,15 +156,17 @@ func (c *Client) searchWindow(ctx context.Context, from, to time.Time) ([]CallRe
 // permanently marked "no_recording" whenever the fetch merely failed once.
 var ErrNoRecording = errors.New("onlinepbx: no recording available for this call")
 
-// DownloadRecording resolves a short-lived signed URL for the call's audio
-// (valid ~30 minutes per OnlinePBX docs) and fetches it immediately.
-func (c *Client) DownloadRecording(ctx context.Context, uuid string) ([]byte, error) {
+// RecordingURL resolves a short-lived signed URL for the call's audio
+// (valid ~30 minutes per OnlinePBX docs) without fetching it. Callers that
+// want a link to hand a human (e.g. a redirect endpoint) should call this
+// fresh each time rather than caching the result.
+func (c *Client) RecordingURL(ctx context.Context, uuid string) (string, error) {
 	body, err := c.post(ctx, "mongo_history/search.json", map[string]interface{}{
 		"uuid":     uuid,
 		"download": true,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("requesting recording link: %w", err)
+		return "", fmt.Errorf("requesting recording link: %w", err)
 	}
 	var parsed struct {
 		Status  string `json:"status"`
@@ -172,16 +174,26 @@ func (c *Client) DownloadRecording(ctx context.Context, uuid string) ([]byte, er
 		Comment string `json:"comment"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("onlinepbx recording link: parsing response: %w", err)
+		return "", fmt.Errorf("onlinepbx recording link: parsing response: %w", err)
 	}
 	if parsed.Status != "1" {
-		return nil, fmt.Errorf("onlinepbx recording link: request returned status %s: %s", parsed.Status, parsed.Comment)
+		return "", fmt.Errorf("onlinepbx recording link: request returned status %s: %s", parsed.Status, parsed.Comment)
 	}
 	if parsed.Data == "" {
-		return nil, ErrNoRecording
+		return "", ErrNoRecording
+	}
+	return parsed.Data, nil
+}
+
+// DownloadRecording resolves a short-lived signed URL for the call's audio
+// and fetches it immediately.
+func (c *Client) DownloadRecording(ctx context.Context, uuid string) ([]byte, error) {
+	link, err := c.RecordingURL(ctx, uuid)
+	if err != nil {
+		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.Data, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
 	if err != nil {
 		return nil, err
 	}
