@@ -46,24 +46,28 @@ func (db *DB) InsertCall(ctx context.Context, call models.Call) (*models.Call, b
 func (db *DB) GetCallByID(ctx context.Context, id string) (*models.Call, error) {
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
-		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json,
+		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), transcript_segments, analytics_json,
 		       COALESCE(engine, ''), transcribed_at, COALESCE(error_kind, ''), COALESCE(last_error, ''), created_at, updated_at
 		FROM calls
 		WHERE id = $1
 	`
 	var c models.Call
+	var segments []byte
 	var analytics []byte
 	var transcribedAt sql.NullTime
 	err := db.QueryRowContext(ctx, query, id).Scan(
 		&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
 		&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
-		&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.ErrorKind, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
+		&c.TranscriptText, &segments, &analytics, &c.Engine, &transcribedAt, &c.ErrorKind, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("call not found")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get call: %w", err)
+	}
+	if len(segments) > 0 {
+		c.TranscriptSegments = json.RawMessage(segments)
 	}
 	if len(analytics) > 0 {
 		c.AnalyticsJSON = json.RawMessage(analytics)
@@ -109,11 +113,18 @@ func (db *DB) SetCallTranscriptError(ctx context.Context, id, status, errorKind,
 // transcribe.Client.Transcribe, which reports back whichever of its two
 // configured backends answered. Clears any previous error_kind/last_error:
 // a successful (re)transcription supersedes whatever went wrong last time.
-func (db *DB) SetCallTranscript(ctx context.Context, id, text, engine string) error {
+// segments is the raw JSON-encoded []transcribe.Segment (nil/empty for a
+// service that hasn't been upgraded yet, or genuinely no speech) — stored
+// as-is, no server-side validation of its shape.
+func (db *DB) SetCallTranscript(ctx context.Context, id, text, engine string, segments []byte) error {
+	var segmentsArg interface{}
+	if len(segments) > 0 {
+		segmentsArg = segments
+	}
 	_, err := db.ExecContext(ctx,
-		`UPDATE calls SET transcript_text = $2, transcript_status = 'done', engine = $3, transcribed_at = CURRENT_TIMESTAMP,
+		`UPDATE calls SET transcript_text = $2, transcript_segments = $3, transcript_status = 'done', engine = $4, transcribed_at = CURRENT_TIMESTAMP,
 		       error_kind = NULL, last_error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-		id, text, engine,
+		id, text, segmentsArg, engine,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update transcript: %w", err)
@@ -320,7 +331,7 @@ func (db *DB) CountFraudSuspectedByCaller(ctx context.Context, from, to time.Tim
 func (db *DB) ListCallsByStatusPeriod(ctx context.Context, statuses []string, from, to time.Time) ([]models.Call, error) {
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
-		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json,
+		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), transcript_segments, analytics_json,
 		       COALESCE(engine, ''), transcribed_at, COALESCE(error_kind, ''), COALESCE(last_error, ''), created_at, updated_at
 		FROM calls
 		WHERE transcript_status = ANY($1) AND started_at >= $2 AND started_at < $3
@@ -335,14 +346,18 @@ func (db *DB) ListCallsByStatusPeriod(ctx context.Context, statuses []string, fr
 	var calls []models.Call
 	for rows.Next() {
 		var c models.Call
+		var segments []byte
 		var analytics []byte
 		var transcribedAt sql.NullTime
 		if err := rows.Scan(
 			&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
 			&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
-			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.ErrorKind, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
+			&c.TranscriptText, &segments, &analytics, &c.Engine, &transcribedAt, &c.ErrorKind, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan call: %w", err)
+		}
+		if len(segments) > 0 {
+			c.TranscriptSegments = json.RawMessage(segments)
 		}
 		if len(analytics) > 0 {
 			c.AnalyticsJSON = json.RawMessage(analytics)
@@ -370,7 +385,7 @@ func (db *DB) ListCallsByStatusPeriod(ctx context.Context, statuses []string, fr
 func (db *DB) ListCallsNeedingAnalysis(ctx context.Context, from, to time.Time) ([]models.Call, error) {
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
-		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json,
+		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), transcript_segments, analytics_json,
 		       COALESCE(engine, ''), transcribed_at, COALESCE(error_kind, ''), COALESCE(last_error, ''), created_at, updated_at
 		FROM calls
 		WHERE transcript_status = 'done'
@@ -387,14 +402,18 @@ func (db *DB) ListCallsNeedingAnalysis(ctx context.Context, from, to time.Time) 
 	var calls []models.Call
 	for rows.Next() {
 		var c models.Call
+		var segments []byte
 		var analytics []byte
 		var transcribedAt sql.NullTime
 		if err := rows.Scan(
 			&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
 			&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
-			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.ErrorKind, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
+			&c.TranscriptText, &segments, &analytics, &c.Engine, &transcribedAt, &c.ErrorKind, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan call: %w", err)
+		}
+		if len(segments) > 0 {
+			c.TranscriptSegments = json.RawMessage(segments)
 		}
 		if len(analytics) > 0 {
 			c.AnalyticsJSON = json.RawMessage(analytics)
@@ -418,7 +437,7 @@ func (db *DB) ListCallsNeedingAnalysis(ctx context.Context, from, to time.Time) 
 func (db *DB) ListCallsForRetranscribe(ctx context.Context, from, to time.Time, onlyCPU bool) ([]models.Call, error) {
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
-		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json,
+		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), transcript_segments, analytics_json,
 		       COALESCE(engine, ''), transcribed_at, COALESCE(error_kind, ''), COALESCE(last_error, ''), created_at, updated_at
 		FROM calls
 		WHERE started_at >= $1 AND started_at < $2
@@ -437,14 +456,18 @@ func (db *DB) ListCallsForRetranscribe(ctx context.Context, from, to time.Time, 
 	var calls []models.Call
 	for rows.Next() {
 		var c models.Call
+		var segments []byte
 		var analytics []byte
 		var transcribedAt sql.NullTime
 		if err := rows.Scan(
 			&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
 			&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
-			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.ErrorKind, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
+			&c.TranscriptText, &segments, &analytics, &c.Engine, &transcribedAt, &c.ErrorKind, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan call: %w", err)
+		}
+		if len(segments) > 0 {
+			c.TranscriptSegments = json.RawMessage(segments)
 		}
 		if len(analytics) > 0 {
 			c.AnalyticsJSON = json.RawMessage(analytics)
@@ -485,7 +508,7 @@ func (db *DB) RetranscribePreviewCounts(ctx context.Context, from, to time.Time)
 func (db *DB) ListCallsByCallerPeriod(ctx context.Context, callerID string, from, to time.Time) ([]models.Call, error) {
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
-		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json,
+		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), transcript_segments, analytics_json,
 		       COALESCE(engine, ''), transcribed_at, COALESCE(error_kind, ''), COALESCE(last_error, ''), created_at, updated_at
 		FROM calls
 		WHERE caller_id = $1 AND started_at >= $2 AND started_at < $3
@@ -500,14 +523,18 @@ func (db *DB) ListCallsByCallerPeriod(ctx context.Context, callerID string, from
 	var calls []models.Call
 	for rows.Next() {
 		var c models.Call
+		var segments []byte
 		var analytics []byte
 		var transcribedAt sql.NullTime
 		if err := rows.Scan(
 			&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
 			&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
-			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.ErrorKind, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
+			&c.TranscriptText, &segments, &analytics, &c.Engine, &transcribedAt, &c.ErrorKind, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan call: %w", err)
+		}
+		if len(segments) > 0 {
+			c.TranscriptSegments = json.RawMessage(segments)
 		}
 		if len(analytics) > 0 {
 			c.AnalyticsJSON = json.RawMessage(analytics)

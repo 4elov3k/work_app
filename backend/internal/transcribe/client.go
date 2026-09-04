@@ -113,11 +113,24 @@ func (c *Client) PingCPU() PingResult { return pingHealth(c.baseURL, c.token) }
 // since an unconfigured GPU box isn't an outage.
 func (c *Client) PingGPU() PingResult { return pingHealth(c.gpuBaseURL, c.gpuToken) }
 
+// Segment — один "ход" реплики с таймкодом, как его отдаёт Hermes'
+// /transcribe (см. transcribe_server.py, _transcribe_audio_raw). Speaker —
+// номер говорящего (1, 2, ...) при включённой диаризации на стороне
+// Hermes (HF_TOKEN настроен), иначе nil — сегменты всё равно приходят
+// (по сырым whisper-сегментам, без разбивки по говорящим).
+type Segment struct {
+	Start   float64 `json:"start"`
+	End     float64 `json:"end"`
+	Speaker *int    `json:"speaker"`
+	Text    string  `json:"text"`
+}
+
 type Result struct {
-	Text string `json:"text"`
+	Text     string    `json:"text"`
+	Segments []Segment `json:"segments"`
 	// Engine — какой сервис фактически ответил на этот запрос: "gpu" или
-	// "cpu". Не приходит от Hermes (тот просто отвечает {text}) — это
-	// Client сам знает, на какой из двух baseURL успешно достучался.
+	// "cpu". Не приходит от Hermes (тот просто отвечает {text, segments}) —
+	// это Client сам знает, на какой из двух baseURL успешно достучался.
 	Engine string `json:"-"`
 }
 

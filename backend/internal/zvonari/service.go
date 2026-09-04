@@ -681,7 +681,16 @@ func (s *Service) transcribeOnly(ctx context.Context, call *models.Call, pbxUUID
 		mu.Unlock()
 		return
 	}
-	if err := s.db.SetCallTranscript(ctx, call.ID, tr.Text, tr.Engine); err != nil {
+	// Marshal failure here would be a bug in transcribe.Segment, not bad
+	// input — segmentsJSON stays nil (SetCallTranscript treats that as "no
+	// segments"), the transcript itself still saves rather than being lost
+	// over a secondary field.
+	segmentsJSON, err := json.Marshal(tr.Segments)
+	if err != nil {
+		log.Printf("zvonari: marshaling transcript segments failed for call %s: %v", pbxUUID, err)
+		segmentsJSON = nil
+	}
+	if err := s.db.SetCallTranscript(ctx, call.ID, tr.Text, tr.Engine, segmentsJSON); err != nil {
 		log.Printf("zvonari: saving transcript failed for call %s: %v", pbxUUID, err)
 	}
 }

@@ -18,6 +18,11 @@ type Call struct {
 	HangupCause        string          `json:"hangup_cause"`
 	TranscriptStatus   string          `json:"transcript_status"`
 	TranscriptText     string          `json:"transcript_text,omitempty"`
+	// TranscriptSegments — [{start, end, speaker, text}] от Hermes'
+	// /transcribe (см. transcribe.Segment), NULL для звонков, расшифрованных
+	// до этого поля (нет бэкфилла, см. миграцию 034) — используется для
+	// перемотки аудиоплеера по клику на фразу транскрипта в UI.
+	TranscriptSegments json.RawMessage `json:"transcript_segments,omitempty"`
 	AnalyticsJSON      json.RawMessage `json:"analytics_json,omitempty"`
 	// Engine — какой движок фактически транскрибировал этот звонок
 	// ("cpu" / "gpu"), пусто пока звонок ещё не транскрибирован.
