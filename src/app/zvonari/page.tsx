@@ -101,24 +101,16 @@ export default function ZvonariPage() {
 
   const [from, setFrom] = useState(todayISO(-6));
   const [to, setTo] = useState(todayISO());
-
-  useEffect(() => {
-    const stored = loadStoredPeriod();
-    if (stored) {
-      setFrom(stored.from);
-      setTo(stored.to);
-    }
-  }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem(PERIOD_STORAGE_KEY, JSON.stringify({ from, to }));
-  }, [from, to]);
-
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
-  // Период/сортировка попадают в URL (задача 5, zvonari-improvements.md) —
-  // раскрытый звонарь/фильтры теперь живут на /zvonari/[ext], не здесь.
+  // Восстановление периода/сортировки —URL приоритетнее localStorage (ссылка
+  // с явным ?from=&to= — например, с карточки звонаря — должна побеждать).
+  // Раньше это было два отдельных эффекта (сперва localStorage, потом URL) —
+  // оба стартовые (deps=[]), но эффект ниже, синхронизирующий state → URL,
+  // тоже стартовый и успевал отработать между ними на замыкании ещё
+  // дефолтных from/to, на миг затирая URL дефолтом до следующего рендера.
+  // Один эффект с уже разрешённым значением убирает саму гонку.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlFrom = params.get("from");
@@ -126,6 +118,12 @@ export default function ZvonariPage() {
     if (urlFrom && urlTo) {
       setFrom(urlFrom);
       setTo(urlTo);
+    } else {
+      const stored = loadStoredPeriod();
+      if (stored) {
+        setFrom(stored.from);
+        setTo(stored.to);
+      }
     }
     const urlSort = params.get("sort");
     if (urlSort && (SORT_KEYS as string[]).includes(urlSort)) setSortKey(urlSort as SortKey);
@@ -133,7 +131,30 @@ export default function ZvonariPage() {
     if (urlDir === "asc" || urlDir === "desc") setSortDir(urlDir);
   }, []);
 
+  // Оба эффекта ниже пишут наружу (localStorage/URL) при каждом изменении
+  // from/to/sortKey/sortDir — но их самый первый запуск при монтировании
+  // всегда видит ещё дефолтные значения (эффект восстановления выше успевает
+  // только запланировать setState, не применить его в этом же проходе).
+  // Пропускаем этот первый холостой запуск, чтобы не перезаписать
+  // localStorage/URL дефолтом на долю секунды раньше, чем применится
+  // восстановленное значение.
+  const skipLocalStorageWrite = useRef(true);
   useEffect(() => {
+    if (skipLocalStorageWrite.current) {
+      skipLocalStorageWrite.current = false;
+      return;
+    }
+    window.localStorage.setItem(PERIOD_STORAGE_KEY, JSON.stringify({ from, to }));
+  }, [from, to]);
+
+  // Период/сортировка попадают в URL (задача 5, zvonari-improvements.md) —
+  // раскрытый звонарь/фильтры теперь живут на /zvonari/[ext], не здесь.
+  const skipUrlSync = useRef(true);
+  useEffect(() => {
+    if (skipUrlSync.current) {
+      skipUrlSync.current = false;
+      return;
+    }
     const params = new URLSearchParams();
     params.set("from", from);
     params.set("to", to);
