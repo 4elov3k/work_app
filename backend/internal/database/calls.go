@@ -104,16 +104,35 @@ func (db *DB) SetCallTranscriptError(ctx context.Context, id, status, errorKind,
 	return nil
 }
 
-// SetCallTranscript stores the Whisper transcript and marks the call done,
-// recording which engine (cpu/gpu) actually produced it and when — see
-// transcribe.Client.Transcribe, which reports back whichever of its two
-// configured backends answered. Clears any previous error_kind/last_error:
-// a successful (re)transcription supersedes whatever went wrong last time.
-func (db *DB) SetCallTranscript(ctx context.Context, id, text, engine string) error {
+// HallucinationSuspectedErrorKind flags a transcript whose length is
+// implausible for the call's actual duration (see
+// zvonari.Service.transcribeOnly, which computes chars-per-second right
+// after a successful Transcribe() call) — almost certainly a fabricated
+// LLM transcription (observed on TRANSCRIBE_FORMAT=openrouter, and on the
+// August 2026 GPU-slot backfill that temporarily ran through an LLM
+// sidecar) rather than a real transcript of near-silence/noise. Unlike the
+// other error_kind values, this is set alongside transcript_status='done'
+// (not 'failed') and the text IS kept — the call needs a human to look at
+// it, not a retry, and the text itself is the evidence.
+const HallucinationSuspectedErrorKind = "hallucination_suspected"
+
+// SetCallTranscript stores the transcript and marks the call done,
+// recording which engine (cpu/gpu/openrouter) actually produced it and
+// when — see transcribe.Client.Transcribe, which reports back whichever
+// backend/format answered. Clears any previous error_kind/last_error,
+// UNLESS hallucinationSuspected is true, in which case error_kind is set to
+// HallucinationSuspectedErrorKind instead of being cleared — see its doc
+// comment. A successful (re)transcription otherwise supersedes whatever
+// went wrong last time.
+func (db *DB) SetCallTranscript(ctx context.Context, id, text, engine string, hallucinationSuspected bool) error {
+	var errorKind any
+	if hallucinationSuspected {
+		errorKind = HallucinationSuspectedErrorKind
+	}
 	_, err := db.ExecContext(ctx,
 		`UPDATE calls SET transcript_text = $2, transcript_status = 'done', engine = $3, transcribed_at = CURRENT_TIMESTAMP,
-		       error_kind = NULL, last_error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-		id, text, engine,
+		       error_kind = $4, last_error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+		id, text, engine, errorKind,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update transcript: %w", err)
@@ -375,6 +394,7 @@ func (db *DB) ListCallsNeedingAnalysis(ctx context.Context, from, to time.Time) 
 		FROM calls
 		WHERE transcript_status = 'done'
 		  AND (analytics_json IS NULL OR NOT (analytics_json ? 'category' OR analytics_json ? 'call_type'))
+		  AND (error_kind IS NULL OR error_kind != 'hallucination_suspected')
 		  AND started_at >= $1 AND started_at < $2
 		ORDER BY started_at
 	`

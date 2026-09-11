@@ -76,6 +76,13 @@ services:
       TRANSCRIBE_SERVICE_TOKEN: ${TRANSCRIBE_SERVICE_TOKEN:-}
       TRANSCRIBE_SERVICE_GPU_URL: ${TRANSCRIBE_SERVICE_GPU_URL:-}
       TRANSCRIBE_SERVICE_GPU_TOKEN: ${TRANSCRIBE_SERVICE_GPU_TOKEN:-}
+      # TRANSCRIBE_FORMAT переключает транскрибацию целиком между "gpu"
+      # (дефолт — существующий gpu->cpu whisper-путь) и "openrouter"
+      # (аудио напрямую в OpenRouter) — независимые форматы, один в другой
+      # автоматически не проваливается, см. internal/transcribe/client.go.
+      TRANSCRIBE_FORMAT: ${TRANSCRIBE_FORMAT:-gpu}
+      TRANSCRIBE_OPENROUTER_MODEL: ${TRANSCRIBE_OPENROUTER_MODEL:-google/gemini-2.5-flash-lite}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       CALL_ANALYTICS_URL: ${CALL_ANALYTICS_URL:-http://hermes_call_analytics:8646}
       CALL_ANALYTICS_TOKEN: ${CALL_ANALYTICS_TOKEN:-}
       SABY_BASE_URL: ${SABY_BASE_URL:-https://online.sbis.ru}

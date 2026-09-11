@@ -681,9 +681,48 @@ func (s *Service) transcribeOnly(ctx context.Context, call *models.Call, pbxUUID
 		mu.Unlock()
 		return
 	}
-	if err := s.db.SetCallTranscript(ctx, call.ID, tr.Text, tr.Engine); err != nil {
+	hallucinationSuspected := transcriptImplausiblyLong(tr.Text, call.TalkTimeSec, call.DurationSec)
+	if hallucinationSuspected {
+		log.Printf("zvonari: call %s transcript looks hallucinated (%d chars, %ds audio) — flagging, not discarding",
+			pbxUUID, len(tr.Text), effectiveDurationSec(call.TalkTimeSec, call.DurationSec))
+	}
+	if err := s.db.SetCallTranscript(ctx, call.ID, tr.Text, tr.Engine, hallucinationSuspected); err != nil {
 		log.Printf("zvonari: saving transcript failed for call %s: %v", pbxUUID, err)
 	}
+}
+
+// hallucinationCharsPerSecThreshold — calibrated against real data
+// (2026-09-11): a genuine dense two-way dialogue transcript runs roughly
+// 12-20 chars/sec (a validated real 5-minute call: 4809 chars / 297s ≈ 16.2
+// chars/sec); confirmed August 2026 hallucinations (short calls where the
+// model fabricated a full conversation instead of transcribing near-silence)
+// ran from ~245 chars/sec up to 13000+ chars/sec on the worst case. 45 sits
+// comfortably above any plausible fast-talker and well below every observed
+// hallucination.
+const hallucinationCharsPerSecThreshold = 45.0
+
+// effectiveDurationSec mirrors the sandbox's COALESCE(talk_time_sec,
+// duration_sec) pattern — talk_time_sec (actual speech time) is the more
+// precise denominator when OnlinePBX reports it, duration_sec (whole call
+// including ringing) is the fallback.
+func effectiveDurationSec(talkTimeSec, durationSec int) int {
+	if talkTimeSec > 0 {
+		return talkTimeSec
+	}
+	return durationSec
+}
+
+// transcriptImplausiblyLong flags a transcript whose length can't
+// plausibly fit in the call's actual duration — see
+// hallucinationCharsPerSecThreshold's doc comment for the calibration data.
+// A zero/unknown duration can't be checked (nothing to divide by) and is
+// deliberately never flagged here rather than guessed at.
+func transcriptImplausiblyLong(text string, talkTimeSec, durationSec int) bool {
+	dur := effectiveDurationSec(talkTimeSec, durationSec)
+	if dur <= 0 {
+		return false
+	}
+	return float64(len(text))/float64(dur) > hallucinationCharsPerSecThreshold
 }
 
 // AnalyzeCalls finds every call in [from, to) whose transcript is ready but
@@ -890,6 +929,13 @@ func (s *Service) RequestCallerReport(ctx context.Context, callerID, period stri
 	}
 	for _, c := range calls {
 		if c.TranscriptText == "" {
+			continue
+		}
+		// Skip calls flagged by transcribeOnly's post-transcription sanity
+		// check (see database.HallucinationSuspectedErrorKind) — a
+		// fabricated transcript shouldn't feed the period summary or count
+		// toward the caller's activity for this report.
+		if c.ErrorKind == database.HallucinationSuspectedErrorKind {
 			continue
 		}
 		req.Calls = append(req.Calls, callreport.CallForReport{
