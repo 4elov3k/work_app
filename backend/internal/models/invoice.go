@@ -13,8 +13,13 @@ type Invoice struct {
 	TotalAmount    float64   `json:"total_amount"`
 	Archived       bool      `json:"archived"`
 	ContractNumber string    `json:"contract_number"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	// Signed/SignedAt gate the seller's seal+signature image on the print
+	// form (see "Подписать"). Independent of Status (draft/issued/paid/
+	// canceled tracks payment lifecycle, not whether the PDF carries a seal).
+	Signed    bool       `json:"signed"`
+	SignedAt  *time.Time `json:"signed_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 // InvoiceWithServices представляет счет с услугами
@@ -67,6 +72,11 @@ type UpdateInvoiceRequest struct {
 	Date     *string `json:"date"`
 	Status   *string `json:"status"`
 	Archived *bool   `json:"archived"`
+}
+
+// SignInvoiceRequest представляет запрос на простановку/снятие печати на счете
+type SignInvoiceRequest struct {
+	Signed bool `json:"signed"`
 }
 
 // InvoiceLineInput представляет входную строку счета

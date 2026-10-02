@@ -410,6 +410,31 @@ func (h *Handlers) UpdateInvoice(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusOK, models.InvoiceResponse{Data: *invoice})
 }
 
+// SignInvoice обрабатывает POST /api/invoices/{id}/sign — проставляет/снимает
+// печать+подпись исполнителя на печатной форме счета.
+func (h *Handlers) SignInvoice(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respondWithError(w, http.StatusBadRequest, "Invoice ID is required")
+		return
+	}
+
+	var req models.SignInvoiceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	invoice, err := h.db.SignInvoice(ctx, id, req.Signed)
+	if err != nil {
+		respondNotFoundOrInternal(w, err, "Invoice not found")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, models.InvoiceResponse{Data: *invoice})
+}
+
 // AddInvoiceLine обрабатывает POST /api/invoices/{id}/lines
 func (h *Handlers) AddInvoiceLine(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

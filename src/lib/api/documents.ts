@@ -54,6 +54,8 @@ export interface Invoice {
   total_amount: number;
   archived: boolean;
   contract_number: string;
+  signed: boolean;
+  signed_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -68,6 +70,8 @@ export interface Act {
   total_amount: number;
   archived: boolean;
   contract_number: string;
+  signed: boolean;
+  signed_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -360,6 +364,16 @@ export const invoicesAPI = {
     return handleResponse<SingleResponse<Invoice>>(response);
   },
 
+  // Проставить/снять печать и подпись исполнителя на печатной форме
+  sign: async (id: string, signed: boolean): Promise<SingleResponse<Invoice>> => {
+    const response = await fetch(`${API_BASE}/invoices/${id}/sign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ signed }),
+    });
+    return handleResponse<SingleResponse<Invoice>>(response);
+  },
+
   addLine: async (id: string, line: {
     service_id?: string;
     title?: string;
@@ -482,6 +496,16 @@ export const actsAPI = {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
+    });
+    return handleResponse<SingleResponse<Act>>(response);
+  },
+
+  // Проставить/снять печать и подпись исполнителя на печатной форме
+  sign: async (id: string, signed: boolean): Promise<SingleResponse<Act>> => {
+    const response = await fetch(`${API_BASE}/acts/${id}/sign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ signed }),
     });
     return handleResponse<SingleResponse<Act>>(response);
   },

@@ -116,6 +116,7 @@ func main() {
 			r.Delete("/invoices/{id}/lines/{lineID}", h.DeleteInvoiceLine)
 			r.Post("/invoices/{id}/act", h.CreateActFromInvoice)
 			r.Patch("/invoices/{id}", h.UpdateInvoice)
+			r.Post("/invoices/{id}/sign", h.SignInvoice)
 			r.Delete("/invoices/{id}", h.DeleteInvoice)
 
 			r.Get("/acts", h.GetActs)
@@ -130,6 +131,7 @@ func main() {
 			r.Patch("/acts/{id}/lines/{lineID}", h.UpdateActLine)
 			r.Delete("/acts/{id}/lines/{lineID}", h.DeleteActLine)
 			r.Patch("/acts/{id}", h.UpdateAct)
+			r.Post("/acts/{id}/sign", h.SignAct)
 			r.Delete("/acts/{id}", h.DeleteAct)
 
 			r.Post("/documents/parse-contract", h.ParseContractDocument)

@@ -172,7 +172,7 @@ export default function InvoiceTemplate({ invoice, customer, docId, organization
             <div className="text-[11px]">
               <p className="mb-3">{organization.signer.position || "Руководитель предприятия"}:</p>
               <div className="relative border-b border-black w-48 h-6">
-                <Signature />
+                <Signature visible={invoice.signed} />
               </div>
               <p className="text-[9px] text-gray-500 mt-1">(подпись)</p>
             </div>
@@ -182,7 +182,7 @@ export default function InvoiceTemplate({ invoice, customer, docId, organization
           </div>
           <div className="relative">
             <p className="text-[11px] mt-6">М.П.</p>
-            <Stamp />
+            <Stamp visible={invoice.signed} />
           </div>
         </div>
       </CardContent>

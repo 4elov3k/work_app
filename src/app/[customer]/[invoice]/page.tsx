@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator"
 import { invoicesAPI, ApiError } from "@/lib/api.server"
 import AddLine from "../components/addLine"
 import EditDocument from "../components/editDocument"
+import SignDocument from "../components/signDocument"
 import CreateActFromInvoice from "./components/createActFromInvoice"
 import DocumentActionsMenu from "../components/documentActionsMenu"
 
@@ -67,6 +68,7 @@ export default async function Page({
                     {!invoice.archived && (
                       <CreateActFromInvoice invoiceId={invoiceId} customerId={customerId} contractId={invoice.contract_id} />
                     )}
+                    <SignDocument docType="invoice" docId={invoiceId} signed={invoice.signed} />
                     <DownloadXml invoiceId={invoiceId} />
                     <DownloadPdf fileName={fileName} />
 	                    <UploadPdfToRedmine customerId={customerId} documentType="invoice" documentId={invoiceId} fileName={fileName} />

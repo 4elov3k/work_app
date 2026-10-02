@@ -12,6 +12,7 @@ import { Separator } from "@/components/ui/separator"
 import { actsAPI, ApiError } from "@/lib/api.server"
 import AddLine from "../../components/addLine"
 import EditDocument from "../../components/editDocument"
+import SignDocument from "../../components/signDocument"
 import DocumentActionsMenu from "../../components/documentActionsMenu"
 
 export default async function Page({
@@ -61,6 +62,7 @@ export default async function Page({
               archived={act.archived}
             />
             {!act.archived && <AddLine docId={actId} docType="act" />}
+            <SignDocument docType="act" docId={actId} signed={act.signed} />
             <DownloadXml actId={actId} />
             <DownloadPdf fileName={fileName} />
             <UploadPdfToRedmine customerId={customerId} documentType="act" documentId={actId} fileName={fileName} />

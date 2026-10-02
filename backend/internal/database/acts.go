@@ -102,7 +102,7 @@ func (db *DB) GetActs(ctx context.Context, customerID, contractID string, archiv
 func (db *DB) GetActByID(ctx context.Context, id string) (*models.Act, error) {
 	query := `
 		SELECT a.id, a.contract_id, c.customer_id, a.number, a.date, a.status, a.total_amount,
-		       a.archived, c.number AS contract_number, a.created_at, a.updated_at
+		       a.archived, c.number AS contract_number, a.signed, a.signed_at, a.created_at, a.updated_at
 		FROM acts a
 		JOIN contracts c ON c.id = a.contract_id
 		WHERE a.id = $1
@@ -118,6 +118,8 @@ func (db *DB) GetActByID(ctx context.Context, id string) (*models.Act, error) {
 		&act.TotalAmount,
 		&act.Archived,
 		&act.ContractNumber,
+		&act.Signed,
+		&act.SignedAt,
 		&act.CreatedAt,
 		&act.UpdatedAt,
 	)
@@ -664,6 +666,42 @@ func (db *DB) UpdateAct(ctx context.Context, id string, number *string, date *st
 			act.CustomerID = customerID
 			act.ContractNumber = contractNumber
 		}
+	}
+	return &act, nil
+}
+
+// SignAct проставляет/снимает печать+подпись исполнителя на печатной форме акта
+func (db *DB) SignAct(ctx context.Context, id string, signed bool) (*models.Act, error) {
+	query := `
+		UPDATE acts a
+		SET signed = $2,
+		    signed_at = CASE WHEN $2 THEN now() ELSE NULL END
+		FROM contracts c
+		WHERE a.id = $1 AND c.id = a.contract_id
+		RETURNING a.id, a.contract_id, c.customer_id, a.number, a.date, a.status, a.total_amount,
+		          a.archived, c.number, a.signed, a.signed_at, a.created_at, a.updated_at
+	`
+	var act models.Act
+	err := db.QueryRowContext(ctx, query, id, signed).Scan(
+		&act.ID,
+		&act.ContractID,
+		&act.CustomerID,
+		&act.Number,
+		&act.Date,
+		&act.Status,
+		&act.TotalAmount,
+		&act.Archived,
+		&act.ContractNumber,
+		&act.Signed,
+		&act.SignedAt,
+		&act.CreatedAt,
+		&act.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign act: %w", err)
 	}
 	return &act, nil
 }

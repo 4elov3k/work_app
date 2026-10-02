@@ -86,6 +86,8 @@ export interface Invoice {
   total_amount: number
   archived: boolean
   contract_number: string
+  signed: boolean
+  signed_at?: string
   created_at: string
   updated_at: string
 }
@@ -100,6 +102,8 @@ export interface Act {
   total_amount: number
   archived: boolean
   contract_number: string
+  signed: boolean
+  signed_at?: string
   created_at: string
   updated_at: string
 }

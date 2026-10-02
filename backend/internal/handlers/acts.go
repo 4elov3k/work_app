@@ -410,6 +410,31 @@ func (h *Handlers) UpdateAct(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusOK, models.ActResponse{Data: *act})
 }
 
+// SignAct обрабатывает POST /api/acts/{id}/sign — проставляет/снимает
+// печать+подпись исполнителя на печатной форме акта.
+func (h *Handlers) SignAct(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respondWithError(w, http.StatusBadRequest, "Act ID is required")
+		return
+	}
+
+	var req models.SignActRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	act, err := h.db.SignAct(ctx, id, req.Signed)
+	if err != nil {
+		respondNotFoundOrInternal(w, err, "Act not found")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, models.ActResponse{Data: *act})
+}
+
 // AddActLine обрабатывает POST /api/acts/{id}/lines
 func (h *Handlers) AddActLine(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

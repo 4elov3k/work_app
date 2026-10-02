@@ -129,7 +129,7 @@ func (db *DB) GetInvoices(ctx context.Context, customerID, contractID string, ar
 // GetInvoiceByID возвращает счет по ID
 func (db *DB) GetInvoiceByID(ctx context.Context, id string) (*models.Invoice, error) {
 	query := `
-		SELECT id, contract_id, customer_id, number, date, status, total_amount, archived, contract_number, created_at, updated_at
+		SELECT id, contract_id, customer_id, number, date, status, total_amount, archived, contract_number, signed, signed_at, created_at, updated_at
 		FROM invoices
 		WHERE id = $1
 	`
@@ -145,6 +145,8 @@ func (db *DB) GetInvoiceByID(ctx context.Context, id string) (*models.Invoice, e
 		&invoice.TotalAmount,
 		&invoice.Archived,
 		&invoice.ContractNumber,
+		&invoice.Signed,
+		&invoice.SignedAt,
 		&invoice.CreatedAt,
 		&invoice.UpdatedAt,
 	)
@@ -839,6 +841,40 @@ func (db *DB) UpdateInvoice(ctx context.Context, id string, number *string, date
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to update invoice: %w", err)
+	}
+	return &invoice, nil
+}
+
+// SignInvoice проставляет/снимает печать+подпись исполнителя на печатной форме счета
+func (db *DB) SignInvoice(ctx context.Context, id string, signed bool) (*models.Invoice, error) {
+	query := `
+		UPDATE invoices
+		SET signed = $2,
+		    signed_at = CASE WHEN $2 THEN now() ELSE NULL END
+		WHERE id = $1
+		RETURNING id, contract_id, customer_id, number, date, status, total_amount, archived, contract_number, signed, signed_at, created_at, updated_at
+	`
+	var invoice models.Invoice
+	err := db.QueryRowContext(ctx, query, id, signed).Scan(
+		&invoice.ID,
+		&invoice.ContractID,
+		&invoice.CustomerID,
+		&invoice.Number,
+		&invoice.Date,
+		&invoice.Status,
+		&invoice.TotalAmount,
+		&invoice.Archived,
+		&invoice.ContractNumber,
+		&invoice.Signed,
+		&invoice.SignedAt,
+		&invoice.CreatedAt,
+		&invoice.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign invoice: %w", err)
 	}
 	return &invoice, nil
 }

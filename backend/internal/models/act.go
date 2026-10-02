@@ -13,8 +13,14 @@ type Act struct {
 	TotalAmount    float64   `json:"total_amount"`
 	Archived       bool      `json:"archived"`
 	ContractNumber string    `json:"contract_number"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	// Signed/SignedAt gate the seller's seal+signature image on the print
+	// form (see "Подписать"). Deliberately independent of Status — Status
+	// "signed" on an act is a distinct accounting posting state (see
+	// backend/internal/accounting/service.go CommitIssueAct).
+	Signed    bool       `json:"signed"`
+	SignedAt  *time.Time `json:"signed_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 // ActWithServices представляет акт с услугами
@@ -79,4 +85,9 @@ type UpdateActRequest struct {
 	Date     *string `json:"date"`
 	Status   *string `json:"status"`
 	Archived *bool   `json:"archived"`
+}
+
+// SignActRequest представляет запрос на простановку/снятие печати на акте
+type SignActRequest struct {
+	Signed bool `json:"signed"`
 }

@@ -176,7 +176,7 @@ export default function CertificateTemplate({ invoice, customer, docId, organiza
             </div>
             <div className="relative flex items-center gap-2 mt-2">
               <div className="border-b border-black flex-1 h-6"></div>
-              <Signature />
+              <Signature visible={invoice.signed} />
             </div>
             <p className="text-[9px] text-gray-500 mt-1">(подпись)</p>
           </div>
@@ -196,7 +196,7 @@ export default function CertificateTemplate({ invoice, customer, docId, organiza
 
         <div className="relative text-left mt-6">
           <p className="text-[11px]">М.П.</p>
-          <Stamp />
+          <Stamp visible={invoice.signed} />
         </div>
       </CardContent>
     </Card>
