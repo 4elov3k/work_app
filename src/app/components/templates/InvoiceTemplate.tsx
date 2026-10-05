@@ -180,7 +180,7 @@ export default function InvoiceTemplate({ invoice, customer, docId, organization
               {sellerSignerName}
             </div>
           </div>
-          <div className="relative">
+          <div className="relative" style={{ paddingBottom: invoice.signed ? '110px' : undefined }}>
             <p className="text-[11px] mt-6">М.П.</p>
             <Stamp visible={invoice.signed} />
           </div>

@@ -150,7 +150,7 @@ export default function ContractAppendixTemplate({
           </div>
         </div>
 
-        <div className="relative text-left mt-6">
+        <div className="relative text-left mt-6" style={{ paddingBottom: '110px' }}>
           <p className="text-[11px]">М.П.</p>
           <Stamp visible />
         </div>
