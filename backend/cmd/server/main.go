@@ -107,6 +107,8 @@ func main() {
 
 			r.Get("/invoices", h.GetInvoices)
 			r.Post("/invoices/duplicate", h.DuplicateInvoice)
+			r.Get("/invoices/next-number-from-sheet", h.GetInvoiceNumberFromSheet)
+			r.Post("/invoices/{id}/register-in-sheet", h.RegisterInvoiceInSheet)
 			r.Get("/invoices/{id}/services", h.GetInvoiceWithServices)
 			r.Get("/invoices/{id}/export/upd-xml", h.ExportInvoiceXML)
 			r.Get("/invoices/{id}", h.GetInvoiceByID)
