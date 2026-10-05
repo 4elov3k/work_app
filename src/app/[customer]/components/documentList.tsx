@@ -91,6 +91,9 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
   const [sheetSyncing, setSheetSyncing] = useState(false)
   const [syncedWithSheet, setSyncedWithSheet] = useState(false)
   const [sheetNote, setSheetNote] = useState("")
+  // Категория проекта для реестра счетов ("Наименование") — ручной выбор
+  // человека, не выводится из состава услуг счета (см. registerInSheet).
+  const [invoiceCategory, setInvoiceCategory] = useState("")
 
   const loadDocuments = useCallback(() => {
     const loader =
@@ -167,6 +170,7 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
       setNumber(res.number)
       setSyncedWithSheet(false)
       setSheetNote("")
+      setInvoiceCategory("")
     } catch (err: unknown) {
       console.error("Failed to load next number:", err)
       const message = err instanceof Error ? err.message : "Не удалось получить номер"
@@ -194,13 +198,17 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
     setError("")
     setSheetNote("")
     try {
-      const res = await actsAPI.getNextNumberFromSheet()
+      const res =
+        documentType === "invoice"
+          ? await invoicesAPI.getNextNumberFromSheet()
+          : await actsAPI.getNextNumberFromSheet()
       setNumber(res.data.number)
       setManualNumber(true)
       setSyncedWithSheet(true)
-      setSheetNote(`Номер ${res.data.number} взят из таблицы (строка ${res.data.row}). При создании акта строка будет дописана автоматически.`)
+      const docLabel = documentType === "invoice" ? "счета" : "акта"
+      setSheetNote(`Номер ${res.data.number} взят из таблицы (строка ${res.data.row}). При создании ${docLabel} строка будет дописана автоматически.`)
     } catch (err: unknown) {
-      console.error("Failed to sync act number with sheet:", err)
+      console.error(`Failed to sync ${documentType} number with sheet:`, err)
       const message = err instanceof Error ? err.message : "Не удалось синхронизироваться с таблицей"
       setError(message.replace(/\s*\(HTTP \d+\)$/, ""))
     } finally {
@@ -250,7 +258,11 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
         return
       }
       if (documentType === "invoice") {
-        await invoicesAPI.create({
+        if (syncedWithSheet && !invoiceCategory) {
+          setError("Выберите категорию проекта для реестра")
+          return
+        }
+        const invoiceResponse = await invoicesAPI.create({
           contract_id: selectedContractId,
           customer_id: slug,
           number: number,
@@ -258,6 +270,16 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
           service_ids: selectedServiceId ? [selectedServiceId] : undefined,
           services: selectedServiceId ? undefined : [{ name: serviceName, price: parseFloat(servicePrice) }],
         })
+
+        if (syncedWithSheet) {
+          try {
+            await invoicesAPI.registerInSheet(invoiceResponse.data.id, invoiceCategory)
+          } catch (sheetErr: unknown) {
+            console.error("Failed to register invoice in sheet:", sheetErr)
+            const sheetMessage = sheetErr instanceof Error ? sheetErr.message : "неизвестная ошибка"
+            window.alert(`Счет создан, но не удалось дописать его в таблицу: ${sheetMessage.replace(/\s*\(HTTP \d+\)$/, "")}`)
+          }
+        }
       } else {
         const actResponse = await actsAPI.create({
           contract_id: selectedContractId,
@@ -288,6 +310,7 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
       setSelectedServiceId("")
       setSyncedWithSheet(false)
       setSheetNote("")
+      setInvoiceCategory("")
       loadRedmineStatuses()
       setIsOpen(false)
     } catch (err: unknown) {
@@ -368,7 +391,7 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
                 <DialogDescription>{cfg.createDescription}</DialogDescription>
               </DialogHeader>
               {error && <Alert>{error}</Alert>}
-              {documentType === "act" && (
+              {(documentType === "act" || documentType === "invoice") && (
                 <div className="pt-2">
                   <Button type="button" variant="outline" size="sm" onClick={handleSyncWithSheet} disabled={sheetSyncing}>
                     {sheetSyncing ? (
@@ -384,6 +407,24 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
                     )}
                   </Button>
                   {sheetNote && <p className="text-xs text-muted-foreground mt-2">{sheetNote}</p>}
+                  {documentType === "invoice" && syncedWithSheet && (
+                    <div className="space-y-2 mt-3">
+                      <label htmlFor="invoiceCategory" className="text-sm font-medium">
+                        Категория проекта (для реестра)
+                      </label>
+                      <Select
+                        id="invoiceCategory"
+                        value={invoiceCategory}
+                        onChange={(e) => setInvoiceCategory(e.target.value)}
+                        required
+                      >
+                        <option value="">Выберите категорию...</option>
+                        <option value="Продвижение">Продвижение</option>
+                        <option value="Разработка">Разработка</option>
+                        <option value="Хостинг">Хостинг</option>
+                      </Select>
+                    </div>
+                  )}
                 </div>
               )}
               <div className="grid gap-4 py-4">
@@ -399,6 +440,7 @@ export default function DocumentList({ slug, documentType, fixedContractId }: Do
                       setNumber(e.target.value)
                       setSyncedWithSheet(false)
                       setSheetNote("")
+                      setInvoiceCategory("")
                     }}
                     required
                     disabled={!manualNumber}

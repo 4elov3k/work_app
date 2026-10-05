@@ -421,6 +421,24 @@ export const invoicesAPI = {
     });
     return handleResponse<SingleResponse<Act>>(response);
   },
+
+  // Следующий номер счета из реального реестра (Google-таблица), не из
+  // внутренней последовательности work_app
+  getNextNumberFromSheet: async (): Promise<{ data: { number: string; row: number } }> => {
+    const response = await fetch(`${API_BASE}/invoices/next-number-from-sheet`);
+    return handleResponse<{ data: { number: string; row: number } }>(response);
+  },
+
+  // Дописывает строку в реестр для уже созданного счета. category — одна
+  // из трёх фиксированных категорий проекта, выбранная пользователем.
+  registerInSheet: async (id: string, category: string): Promise<{ data: { row: number; number: string; updated_cells: number } }> => {
+    const response = await fetch(`${API_BASE}/invoices/${id}/register-in-sheet`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category }),
+    });
+    return handleResponse<{ data: { row: number; number: string; updated_cells: number } }>(response);
+  },
 };
 
 // API для работы с актами
