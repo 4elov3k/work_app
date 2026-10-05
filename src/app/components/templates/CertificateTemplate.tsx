@@ -194,7 +194,7 @@ export default function CertificateTemplate({ invoice, customer, docId, organiza
           </div>
         </div>
 
-        <div className="relative text-left mt-6">
+        <div className="relative text-left mt-6" style={{ paddingBottom: invoice.signed ? '110px' : undefined }}>
           <p className="text-[11px]">М.П.</p>
           <Stamp visible={invoice.signed} />
         </div>
