@@ -72,7 +72,36 @@ export interface CallStepResult {
   final_confirmation?: boolean;
 }
 
+// CallCriterion — один из 4 критериев оценки (см. CallCriteria ниже).
+// met=null значит "в этом звонке не было подходящей ситуации для оценки
+// этого критерия" — не засчитывается ни как выполненный, ни как провальный.
+export interface CallCriterion {
+  met: boolean | null;
+  evidence: string;
+  comment: string;
+}
+
+// CallCriteria — 4-критериальная оценка звонка (2026-09-29, заменила
+// 6-шаговый regламент IQ-200 — см. CallStepResult/CallOutcome ниже,
+// оставлены для чтения старых, уже проанализированных по regламенту
+// звонков, но новые звонки больше не получают эту форму).
+export interface CallCriteria {
+  listening: CallCriterion;
+  goal_understanding: CallCriterion;
+  questions: CallCriterion;
+  objection_handling: CallCriterion;
+}
+
 export interface CallAnalytics {
+  // Текущая форма (2026-09-29 онвард) — 4 критерия вместо шагов скрипта.
+  criteria?: CallCriteria;
+  score?: string; // "X/N" — X критериев met=true из N применимых
+  summary?: string;
+  recommendation?: string;
+
+  // Всё ниже — старая форма (regламент IQ-200 v1.2, до 2026-09-29). Звонки,
+  // проанализированные до перехода, хранят её как есть, без бэкфилла в
+  // новую форму — читайте условно, по наличию criteria/score выше.
   call_type?: "технический" | "содержательный" | "недостаточно_данных";
   fraud_suspected?: boolean;
   counterpart_role?: string;
@@ -89,12 +118,22 @@ export interface CallAnalytics {
   max_step_reached?: number | null;
   break_point?: string;
   outcome?: CallOutcome;
-  recommendation?: string;
   confidence?: "высокая" | "средняя" | "низкая";
   note?: string;
   // Legacy-поля до перехода на регламент IQ-200 v1.2 — оставлены как есть,
   // без бэкфилла (см. решение "leave as-is" при переходе на новый формат).
   category?: string;
+}
+
+// CallTranscriptSegment — один "ход" реплики с таймкодом (transcribe.Segment
+// на бэкенде). speaker — номер говорящего при диаризации на стороне Hermes,
+// null иначе. Отсутствует (Call.transcript_segments === undefined) на
+// звонках, расшифрованных до этого поля — там есть только transcript_text.
+export interface CallTranscriptSegment {
+  start: number;
+  end: number;
+  speaker: number | null;
+  text: string;
 }
 
 export interface Call {
@@ -109,6 +148,7 @@ export interface Call {
   hangup_cause: string;
   transcript_status: string;
   transcript_text?: string;
+  transcript_segments?: CallTranscriptSegment[];
   analytics_json?: CallAnalytics;
   // engine — каким сервисом фактически транскрибирован звонок ("cpu"/"gpu"),
   // пусто пока не транскрибирован.
@@ -121,6 +161,21 @@ export interface Call {
   last_error?: string;
   created_at: string;
   updated_at: string;
+
+  // fraud_precheck_* — сигнал, определённый на этапе транскрибации по
+  // аудио (см. backend/internal/transcribe/client.go), отдельно от
+  // analytics_json.fraud_suspected (та метка исторически приходила из
+  // отдельного hermes-анализа по тексту). fraud_precheck_suspected===undefined
+  // значит "предфильтр не выполнялся вообще" — не то же самое, что false.
+  fraud_precheck_suspected?: boolean;
+  fraud_precheck_check?: string;
+  fraud_precheck_quote?: string;
+  fraud_precheck_position?: "начало" | "конец";
+  // fraud_review_status — "pending" (ждёт решения человека) / "confirmed" /
+  // "rejected". Единственное, что реально влияет на исключение из оплаты
+  // (во внешнем расчёте) — это "confirmed", не сам fraud_precheck_suspected.
+  fraud_review_status?: "pending" | "confirmed" | "rejected";
+  fraud_reviewed_at?: string;
 }
 
 export interface PingResult {
@@ -234,6 +289,43 @@ export const zvonariAPI = {
     const params = new URLSearchParams({ from, to });
     const response = await fetch(`${API_BASE}/zvonari/calls/count?${params.toString()}`);
     return handleResponse<SingleResponse<Record<string, number>>>(response);
+  },
+
+  // Совокупный балл по 4 критериям на каждого звонаря за период (замена
+  // старых "Скрипт до конца"/"Срыв на шаге 1", см. CallCriteria выше) —
+  // met_true/applicable ПО ВСЕМ звонкам и критериям вместе, не среднее по
+  // отдельным звонкам (см. database.CriteriaScore на бэкенде).
+  getCriteriaScores: async (from: string, to: string): Promise<SingleResponse<Record<string, { met_true: number; applicable: number }>>> => {
+    const params = new URLSearchParams({ from, to });
+    const response = await fetch(`${API_BASE}/zvonari/calls/criteria-scores?${params.toString()}`);
+    return handleResponse<SingleResponse<Record<string, { met_true: number; applicable: number }>>>(response);
+  },
+
+  // Очередь звонков-кандидатов на фрод (fraud_review_status='pending') за
+  // период, по всем звонарям — для UI подтверждения/отклонения.
+  getFraudCandidates: async (from: string, to: string): Promise<SingleResponse<Call[]>> => {
+    const params = new URLSearchParams({ from, to });
+    const response = await fetch(`${API_BASE}/zvonari/calls/fraud-candidates?${params.toString()}`);
+    return handleResponse<SingleResponse<Call[]>>(response);
+  },
+
+  // Зафиксировать решение человека по кандидату — само по себе ничего не
+  // исключает из оплаты (это делает внешний расчёт по "confirmed"), просто
+  // сохраняет вердикт.
+  reviewFraudCandidate: async (callId: string, status: "confirmed" | "rejected"): Promise<SingleResponse<{ status: string }>> => {
+    const response = await fetch(`${API_BASE}/zvonari/calls/${callId}/fraud-review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    return handleResponse<SingleResponse<{ status: string }>>(response);
+  },
+
+  // Ссылка на выгрузку всех фрод-кандидатов за период (включая уже
+  // проверенные человеком) в .xlsx — для внешнего расчёта оплаты.
+  fraudExportXlsxUrl: (from: string, to: string): string => {
+    const params = new URLSearchParams({ from, to });
+    return `${API_BASE}/zvonari/calls/fraud-export.xlsx?${params.toString()}`;
   },
 
   // Разбивка звонков по transcript_status на каждого звонаря за период
@@ -362,4 +454,9 @@ export const zvonariAPI = {
     const params = new URLSearchParams({ from, to });
     return `${API_BASE}/zvonari/callers/${callerId}/export.csv?${params.toString()}`;
   },
+
+  // Ссылка на прослушивание записи одного звонка — бэкенд резолвит свежую
+  // подписанную ссылку OnlinePBX и редиректит на неё, так что этот URL
+  // можно открывать напрямую (window.open), без fetch.
+  recordingUrl: (callId: string): string => `${API_BASE}/zvonari/calls/${callId}/recording`,
 };

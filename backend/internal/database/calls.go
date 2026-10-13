@@ -124,15 +124,46 @@ const HallucinationSuspectedErrorKind = "hallucination_suspected"
 // HallucinationSuspectedErrorKind instead of being cleared — see its doc
 // comment. A successful (re)transcription otherwise supersedes whatever
 // went wrong last time.
-func (db *DB) SetCallTranscript(ctx context.Context, id, text, engine string, hallucinationSuspected bool) error {
+// SetCallTranscript saves the transcript and, when engine == "openrouter",
+// the fraud precheck signal computed in the same OpenRouter call (see
+// transcribe.Client.transcribeOpenRouter) — one write instead of two, since
+// they're now always produced together. fraudCheck == "" means no signal was
+// computed at all (GPU/CPU path, which has no LLM to ask) — that's not the
+// same as fraudSuspected == false (a real "checked, not fraud" verdict), so
+// fraud_precheck_check stores the empty string as NULL to keep that
+// distinction visible in the DB rather than collapsing both into "false".
+// fraudSuspected only ever sets fraud_review_status to 'pending' — never
+// clears an existing review a human already made, and never sets 'confirmed'/
+// 'rejected' itself, since only a human does that (see fraud_reviewed_at).
+func (db *DB) SetCallTranscript(ctx context.Context, id, text, engine string, hallucinationSuspected bool, fraudSuspected bool, fraudCheck, fraudQuote, fraudPosition string) error {
 	var errorKind any
 	if hallucinationSuspected {
 		errorKind = HallucinationSuspectedErrorKind
 	}
+	var suspected, check, quote, position, reviewStatus any
+	if fraudCheck != "" {
+		// A real check ran — record its verdict, even when that verdict is
+		// "not suspected" (fraudSuspected == false is meaningful here, not a
+		// zero-value stand-in for "unknown" the way it would be below).
+		suspected = fraudSuspected
+		check = fraudCheck
+	}
+	if fraudQuote != "" {
+		quote = fraudQuote
+	}
+	if fraudPosition != "" {
+		position = fraudPosition
+	}
+	if fraudSuspected {
+		reviewStatus = "pending"
+	}
 	_, err := db.ExecContext(ctx,
 		`UPDATE calls SET transcript_text = $2, transcript_status = 'done', engine = $3, transcribed_at = CURRENT_TIMESTAMP,
-		       error_kind = $4, last_error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-		id, text, engine, errorKind,
+		       error_kind = $4, last_error = NULL, updated_at = CURRENT_TIMESTAMP,
+		       fraud_precheck_suspected = $5, fraud_precheck_check = $6, fraud_precheck_quote = $7, fraud_precheck_position = $8,
+		       fraud_review_status = COALESCE(fraud_review_status, $9)
+		 WHERE id = $1`,
+		id, text, engine, errorKind, suspected, check, quote, position, reviewStatus,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update transcript: %w", err)
@@ -295,6 +326,62 @@ func (db *DB) CountOutcomesByCaller(ctx context.Context, from, to time.Time) (ma
 	return counts, nil
 }
 
+// CriteriaScore is one caller's aggregate over the 4-criteria rubric
+// (2026-09-29 onward) for a period — MetTrue/Applicable across all 4
+// criteria of all their scored calls combined, not an average of per-call
+// fractions (a caller with one 4/4 call and one 0/4 call reads as 4/8, not
+// as "50% on average" — the two aren't the same number once call counts
+// differ, and the combined-count version is the one that doesn't silently
+// let a single short call swing the number as much as a long one).
+type CriteriaScore struct {
+	MetTrue    int
+	Applicable int
+}
+
+// CountCriteriaScoresByCaller returns, for every caller with at least one
+// 4-criteria-scored call in [from, to), their combined MetTrue/Applicable —
+// replaces CountOutcomesByCaller's step-funnel columns ("Скрипт до конца"/
+// "Срыв на шаге 1") on the dashboard now that there's no script/steps left
+// to fail at (2026-09-29, management retired the step rubric — see
+// hermes/services/call_analytics_server.py's module docstring). Calls
+// analyzed under the old {steps: ..., outcome: ...} shape have no
+// "criteria" key and are silently excluded here, same as
+// ListCallsNeedingAnalysis already excludes anything with the new
+// "criteria" key from needing re-analysis — the two schemas never mix
+// within one call's row, so there's no double-counting either way. Uses
+// jsonb_each to iterate the 4 criteria keys per call without hardcoding
+// their names in SQL.
+func (db *DB) CountCriteriaScoresByCaller(ctx context.Context, from, to time.Time) (map[string]CriteriaScore, error) {
+	query := `
+		SELECT c.caller_id,
+		       count(*) FILTER (WHERE (kv.value->>'met')::boolean IS TRUE) AS met_true,
+		       count(*) FILTER (WHERE kv.value->>'met' IS NOT NULL) AS applicable
+		FROM calls c, jsonb_each(c.analytics_json->'criteria') AS kv
+		WHERE c.caller_id IS NOT NULL AND c.analytics_json ? 'criteria'
+		  AND c.started_at >= $1 AND c.started_at < $2
+		GROUP BY c.caller_id
+	`
+	rows, err := db.QueryContext(ctx, query, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count criteria scores by caller: %w", err)
+	}
+	defer rows.Close()
+
+	scores := map[string]CriteriaScore{}
+	for rows.Next() {
+		var callerID string
+		var s CriteriaScore
+		if err := rows.Scan(&callerID, &s.MetTrue, &s.Applicable); err != nil {
+			return nil, fmt.Errorf("failed to scan criteria score: %w", err)
+		}
+		scores[callerID] = s
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating criteria scores: %w", err)
+	}
+	return scores, nil
+}
+
 // CountFraudSuspectedByCaller returns, for every caller with calls in
 // [from, to), how many of their calls Hermes flagged as fraud_suspected
 // (operator hit an answering machine/voicemail and didn't hang up promptly
@@ -304,12 +391,24 @@ func (db *DB) CountOutcomesByCaller(ctx context.Context, from, to time.Time) (ma
 // without an N+1 fetch. This is a separate boolean axis from `outcome`, not
 // one of its values, per the regulation's separation of technical/fraud
 // detection from script-compliance scoring.
+// CountFraudSuspectedByCaller — per-caller fraud count for the dashboard
+// badge (задача 9-adjacent, 2026-09-29). COALESCE prefers the new
+// transcription-time precheck (fraud_precheck_suspected — see
+// computeFraudPrecheck in transcribe/client.go) over the old
+// analytics_json.fraud_suspected, but only for calls that have actually been
+// through the new pipeline (fraud_precheck_suspected IS NOT NULL); every
+// other call still falls back to the old signal. Switching the whole badge
+// to the new field outright would have made counts silently drop for the
+// ~630 September calls the new precheck hasn't reprocessed yet — not
+// because they aren't fraud, just because nobody's asked the new pipeline
+// about them. This bridges old→new one retry at a time instead of a hard
+// cutover.
 func (db *DB) CountFraudSuspectedByCaller(ctx context.Context, from, to time.Time) (map[string]int, error) {
 	query := `
 		SELECT caller_id, count(*)
 		FROM calls
 		WHERE caller_id IS NOT NULL AND started_at >= $1 AND started_at < $2
-		  AND (analytics_json->>'fraud_suspected')::boolean IS TRUE
+		  AND COALESCE(fraud_precheck_suspected, (analytics_json->>'fraud_suspected')::boolean) IS TRUE
 		GROUP BY caller_id
 	`
 	rows, err := db.QueryContext(ctx, query, from, to)
@@ -393,8 +492,15 @@ func (db *DB) ListCallsNeedingAnalysis(ctx context.Context, from, to time.Time) 
 		       COALESCE(engine, ''), transcribed_at, COALESCE(error_kind, ''), COALESCE(last_error, ''), created_at, updated_at
 		FROM calls
 		WHERE transcript_status = 'done'
-		  AND (analytics_json IS NULL OR NOT (analytics_json ? 'category' OR analytics_json ? 'call_type'))
+		  AND (analytics_json IS NULL OR NOT (analytics_json ? 'category' OR analytics_json ? 'call_type' OR analytics_json ? 'criteria'))
 		  AND (error_kind IS NULL OR error_kind != 'hallucination_suspected')
+		  -- 2026-09-29: fraud candidates (see transcribe.computeFraudPrecheck)
+		  -- never reach the 4-criteria rubric at all — a call nobody real
+		  -- answered has nothing for "умение слушать"/"работа с
+		  -- возражениями" to measure, per management's own call. Exclusion
+		  -- is on the boolean, not on fraud_review_status, so a call stays
+		  -- excluded even before a human has confirmed/rejected it.
+		  AND fraud_precheck_suspected IS NOT TRUE
 		  AND started_at >= $1 AND started_at < $2
 		ORDER BY started_at
 	`
@@ -506,7 +612,9 @@ func (db *DB) ListCallsByCallerPeriod(ctx context.Context, callerID string, from
 	query := `
 		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
 		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json,
-		       COALESCE(engine, ''), transcribed_at, COALESCE(error_kind, ''), COALESCE(last_error, ''), created_at, updated_at
+		       COALESCE(engine, ''), transcribed_at, COALESCE(error_kind, ''), COALESCE(last_error, ''), created_at, updated_at,
+		       fraud_precheck_suspected, COALESCE(fraud_precheck_check, ''), COALESCE(fraud_precheck_quote, ''),
+		       COALESCE(fraud_precheck_position, ''), COALESCE(fraud_review_status, ''), fraud_reviewed_at
 		FROM calls
 		WHERE caller_id = $1 AND started_at >= $2 AND started_at < $3
 		ORDER BY started_at
@@ -521,11 +629,13 @@ func (db *DB) ListCallsByCallerPeriod(ctx context.Context, callerID string, from
 	for rows.Next() {
 		var c models.Call
 		var analytics []byte
-		var transcribedAt sql.NullTime
+		var transcribedAt, fraudReviewedAt sql.NullTime
+		var fraudSuspected sql.NullBool
 		if err := rows.Scan(
 			&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
 			&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
 			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.ErrorKind, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
+			&fraudSuspected, &c.FraudPrecheckCheck, &c.FraudPrecheckQuote, &c.FraudPrecheckPosition, &c.FraudReviewStatus, &fraudReviewedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan call: %w", err)
 		}
@@ -535,10 +645,141 @@ func (db *DB) ListCallsByCallerPeriod(ctx context.Context, callerID string, from
 		if transcribedAt.Valid {
 			c.TranscribedAt = &transcribedAt.Time
 		}
+		if fraudSuspected.Valid {
+			c.FraudPrecheckSuspected = &fraudSuspected.Bool
+		}
+		if fraudReviewedAt.Valid {
+			c.FraudReviewedAt = &fraudReviewedAt.Time
+		}
 		calls = append(calls, c)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating calls: %w", err)
 	}
 	return calls, nil
+}
+
+// ListFraudCandidates returns every call awaiting human fraud review
+// (fraud_review_status = 'pending') in [from, to), across all callers — the
+// queue for задача 7's confirm/reject UI. Ordered oldest-first so a reviewer
+// working through the queue clears the backlog in call order, not newest-
+// first (which would leave old candidates to rot at the bottom indefinitely).
+func (db *DB) ListFraudCandidates(ctx context.Context, from, to time.Time) ([]models.Call, error) {
+	query := `
+		SELECT id, pbx_uuid, caller_id, direction, counterparty_number, started_at, duration_sec, talk_time_sec,
+		       hangup_cause, transcript_status, COALESCE(transcript_text, ''), analytics_json,
+		       COALESCE(engine, ''), transcribed_at, COALESCE(error_kind, ''), COALESCE(last_error, ''), created_at, updated_at,
+		       fraud_precheck_suspected, COALESCE(fraud_precheck_check, ''), COALESCE(fraud_precheck_quote, ''),
+		       COALESCE(fraud_precheck_position, ''), COALESCE(fraud_review_status, ''), fraud_reviewed_at
+		FROM calls
+		WHERE fraud_review_status = 'pending' AND started_at >= $1 AND started_at < $2
+		ORDER BY started_at
+	`
+	rows, err := db.QueryContext(ctx, query, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query fraud candidates: %w", err)
+	}
+	defer rows.Close()
+
+	var calls []models.Call
+	for rows.Next() {
+		var c models.Call
+		var analytics []byte
+		var transcribedAt, fraudReviewedAt sql.NullTime
+		var fraudSuspected sql.NullBool
+		if err := rows.Scan(
+			&c.ID, &c.PBXUUID, &c.CallerID, &c.Direction, &c.CounterpartyNumber,
+			&c.StartedAt, &c.DurationSec, &c.TalkTimeSec, &c.HangupCause, &c.TranscriptStatus,
+			&c.TranscriptText, &analytics, &c.Engine, &transcribedAt, &c.ErrorKind, &c.LastError, &c.CreatedAt, &c.UpdatedAt,
+			&fraudSuspected, &c.FraudPrecheckCheck, &c.FraudPrecheckQuote, &c.FraudPrecheckPosition, &c.FraudReviewStatus, &fraudReviewedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan call: %w", err)
+		}
+		if len(analytics) > 0 {
+			c.AnalyticsJSON = json.RawMessage(analytics)
+		}
+		if transcribedAt.Valid {
+			c.TranscribedAt = &transcribedAt.Time
+		}
+		if fraudSuspected.Valid {
+			c.FraudPrecheckSuspected = &fraudSuspected.Bool
+		}
+		if fraudReviewedAt.Valid {
+			c.FraudReviewedAt = &fraudReviewedAt.Time
+		}
+		calls = append(calls, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating fraud candidates: %w", err)
+	}
+	return calls, nil
+}
+
+// FraudExportRow is one row for the xlsx export (задача: "кнопка выгрузки
+// фрод-звонков в формате xlsx") — a flat, join-resolved shape (caller name
+// instead of caller_id) since that's what belongs in a spreadsheet a human
+// reads, not the FK a UI component looks up separately.
+type FraudExportRow struct {
+	ID           string
+	StartedAt    time.Time
+	CallerName   string
+	TalkTimeSec  int
+	DurationSec  int
+	Quote        string
+	Position     string
+	ReviewStatus string
+	Transcript   string
+}
+
+// ListFraudExportRows returns every call the precheck has ever flagged
+// (fraud_precheck_suspected = true) in [from, to), regardless of
+// fraud_review_status — unlike ListFraudCandidates (pending only), the
+// export is meant as a full audit trail including what's already been
+// confirmed/rejected, so a reviewer working from the spreadsheet can see the
+// whole picture, not just what's left to do.
+func (db *DB) ListFraudExportRows(ctx context.Context, from, to time.Time) ([]FraudExportRow, error) {
+	query := `
+		SELECT ca.id, ca.started_at, COALESCE(c.name, ''), ca.talk_time_sec, ca.duration_sec,
+		       COALESCE(ca.fraud_precheck_quote, ''), COALESCE(ca.fraud_precheck_position, ''),
+		       COALESCE(ca.fraud_review_status, ''), COALESCE(ca.transcript_text, '')
+		FROM calls ca
+		LEFT JOIN callers c ON c.id = ca.caller_id
+		WHERE ca.fraud_precheck_suspected = TRUE AND ca.started_at >= $1 AND ca.started_at < $2
+		ORDER BY c.name, ca.started_at
+	`
+	rows, err := db.QueryContext(ctx, query, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query fraud export rows: %w", err)
+	}
+	defer rows.Close()
+
+	var out []FraudExportRow
+	for rows.Next() {
+		var r FraudExportRow
+		if err := rows.Scan(&r.ID, &r.StartedAt, &r.CallerName, &r.TalkTimeSec, &r.DurationSec,
+			&r.Quote, &r.Position, &r.ReviewStatus, &r.Transcript); err != nil {
+			return nil, fmt.Errorf("failed to scan fraud export row: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating fraud export rows: %w", err)
+	}
+	return out, nil
+}
+
+// SetFraudReviewStatus records a human's confirm/reject decision on a fraud
+// candidate — the only thing that ever moves fraud_review_status out of
+// 'pending' (see SetCallTranscript, which only ever sets 'pending', never
+// 'confirmed'/'rejected'). status must be "confirmed" or "rejected"; the
+// caller (handler) validates this before it reaches here.
+func (db *DB) SetFraudReviewStatus(ctx context.Context, id, status string) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE calls SET fraud_review_status = $2, fraud_reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+		id, status,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update fraud review status: %w", err)
+	}
+	return nil
 }

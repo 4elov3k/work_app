@@ -17,7 +17,6 @@ import {
   Pause,
   Play,
   CheckCircle2,
-  XCircle,
   Cpu,
   MoreHorizontal,
   Square,
@@ -53,8 +52,6 @@ import {
   formatPointTrend,
   computeKpi,
   PeriodControl,
-  OUTCOME_SCRIPT_COMPLETED,
-  OUTCOME_STEP1_BROKEN,
   ERROR_KIND_LABELS,
   TERMINAL_ERROR_KINDS,
   PROBLEM_RATIO_THRESHOLD,
@@ -101,24 +98,16 @@ export default function ZvonariPage() {
 
   const [from, setFrom] = useState(todayISO(-6));
   const [to, setTo] = useState(todayISO());
-
-  useEffect(() => {
-    const stored = loadStoredPeriod();
-    if (stored) {
-      setFrom(stored.from);
-      setTo(stored.to);
-    }
-  }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem(PERIOD_STORAGE_KEY, JSON.stringify({ from, to }));
-  }, [from, to]);
-
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
-  // Период/сортировка попадают в URL (задача 5, zvonari-improvements.md) —
-  // раскрытый звонарь/фильтры теперь живут на /zvonari/[ext], не здесь.
+  // Восстановление периода/сортировки —URL приоритетнее localStorage (ссылка
+  // с явным ?from=&to= — например, с карточки звонаря — должна побеждать).
+  // Раньше это было два отдельных эффекта (сперва localStorage, потом URL) —
+  // оба стартовые (deps=[]), но эффект ниже, синхронизирующий state → URL,
+  // тоже стартовый и успевал отработать между ними на замыкании ещё
+  // дефолтных from/to, на миг затирая URL дефолтом до следующего рендера.
+  // Один эффект с уже разрешённым значением убирает саму гонку.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlFrom = params.get("from");
@@ -126,6 +115,12 @@ export default function ZvonariPage() {
     if (urlFrom && urlTo) {
       setFrom(urlFrom);
       setTo(urlTo);
+    } else {
+      const stored = loadStoredPeriod();
+      if (stored) {
+        setFrom(stored.from);
+        setTo(stored.to);
+      }
     }
     const urlSort = params.get("sort");
     if (urlSort && (SORT_KEYS as string[]).includes(urlSort)) setSortKey(urlSort as SortKey);
@@ -133,7 +128,30 @@ export default function ZvonariPage() {
     if (urlDir === "asc" || urlDir === "desc") setSortDir(urlDir);
   }, []);
 
+  // Оба эффекта ниже пишут наружу (localStorage/URL) при каждом изменении
+  // from/to/sortKey/sortDir — но их самый первый запуск при монтировании
+  // всегда видит ещё дефолтные значения (эффект восстановления выше успевает
+  // только запланировать setState, не применить его в этом же проходе).
+  // Пропускаем этот первый холостой запуск, чтобы не перезаписать
+  // localStorage/URL дефолтом на долю секунды раньше, чем применится
+  // восстановленное значение.
+  const skipLocalStorageWrite = useRef(true);
   useEffect(() => {
+    if (skipLocalStorageWrite.current) {
+      skipLocalStorageWrite.current = false;
+      return;
+    }
+    window.localStorage.setItem(PERIOD_STORAGE_KEY, JSON.stringify({ from, to }));
+  }, [from, to]);
+
+  // Период/сортировка попадают в URL (задача 5, zvonari-improvements.md) —
+  // раскрытый звонарь/фильтры теперь живут на /zvonari/[ext], не здесь.
+  const skipUrlSync = useRef(true);
+  useEffect(() => {
+    if (skipUrlSync.current) {
+      skipUrlSync.current = false;
+      return;
+    }
     const params = new URLSearchParams();
     params.set("from", from);
     params.set("to", to);
@@ -151,6 +169,7 @@ export default function ZvonariPage() {
   const [callCounts, setCallCounts] = useState<Record<string, number>>({});
   const [statusCounts, setStatusCounts] = useState<Record<string, Record<string, number>>>({});
   const [outcomeCounts, setOutcomeCounts] = useState<Record<string, Record<string, number>>>({});
+  const [criteriaScores, setCriteriaScores] = useState<Record<string, { met_true: number; applicable: number }>>({});
   const [fraudCounts, setFraudCounts] = useState<Record<string, number>>({});
   const [errorBreakdown, setErrorBreakdown] = useState<Record<string, number>>({});
   const [retryIncludeTerminal, setRetryIncludeTerminal] = useState(false);
@@ -158,6 +177,7 @@ export default function ZvonariPage() {
   const [prevCallCounts, setPrevCallCounts] = useState<Record<string, number>>({});
   const [prevStatusCounts, setPrevStatusCounts] = useState<Record<string, Record<string, number>>>({});
   const [prevOutcomeCounts, setPrevOutcomeCounts] = useState<Record<string, Record<string, number>>>({});
+  const [prevCriteriaScores, setPrevCriteriaScores] = useState<Record<string, { met_true: number; applicable: number }>>({});
   const [prevFraudCounts, setPrevFraudCounts] = useState<Record<string, number>>({});
   const [prevLoaded, setPrevLoaded] = useState(false);
 
@@ -241,6 +261,13 @@ export default function ZvonariPage() {
         setAggregatesError("Не удалось загрузить статистику по звонкам — показанные цифры могут быть неполными.");
       });
     zvonariAPI
+      .getCriteriaScores(periodFrom, periodTo)
+      .then((response) => setCriteriaScores(response.data || {}))
+      .catch((err) => {
+        console.error("Failed to load criteria scores:", err);
+        setAggregatesError("Не удалось загрузить статистику по звонкам — показанные цифры могут быть неполными.");
+      });
+    zvonariAPI
       .getFraudCounts(periodFrom, periodTo)
       .then((response) => setFraudCounts(response.data || {}))
       .catch((err) => {
@@ -260,12 +287,14 @@ export default function ZvonariPage() {
       zvonariAPI.getStatusCounts(periodFrom, periodTo),
       zvonariAPI.getOutcomeCounts(periodFrom, periodTo),
       zvonariAPI.getFraudCounts(periodFrom, periodTo),
+      zvonariAPI.getCriteriaScores(periodFrom, periodTo),
     ])
-      .then(([callsRes, statusRes, outcomeRes, fraudRes]) => {
+      .then(([callsRes, statusRes, outcomeRes, fraudRes, criteriaRes]) => {
         setPrevCallCounts(callsRes.data || {});
         setPrevStatusCounts(statusRes.data || {});
         setPrevOutcomeCounts(outcomeRes.data || {});
         setPrevFraudCounts(fraudRes.data || {});
+        setPrevCriteriaScores(criteriaRes.data || {});
         setPrevLoaded(true);
       })
       .catch((err) => {
@@ -517,18 +546,20 @@ export default function ZvonariPage() {
       const done = statuses.done ?? 0;
       const problems = (statuses.failed ?? 0) + (statuses.no_recording ?? 0);
       const problemRatio = total > 0 ? problems / total : 0;
+      const rawScore = criteriaScores[caller.id];
       return {
         caller,
         total,
         done,
         donePct: total > 0 ? Math.round((done / total) * 100) : 0,
         outcomes,
+        criteriaScore: rawScore && rawScore.applicable > 0 ? { metTrue: rawScore.met_true, applicable: rawScore.applicable } : undefined,
         fraudCount: fraudCounts[caller.id] ?? 0,
         problemRatio,
         isProblem: total >= PROBLEM_MIN_CALLS && problemRatio >= PROBLEM_RATIO_THRESHOLD,
       };
     });
-  }, [callers, callCounts, statusCounts, outcomeCounts, fraudCounts]);
+  }, [callers, callCounts, statusCounts, outcomeCounts, fraudCounts, criteriaScores]);
 
   const sortedStats = useMemo(() => {
     const sorted = [...callerStats].sort((a, b) => {
@@ -543,12 +574,15 @@ export default function ZvonariPage() {
         case "donePct":
           cmp = a.donePct - b.donePct;
           break;
-        case "scriptCompleted":
-          cmp = (a.outcomes[OUTCOME_SCRIPT_COMPLETED] ?? 0) - (b.outcomes[OUTCOME_SCRIPT_COMPLETED] ?? 0);
+        case "criteriaScore": {
+          // Пустой (applicable=0) всегда в конце при сортировке "по убыванию
+          // лучших" — не смешивается с реальным 0% (a.criteriaScore ===
+          // undefined значит "не оценивалось", не "оценено на ноль").
+          const aPct = a.criteriaScore ? a.criteriaScore.metTrue / a.criteriaScore.applicable : -1;
+          const bPct = b.criteriaScore ? b.criteriaScore.metTrue / b.criteriaScore.applicable : -1;
+          cmp = aPct - bPct;
           break;
-        case "step1Broken":
-          cmp = (a.outcomes[OUTCOME_STEP1_BROKEN] ?? 0) - (b.outcomes[OUTCOME_STEP1_BROKEN] ?? 0);
-          break;
+        }
         case "fraud":
           cmp = a.fraudCount - b.fraudCount;
           break;
@@ -576,12 +610,12 @@ export default function ZvonariPage() {
   };
 
   const kpi = useMemo(
-    () => computeKpi(callCounts, statusCounts, outcomeCounts, fraudCounts),
-    [callCounts, statusCounts, outcomeCounts, fraudCounts]
+    () => computeKpi(callCounts, statusCounts, outcomeCounts, fraudCounts, criteriaScores),
+    [callCounts, statusCounts, outcomeCounts, fraudCounts, criteriaScores]
   );
   const prevKpi = useMemo(
-    () => computeKpi(prevCallCounts, prevStatusCounts, prevOutcomeCounts, prevFraudCounts),
-    [prevCallCounts, prevStatusCounts, prevOutcomeCounts, prevFraudCounts]
+    () => computeKpi(prevCallCounts, prevStatusCounts, prevOutcomeCounts, prevFraudCounts, prevCriteriaScores),
+    [prevCallCounts, prevStatusCounts, prevOutcomeCounts, prevFraudCounts, prevCriteriaScores]
   );
   const trend = (current: number, previous: number, goodDirection: "up" | "down" | "neutral") =>
     prevLoaded ? formatTrend(current, previous, goodDirection) : undefined;
@@ -624,6 +658,12 @@ export default function ZvonariPage() {
                 <HealthDot label="Транскрибация (GPU)" ping={health?.transcribe_gpu} />
                 <HealthDot label="Аналитика (Hermes)" ping={health?.analytics} />
               </span>
+              <Link href="/zvonari/fraud-review">
+                <Button variant="outline" size="sm" className="gap-1.5">
+                  <ShieldAlert className="h-4 w-4 text-destructive" />
+                  Очередь на проверку фрода
+                </Button>
+              </Link>
             </div>
           </div>
         </div>
@@ -821,7 +861,7 @@ export default function ZvonariPage() {
               </div>
               <ScriptTrack size="lg" useTooltip segments={trackSegmentsFromDistribution(globalDistribution)} />
             </div>
-            <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-6">
+            <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-5">
               <KpiCard
                 label="Всего звонков"
                 value={String(kpi.totalCalls)}
@@ -846,18 +886,26 @@ export default function ZvonariPage() {
                 }
               />
               <KpiCard
-                label="Скрипт пройден до шага 6"
-                value={String(kpi.totalScriptCompleted)}
+                label="Критерии"
+                value={
+                  kpi.totalCriteriaApplicable > 0
+                    ? `${Math.round((kpi.totalCriteriaMet / kpi.totalCriteriaApplicable) * 100)}%`
+                    : "—"
+                }
+                hint={`${kpi.totalCriteriaMet} из ${kpi.totalCriteriaApplicable}`}
                 icon={<CheckCircle2 className="h-5 w-5" />}
                 accent="positive"
-                trend={trend(kpi.totalScriptCompleted, prevKpi.totalScriptCompleted, "up")}
-              />
-              <KpiCard
-                label="Срыв на шаге 1"
-                value={String(kpi.totalStep1Broken)}
-                icon={<XCircle className="h-5 w-5" />}
-                accent="warning"
-                trend={trend(kpi.totalStep1Broken, prevKpi.totalStep1Broken, "down")}
+                trend={
+                  prevLoaded
+                    ? formatPointTrend(
+                        kpi.totalCriteriaApplicable > 0 ? (kpi.totalCriteriaMet / kpi.totalCriteriaApplicable) * 100 : null,
+                        prevKpi.totalCriteriaApplicable > 0
+                          ? (prevKpi.totalCriteriaMet / prevKpi.totalCriteriaApplicable) * 100
+                          : null,
+                        "up"
+                      )
+                    : undefined
+                }
               />
               <KpiCard
                 label="Автоответчик (фрод)"
@@ -922,17 +970,10 @@ export default function ZvonariPage() {
                   </TableHead>
                   <TableHead
                     className="cursor-pointer select-none text-right transition-colors hover:text-foreground"
-                    onClick={() => handleSort("scriptCompleted")}
+                    onClick={() => handleSort("criteriaScore")}
                   >
-                    Скрипт до конца
-                    <SortIcon column="scriptCompleted" />
-                  </TableHead>
-                  <TableHead
-                    className="cursor-pointer select-none text-right transition-colors hover:text-foreground"
-                    onClick={() => handleSort("step1Broken")}
-                  >
-                    Срыв на шаге 1
-                    <SortIcon column="step1Broken" />
+                    Критерии
+                    <SortIcon column="criteriaScore" />
                   </TableHead>
                   <TableHead
                     className="cursor-pointer select-none text-right transition-colors hover:text-foreground"
@@ -951,7 +992,7 @@ export default function ZvonariPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sortedStats.map(({ caller, total, donePct, outcomes, fraudCount, problemRatio, isProblem }) => (
+                {sortedStats.map(({ caller, total, donePct, criteriaScore, fraudCount, problemRatio, isProblem }) => (
                   <TableRow
                     key={caller.id}
                     role="link"
@@ -982,11 +1023,14 @@ export default function ZvonariPage() {
                     </TableCell>
                     <TableCell className="text-right font-mono tabular-nums">{total}</TableCell>
                     <TableCell className="text-right font-mono tabular-nums">{total > 0 ? `${donePct}%` : "—"}</TableCell>
-                    <TableCell className="text-right font-mono tabular-nums text-success">
-                      {outcomes[OUTCOME_SCRIPT_COMPLETED] ?? 0}
-                    </TableCell>
-                    <TableCell className="text-right font-mono tabular-nums text-muted-foreground">
-                      {outcomes[OUTCOME_STEP1_BROKEN] ?? 0}
+                    <TableCell className="text-right font-mono tabular-nums">
+                      {criteriaScore ? (
+                        <span className={criteriaScore.metTrue / criteriaScore.applicable >= 0.5 ? "text-success" : "text-muted-foreground"}>
+                          {Math.round((criteriaScore.metTrue / criteriaScore.applicable) * 100)}%
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       {fraudCount > 0 ? (

@@ -120,6 +120,14 @@ func (c *Client) Configured() bool {
 	return c.baseURL != "" || c.gpuBaseURL != ""
 }
 
+// IsOpenRouter reports whether TRANSCRIBE_FORMAT=openrouter is active — see
+// zvonari.Service's concurrency choice, which is network-bound-vs-CPU-bound
+// dependent (maxConcurrentProcessing's whisper-tuned value of 1 doesn't
+// apply to remote OpenRouter calls).
+func (c *Client) IsOpenRouter() bool {
+	return c.format == FormatOpenRouter
+}
+
 // healthPingTimeout bounds how long the /zvonari/health endpoint waits for
 // each transcribe backend before reporting it down.
 const healthPingTimeout = 2 * time.Second
@@ -198,20 +206,43 @@ type Result struct {
 	// "cpu" или "openrouter". Не приходит от Hermes (тот просто отвечает
 	// {text}) — это Client сам знает, какой формат/backend использовался.
 	Engine string `json:"-"`
+
+	// Fraud — заполнен только в FormatOpenRouter: тот же запрос, что
+	// расшифровывает аудио, заодно определяет фрод-сигналы (см.
+	// computeFraudPrecheck) — одним вызовом вместо двух отдельных
+	// (транскрибация + отдельный hermes-анализ), см. обсуждение экономии
+	// 2026-09-29. В FormatGPU/FormatCPU остаётся нулевым: там нет LLM,
+	// который мог бы это определить.
+	Fraud FraudPrecheck `json:"-"`
+}
+
+// FraudPrecheck — фрод-сигнал, определённый на этапе транскрибации, по
+// аудио, а не по уже готовому тексту (в отличие от полного hermes-анализа).
+// Это ПРЕДВАРИТЕЛЬНЫЙ, дешёвый сигнал — окончательное решение об
+// исключении из оплаты принимает человек (см. fraud_review_status в БД),
+// не эта структура сама по себе.
+type FraudPrecheck struct {
+	Suspected bool   `json:"fraud_suspected"`
+	Check     string `json:"fraud_check"`
+	Quote     string `json:"disqualifying_phrase_quote,omitempty"`
+	Position  string `json:"disqualifying_phrase_position,omitempty"`
 }
 
 // Transcribe dispatches to whichever format is configured (see Format) —
 // FormatGPU tries the optional GPU box first and falls back to the CPU
 // service on any failure there (including "box is off", which isn't a real
 // error from the caller's point of view); FormatOpenRouter sends audio
-// straight to OpenRouter with no whisper fallback at all.
-func (c *Client) Transcribe(ctx context.Context, filename string, audio []byte) (*Result, error) {
+// straight to OpenRouter with no whisper fallback at all. talkTimeSec is
+// only used by FormatOpenRouter's fraud precheck (see computeFraudPrecheck)
+// — it comes from the PBX CDR record, already known before transcription
+// ever runs, so no separate lookup is needed here.
+func (c *Client) Transcribe(ctx context.Context, filename string, audio []byte, talkTimeSec int) (*Result, error) {
 	if !c.Configured() {
 		return nil, fmt.Errorf("транскрибация не настроена (формат %q)", c.format)
 	}
 
 	if c.format == FormatOpenRouter {
-		return c.transcribeOpenRouter(ctx, audio)
+		return c.transcribeOpenRouter(ctx, audio, talkTimeSec)
 	}
 
 	if c.gpuBaseURL != "" {
@@ -273,18 +304,31 @@ func (c *Client) transcribeAt(ctx context.Context, client *http.Client, baseURL,
 	return &result, nil
 }
 
-// openRouterTranscribePrompt — same instruction set validated in the
-// zvonari-sandbox experiments (2026-09-10/11): the original prompt's
-// "(без речи)" rule only covered the zero-speech-at-all case, and on
-// short/noisy calls the model was observed fabricating a full,
-// plausible-sounding conversation instead of transcribing the
-// (near-)absence of speech. The explicit anti-hallucination block below
-// measurably reduced (but, per those tests, did not eliminate) the effect —
-// see the accompanying hallucination-suspected check in
-// zvonari.Service.transcribeOnly for the other half of the mitigation.
-const openRouterTranscribePrompt = `Ты делаешь дословную расшифровку записи телефонного звонка на русском языке для компании «IQ-200» (агентство интернет-маркетинга: продвижение, привлечение клиентов, реклама, контекстная и таргетированная реклама, SEO, SMM, редизайн и разработка сайтов, лендинги, лидогенерация, заявки, конверсия, CRM, Яндекс Директ, стоимость заявки).
+// openRouterTranscribePrompt — расшифровка И фрод-предфильтр ОДНИМ вызовом
+// (2026-09-29, см. обсуждение экономии — раньше это были транскрибация +
+// отдельный hermes-анализ, т.е. два платных вызова на звонок вместо одного,
+// и hermes при этом определял фрод по уже готовому ТЕКСТУ, а не слыша само
+// аудио). Текстовые правила расшифровки не менялись, валидированы ранее
+// (zvonari-sandbox, 2026-09-10/11). Фрод-часть переносит уже провалидированную
+// на 327 звонках логику из hermes/services/call_analytics_server.py
+// (ANALYSIS_RUBRIC + compute_fraud_suspected) — катал ог дисквалифицирующих
+// фраз (включая саморепрезентацию бота-ассистента и рекламу "номер в
+// свободной продаже"), различение филлера "оставайтесь на линии" от
+// содержательной навигации. Не переносит is_looping_or_repeating — в hermes
+// эта проверка была полностью вытеснена позицией фразы (см. её
+// compute_fraud_suspected, 2026-09-29: "not used as an independent signal
+// here"), так что переносить нечего.
+//
+// Ответ — JSON-объект (response_format json_object в запросе ниже), а не
+// голый текст, как раньше: transcript-поле содержит ту же дословную
+// расшифровку, что и прежде, остальные поля — фрод-сигнал. Причина смены
+// формата, а не двух отдельных вызовов — экономия токенов на системном
+// промпте (одна встроенная инструкция вместо двух отдельных обращений).
+const openRouterTranscribePrompt = `Ты делаешь дословную расшифровку записи телефонного звонка на русском языке для компании «IQ-200» (агентство интернет-маркетинга: продвижение, привлечение клиентов, реклама, контекстная и таргетированная реклама, SEO, SMM, редизайн и разработка сайтов, лендинги, лидогенерация, заявки, конверсия, CRM, Яндекс Директ, стоимость заявки), и ОДНОВРЕМЕННО определяешь по этой же записи признаки фрода (автоответчик/IVR/бот, за которым не последовало реального разговора с человеком).
 
 Один из собеседников — оператор/менеджер компании IQ-200, второй — потенциальный клиент. Компания «IQ-200» произносится как «АйКью-200» и похожими вариантами — не путай её название с посторонним словом или числом.
+
+=== ЧАСТЬ 1: РАСШИФРОВКА (поле "transcript") ===
 
 КРИТИЧЕСКИ ВАЖНО, ПРОЧТИ ПЕРЕД НАЧАЛОМ: транскрибируй ТОЛЬКО то, что реально произнесено и различимо на записи. Категорически запрещено придумывать, достраивать или галлюцинировать реплики — даже если по контексту тебе кажется понятным, что "обычно" говорят в таком звонке (про продвижение, рекламу, заявки и т.п.). Придуманная, но правдоподобная реплика — это грубая ошибка, гораздо хуже, чем короткая или пустая расшифровка. Если запись — это гудки, тишина, шум, обрыв связи или неразборчивое бормотание без узнаваемых слов, транскрипт должен закончиться в этом месте (или целиком быть "(без речи)", если разборчивых слов не было вообще) — не заполняй такие участки сочинённым диалогом о продвижении/рекламе/заявках, даже частично.
 
@@ -294,20 +338,46 @@ const openRouterTranscribePrompt = `Ты делаешь дословную ра�
 ...
 
 Правила:
-- Собеседник 1 — тот, кто заговорил первым (обычно оператор).
+- Собеседник 1 и Собеседник 2 — это метки ТОЛЬКО для двух живых людей в разговоре (оператор IQ-200 и представитель компании-клиента). Собеседник 1 — тот из них, кто заговорил первым.
 - Расшифровывай дословно, включая слова-паразиты и незаконченные фразы — не сокращай, не пересказывай, не суммаризируй, но и не досочиняй.
 - В начале записи может быть тишина или гудки до ответа — это не повод писать "без речи": просто начинай расшифровку с первой реплики, без упоминания тишины/гудков перед ней.
-- Автоответчик, голосовая почта, IVR-меню оператора связи ("Вызываемый абонент не отвечает...", "Вы позвонили в компанию...", "нажмите один" и т.п.) — это ТОЖЕ речь, которую нужно дословно расшифровать как реплику (Собеседник 1: <текст сообщения>), а не заменять ярлыком. Ярлык "автоответчик" сам по себе, без текста, — это потеря данных, так делать нельзя.
+- Автоответчик, голосовая почта, IVR-меню оператора связи ("Вызываемый абонент не отвечает...", "Вы позвонили в компанию...", "нажмите один" и т.п.) — это ТОЖЕ речь, которую нужно дословно расшифровать, но отдельной меткой "Автоответчик:" (например: Автоответчик: <текст сообщения>), а НЕ как "Собеседник 1"/"Собеседник 2" — даже если это автоматическое сообщение звучит первым по времени, метку "Собеседник 1" получает первый из живых людей, заговоривший после него, а не само сообщение. Не заменяй текст автоответчика ярлыком без содержания — ярлык "автоответчик" сам по себе, без текста, — это потеря данных, так делать нельзя.
 - Строку "(без речи)" пиши, если во всей записи буквально нет ни единого произнесённого слова — только гудки, тишина, шум или обрыв связи. Если есть хоть одна произнесённая фраза (человеком или автоответчиком) — расшифруй её и на этом остановись там, где реально обрывается различимая речь; "(без речи)" в этом случае не пиши, но и придумывать, что было сказано дальше, тоже нельзя.
 - Ориентируйся на реальную длительность записи: беглая речь — это примерно 2-3 слова в секунду. Если твоя расшифровка выглядит заметно длиннее, чем могло бы уместиться в реальную продолжительность звонка, — это первый признак того, что ты начал сочинять; остановись и перепроверь, что каждая реплика реально была произнесена, а не додумана.
-- Не добавляй от себя ничего, кроме самой расшифровки: без комментариев, оценок, markdown-разметки, заголовков.`
+
+=== ЧАСТЬ 2: ФРОД-СИГНАЛ (остальные поля) ===
+
+Определи is_answering_machine_or_menu: true/false — был ли на протяжении ВСЕЙ доступной записи слышен только автоответчик/голосовое меню/IVR/бот-ассистент, без единой реплики живого человека, обращённой к оператору. Как только в записи появляется реальная реплика человека (даже одно слово) — is_answering_machine_or_menu = false, даже если разговору предшествовало меню.
+
+К автоответчику/меню относится и разговорный бот-ассистент, выдающий себя за секретаря (даже если звучит естественно и ведёт диалог): "я голосовой/виртуальный ассистент", "меня зовут Ния/Мия" (или другое явно небытовое имя бота), "передам это абоненту", "вы робот или человек?" — если все реплики собеседника сводятся к приёму и ретрансляции сообщения для отсутствующего абонента, а не к содержательному ответу от своего лица.
+
+Если is_answering_machine_or_menu = true, найди в записи первую фразу, которая ОДНОЗНАЧНО говорит, что живого человека на линии не будет — "абонент не может ответить/недоступен/выключен/вне зоны действия сети", приглашение оставить голосовое сообщение, сообщение оператора связи об ограничении вызовов, самопрезентация бота-ассистента (см. выше), объявление о статусе самого номера ("номер находится в свободной продаже", "номер принадлежит сервису Х") — это disqualifying_phrase_quote. Голосовое меню/маршрутизация ("нажмите 1 для отдела продаж"), просьба подождать/оставаться на линии САМИ ПО СЕБЕ такой фразой не являются — это часть нормального процесса дозвона, если только не сопровождаются реальным содержанием (название компании, конкретные пункты меню). Голый филлер без содержания ("оставайтесь на линии", "продолжаем дозваниваться", "соединение не установлено, подождите") перед отказной фразой не считается содержательной навигацией.
+
+Если фраза найдена — определи disqualifying_phrase_position ("начало"/"конец"):
+- "начало" — фраза звучит одной из первых, без содержательного меню/навигации перед ней (включая случай, когда перед ней только голый филлер без содержания, см. выше).
+- "конец" — фразе предшествует СОДЕРЖАТЕЛЬНОЕ меню/приветствие (название компании, конкретные пункты меню) — то есть часть звонка была законной навигацией.
+Если такой фразы нет вообще (меню/ожидание без финального отказа) — disqualifying_phrase_quote = null, disqualifying_phrase_position = null.
+
+Если расшифровка повреждена/оборвана настолько, что нельзя уверенно определить, был ли на линии человек — НЕ домысливай в пользу оператора любой ценой: это предварительный сигнал для последующей проверки человеком, а не финальное решение об исключении из оплаты, поэтому при реальном сомнении ставь is_answering_machine_or_menu = true с кратким пояснением в disqualifying_phrase_quote — лучше лишний раз попадёт в список на проверку, чем реальный фрод будет пропущен.
+
+=== ФОРМАТ ОТВЕТА ===
+Верни ТОЛЬКО JSON-объект, без markdown-обёртки и пояснений, строго такой формы:
+{
+  "transcript": "<дословная расшифровка из части 1>",
+  "is_answering_machine_or_menu": true или false,
+  "disqualifying_phrase_quote": "<цитата>" или null,
+  "disqualifying_phrase_position": "начало" или "конец" или null
+}`
 
 // transcribeOpenRouter sends audio straight to OpenRouter as a chat
 // completion (input_audio content part) — same request shape used and
-// validated in zvonari-sandbox. No segments/timecodes (flat text only, same
-// as this package's Result always was), no spend cap enforced here — that's
-// an OpenRouter-account-level concern, not this client's.
-func (c *Client) transcribeOpenRouter(ctx context.Context, audio []byte) (*Result, error) {
+// validated in zvonari-sandbox, plus response_format json_object so the
+// combined transcript+fraud response parses reliably (see
+// openRouterTranscribePrompt's doc comment for why fraud detection moved
+// in here). No segments/timecodes (flat text only, same as this package's
+// Result always was), no spend cap enforced here — that's an
+// OpenRouter-account-level concern, not this client's.
+func (c *Client) transcribeOpenRouter(ctx context.Context, audio []byte, talkTimeSec int) (*Result, error) {
 	b64 := base64.StdEncoding.EncodeToString(audio)
 	reqBody, err := json.Marshal(map[string]any{
 		"model": c.openRouterModel,
@@ -320,6 +390,7 @@ func (c *Client) transcribeOpenRouter(ctx context.Context, audio []byte) (*Resul
 				},
 			},
 		},
+		"response_format": map[string]string{"type": "json_object"},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encoding OpenRouter request: %w", err)
@@ -356,8 +427,60 @@ func (c *Client) transcribeOpenRouter(ctx context.Context, audio []byte) (*Resul
 	if err := json.Unmarshal(body, &envelope); err != nil || len(envelope.Choices) == 0 {
 		return nil, fmt.Errorf("unexpected OpenRouter response shape: %s", truncate(string(body), 500))
 	}
+	content := envelope.Choices[0].Message.Content
 
-	return &Result{Text: envelope.Choices[0].Message.Content, Engine: "openrouter"}, nil
+	var parsed struct {
+		Transcript                  string `json:"transcript"`
+		IsAnsweringMachineOrMenu    bool   `json:"is_answering_machine_or_menu"`
+		DisqualifyingPhraseQuote    string `json:"disqualifying_phrase_quote"`
+		DisqualifyingPhrasePosition string `json:"disqualifying_phrase_position"`
+	}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil || parsed.Transcript == "" {
+		// Деградация без потери транскрипта: если модель вернула не тот JSON,
+		// который мы просили (или вообще голый текст — response_format не
+		// гарантия), лучше сохранить content как есть в виде транскрипта без
+		// фрод-сигнала, чем потерять расшифровку целиком, как это уже было в
+		// инциденте 2026-09-28 с другой ошибкой (см. maxConcurrentProcessing в
+		// zvonari/service.go). FraudPrecheck остаётся нулевым — вызывающий код
+		// должен уметь работать с пустым Check ("" != любой реальный код).
+		log.Printf("transcribe: OpenRouter response wasn't the expected JSON shape, falling back to raw content as transcript: %s", truncate(content, 300))
+		return &Result{Text: content, Engine: "openrouter"}, nil
+	}
+
+	fraud := computeFraudPrecheck(parsed.IsAnsweringMachineOrMenu, talkTimeSec, parsed.DisqualifyingPhrasePosition, parsed.DisqualifyingPhraseQuote)
+	return &Result{Text: parsed.Transcript, Engine: "openrouter", Fraud: fraud}, nil
+}
+
+// computeFraudPrecheck — детерминированное решение fraud_suspected, портировано
+// из hermes/services/call_analytics_server.py:compute_fraud_suspected
+// (2026-09-29 редизайн: позиция фразы решает всё, is_looping_or_repeating
+// больше не отдельная ветка — см. её докстринг для истории и валидации на
+// 327 звонках). Логика 1-в-1 с hermes, включая ветку "нет чёткой отказной
+// фразы = не фрод" ниже — это НЕ то место для уклона в recall: этот случай
+// (is_answering_machine_or_menu=true, но фраза не найдена — обычно
+// department-routing IVR-меню без финального отказа) на тех же 327 звонках
+// дал 6 из 6 ложных срабатываний и ни одного верного, когда проверялся как
+// отдельное правило — переворачивать его в "кандидат" означало бы затопить
+// очередь на проверку легитимными "ещё не дозвонился до человека" звонками
+// без единого выигрыша в полноте. Уклон в recall, о котором просил
+// пользователь, уже учтён на уровне промпта (openRouterTranscribePrompt —
+// инструкция "при реальном сомнении в повреждённой записи ставь true"), не
+// здесь: там модель принимает решение по факту записи, здесь код просто
+// детерминированно применяет уже принятое решение.
+func computeFraudPrecheck(isAnsweringMachineOrMenu bool, talkTimeSec int, position, quote string) FraudPrecheck {
+	if !isAnsweringMachineOrMenu {
+		return FraudPrecheck{Suspected: false, Check: "not_answering_machine"}
+	}
+	if talkTimeSec > 0 && talkTimeSec < 10 {
+		return FraudPrecheck{Suspected: false, Check: "fast_hangup_under_10s"}
+	}
+	if position == "конец" {
+		return FraudPrecheck{Suspected: false, Check: "disqualifying_phrase_at_end"}
+	}
+	if position == "начало" {
+		return FraudPrecheck{Suspected: true, Check: "disqualifying_phrase_at_start", Quote: quote, Position: position}
+	}
+	return FraudPrecheck{Suspected: false, Check: "no_disqualifying_phrase_found"}
 }
 
 func truncate(s string, n int) string {

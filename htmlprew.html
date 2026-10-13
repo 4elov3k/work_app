@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Звонари — прототип интерфейса</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { theme: { extend: { fontFamily: { sans: ['Inter','system-ui','sans-serif'] } } } };
+    </script>
+    <style type="text/tailwindcss">
+        .card{@apply bg-white border border-gray-200/80 rounded-2xl shadow-sm;}
+        .btn{@apply inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-green-600/40;}
+        .btn-primary{@apply bg-green-700 text-white hover:bg-green-800 disabled:opacity-70;}
+        .btn-ghost{@apply bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900;}
+        .chip{@apply inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[13px] text-gray-700 hover:border-gray-300 hover:bg-gray-50 transition cursor-pointer select-none;}
+        .chip-on{@apply bg-gray-900 text-white border-gray-900 hover:bg-gray-800;}
+        .tabbtn{@apply px-4 py-1.5 rounded-lg text-gray-600 hover:text-gray-900 transition cursor-pointer;}
+        .tabbtn-on{@apply bg-white shadow-sm text-gray-900 font-medium;}
+        .funnel{@apply flex-1 min-w-[150px] rounded-xl border border-gray-200 bg-white p-4 text-left hover:border-green-500 hover:shadow-sm transition cursor-pointer;}
+        .th{@apply px-3 py-2.5 text-xs font-medium text-gray-400 text-left whitespace-nowrap;}
+        .screen{animation:fadeIn .25s ease;}
+        @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+        mark{background:#fef3c7;border-radius:3px;padding:0 2px;}
+    </style>
+    <style>
+        /* ── дорожная карта скрипта ── */
+        #rmSvg .flow{opacity:0;transform:scaleX(.25);transform-box:fill-box;transform-origin:left center;transition:opacity .5s ease,transform .9s cubic-bezier(.2,.75,.25,1)}
+        #rmSvg.on .flow{opacity:1;transform:none}
+        #rmSvg .rm{transition:opacity .18s ease}
+        #rmSvg.dim .rm{opacity:.18}
+        #rmSvg.dim .rm.hot{opacity:1}
+        .rn{font-size:15px;font-weight:600;fill:#0f172a}
+        .rl{font-size:10.5px;fill:#64748b}
+        .kpi-bar{transition:height .6s cubic-bezier(.2,.7,.3,1)}
+    </style>
+</head>
+<body class="bg-[#f6f6f4] text-gray-800 font-sans antialiased">
+
+<!-- ══════════════════════ ЭКРАН 1 · ЗВОНАРИ ══════════════════════ -->
+<div id="screen-operators" class="screen">
+    <div class="max-w-[1400px] mx-auto px-6 py-6 space-y-5">
+
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-3">
+                <button class="btn btn-ghost !py-1.5">← Главная</button>
+                <h1 class="text-2xl font-semibold tracking-tight text-gray-900">Звонари</h1>
+            </div>
+            <div class="flex items-center gap-2">
+                <button class="btn btn-ghost">📅 29.08 – 04.09 <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
+                <button class="btn btn-ghost !px-2.5" title="Ещё">⋯</button>
+            </div>
+        </div>
+
+        <div class="card px-5 py-3.5 flex flex-wrap items-center gap-x-6 gap-y-3">
+            <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Конвейер</span>
+            <div class="flex items-center gap-3 flex-wrap text-sm">
+                <span class="inline-flex items-center gap-2 text-gray-700"><span class="w-2 h-2 rounded-full bg-green-500"></span>Синк <span class="text-gray-400">· 14:02</span></span>
+                <span class="text-gray-300">→</span>
+                <span class="inline-flex items-center gap-2 text-gray-700"><span class="w-2 h-2 rounded-full bg-green-500"></span>Транскрибация <span class="text-gray-400">· 15:10</span></span>
+                <span class="text-gray-300">→</span>
+                <span class="inline-flex items-center gap-2 text-gray-500" id="stAn"><span class="w-2 h-2 rounded-full border-2 border-gray-300"></span>Анализ <span class="text-gray-400" id="stAnTime">· не запускался</span></span>
+            </div>
+            <div class="ml-auto flex items-center gap-2">
+                <button class="btn btn-ghost" id="btnProcess">↻ Обработать период</button>
+                <button class="btn btn-primary" id="btnAnalyze">✦ Проанализировать</button>
+            </div>
+        </div>
+
+        <div class="card p-5">
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+                <h2 class="font-semibold text-gray-900">Путь звонка за период <span class="ml-2 text-xs font-normal text-gray-400">клик по блоку → звонки с фильтром</span></h2>
+                <span class="text-xs text-gray-400">29.08 – 04.09 · все звонари</span>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6">
+                <div class="flex flex-col lg:flex-row items-stretch gap-2">
+                    <button class="funnel" data-goto="calls" data-filter="all">
+                        <div class="text-[13px] text-gray-400">Звонков</div>
+                        <div class="mt-1 text-3xl font-semibold tracking-tight text-gray-900">261</div>
+                        <div class="mt-1 text-xs text-gray-400">−58 % к пред. периоду</div>
+                    </button>
+                    <span class="self-center text-gray-300 hidden lg:block">→</span>
+                    <button class="funnel" data-goto="calls" data-filter="all">
+                        <div class="text-[13px] text-gray-400">Диалог состоялся</div>
+                        <div class="mt-1 flex items-baseline gap-2"><span class="text-3xl font-semibold tracking-tight text-gray-900">155</span><span class="text-[11px] font-medium bg-gray-100 rounded-full px-2 py-0.5 text-gray-500">59 %</span></div>
+                        <div class="mt-1 text-xs text-red-600">−41 п.п. к пред. периоду</div>
+                    </button>
+                    <span class="self-center text-gray-300 hidden lg:block">→</span>
+                    <button class="funnel" data-goto="calls" data-filter="step">
+                        <div class="text-[13px] text-gray-400">Дошли до шага 4+</div>
+                        <div class="mt-1 text-3xl font-semibold tracking-tight text-gray-900">8</div>
+                        <div class="mt-1 text-xs text-gray-400">3 % диалогов</div>
+                    </button>
+                    <span class="self-center text-gray-300 hidden lg:block">→</span>
+                    <button class="funnel !border-green-200 !bg-green-50/40" data-goto="calls" data-filter="passed">
+                        <div class="text-[13px] text-gray-400">Скрипт пройден</div>
+                        <div class="mt-1 text-3xl font-semibold tracking-tight text-green-700">1</div>
+                        <div class="mt-1 text-xs text-gray-400">встреча назначена</div>
+                    </button>
+                </div>
+                <div class="lg:border-l lg:pl-6 space-y-1">
+                    <div class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Отдельно</div>
+                    <button class="w-full flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-gray-50 text-sm transition" data-goto="calls" data-filter="fail1">
+                        <span class="w-2 h-2 rounded-full bg-red-500 shrink-0"></span><span class="text-gray-600">Срыв на шаге 1</span><span class="ml-auto font-semibold tabular-nums text-gray-800">72</span><span class="text-gray-300">›</span>
+                    </button>
+                    <button class="w-full flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-gray-50 text-sm transition" data-goto="calls" data-filter="fraud">
+                        <span class="w-2 h-2 rounded-full bg-red-400 shrink-0"></span><span class="text-gray-600">Фрод (автоответчик)</span><span class="ml-auto font-semibold tabular-nums text-gray-800">3</span><span class="text-gray-300">›</span>
+                    </button>
+                    <button class="w-full flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-gray-50 text-sm transition" data-goto="calls" data-filter="un">
+                        <span class="w-2 h-2 rounded-full bg-amber-400 shrink-0"></span><span class="text-gray-600">Не разобрано</span><span class="text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-1.5">61 %</span><span class="ml-auto font-semibold tabular-nums text-gray-800">160</span><span class="text-gray-300">›</span>
+                    </button>
+                    <button class="w-full flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-gray-50 text-sm transition" data-toast="Технических ошибок нет">
+                        <span class="w-2 h-2 rounded-full bg-gray-300 shrink-0"></span><span class="text-gray-400">Ошибки обработки</span><span class="ml-auto font-semibold tabular-nums text-gray-400">0</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="flex flex-wrap items-center gap-3 px-5 py-4 border-b border-gray-100">
+                <h2 class="font-semibold text-gray-900">Операторы <span class="text-gray-400 font-normal">· 8</span></h2>
+                <div class="relative ml-2">
+                    <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+                    <input id="opSearch" type="text" placeholder="Поиск оператора" class="w-60 rounded-xl border border-gray-200 bg-gray-50 pl-9 pr-3 py-2 text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-600/30 focus:border-green-600/50 focus:bg-white transition">
+                </div>
+                <label class="inline-flex items-center gap-2 text-sm text-gray-500 cursor-pointer select-none"><input id="onlyActive" type="checkbox" class="rounded border-gray-300 text-green-700 focus:ring-green-600/30"> только активные</label>
+                <button class="btn btn-ghost !px-2.5 ml-auto" title="Экспорт">⬇</button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead><tr class="border-b border-gray-100">
+                        <th class="th pl-5">Оператор</th><th class="th">Звонки ↓</th><th class="th">Разобрано</th><th class="th">До ш. 6</th><th class="th">Срыв ш. 1</th><th class="th">Фрод</th><th class="th">Итоги периода</th>
+                    </tr></thead>
+                    <tbody id="opRows">
+                    <tr data-name="татьяна смыкова 100" data-goto="overview" class="border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition" title="Открыть разбор оператора">
+                        <td class="pl-5 py-3"><div class="flex items-center gap-2.5"><span class="w-2 h-2 rounded-full bg-green-500"></span><span class="font-medium text-gray-900">Татьяна Смыкова</span><span class="text-xs text-gray-400">· вн. 100</span><span class="text-gray-300">›</span></div></td>
+                        <td class="px-3 font-medium tabular-nums">166</td><td class="px-3 tabular-nums">60 <span class="text-gray-400">· 36 %</span></td><td class="px-3 tabular-nums">1</td><td class="px-3 tabular-nums font-medium text-red-600">39</td><td class="px-3 tabular-nums">1</td>
+                        <td class="px-3 py-3"><span class="flex h-2 w-40 rounded-full overflow-hidden bg-gray-100" title="красный — срывы/фрод · зелёный — шаги 2–6 · серый — диалог не состоялся · янтарный — не разобрано"><span class="h-full bg-red-500" style="width:24%"></span><span class="h-full bg-green-500" style="width:3%"></span><span class="h-full bg-gray-300" style="width:10%"></span><span class="h-full bg-amber-400" style="width:63%"></span></span></td>
+                    </tr>
+                    <tr data-name="ольга ким 102" data-goto="overview" class="border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition">
+                        <td class="pl-5 py-3"><div class="flex items-center gap-2.5"><span class="w-2 h-2 rounded-full bg-green-500"></span><span class="font-medium text-gray-900">Ольга Ким</span><span class="text-xs text-gray-400">· вн. 102</span><span class="text-gray-300">›</span></div></td>
+                        <td class="px-3 font-medium tabular-nums">52</td><td class="px-3 tabular-nums">34 <span class="text-gray-400">· 65 %</span></td><td class="px-3 tabular-nums">0</td><td class="px-3 tabular-nums font-medium text-red-600">12</td><td class="px-3 tabular-nums">0</td>
+                        <td class="px-3 py-3"><span class="flex h-2 w-40 rounded-full overflow-hidden bg-gray-100"><span class="h-full bg-red-500" style="width:23%"></span><span class="h-full bg-green-500" style="width:12%"></span><span class="h-full bg-gray-300" style="width:31%"></span><span class="h-full bg-amber-400" style="width:34%"></span></span></td>
+                    </tr>
+                    <tr data-name="мария довженко 105" data-goto="overview" class="border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition">
+                        <td class="pl-5 py-3"><div class="flex items-center gap-2.5"><span class="w-2 h-2 rounded-full bg-green-500"></span><span class="font-medium text-gray-900">Мария Довженко</span><span class="text-xs text-gray-400">· вн. 105</span><span class="text-gray-300">›</span></div></td>
+                        <td class="px-3 font-medium tabular-nums">43</td><td class="px-3 tabular-nums">17 <span class="text-gray-400">· 40 %</span></td><td class="px-3 tabular-nums">0</td><td class="px-3 tabular-nums font-medium text-red-600">9</td><td class="px-3 tabular-nums">2</td>
+                        <td class="px-3 py-3"><span class="flex h-2 w-40 rounded-full overflow-hidden bg-gray-100"><span class="h-full bg-red-500" style="width:21%"></span><span class="h-full bg-green-500" style="width:3%"></span><span class="h-full bg-gray-300" style="width:16%"></span><span class="h-full bg-amber-400" style="width:60%"></span></span></td>
+                    </tr>
+                    <tr id="inactiveHead" class="cursor-pointer select-none hover:bg-gray-50 transition" onclick="toggleInactive()">
+                        <td colspan="7" class="pl-5 py-2.5"><span class="inline-flex items-center gap-2 text-[13px] text-gray-400"><svg id="inactChev" class="w-3.5 h-3.5 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>Неактивные <span class="text-gray-300">· 3</span></span></td>
+                    </tr>
+                    <tr class="inactive-row hidden" data-name="107 неактивен" data-inactive="1"><td class="pl-5 py-2.5"><div class="flex items-center gap-2.5"><span class="w-2 h-2 rounded-full bg-gray-300"></span><span class="text-gray-400">107</span><span class="text-[11px] bg-gray-100 text-gray-400 rounded-full px-2 py-0.5">неактивен</span></div></td><td class="px-3 text-gray-300">—</td><td class="px-3 text-gray-300">—</td><td class="px-3 text-gray-300">—</td><td class="px-3 text-gray-300">—</td><td class="px-3 text-gray-300">—</td><td class="px-3"></td></tr>
+                    <tr class="inactive-row hidden" data-name="вероника шлыкова 103" data-inactive="1"><td class="pl-5 py-2.5"><div class="flex items-center gap-2.5"><span class="w-2 h-2 rounded-full bg-gray-300"></span><span class="text-gray-400">Вероника Шлыкова</span><span class="text-xs text-gray-300">· вн. 103</span><span class="text-[11px] bg-gray-100 text-gray-400 rounded-full px-2 py-0.5">неактивен</span></div></td><td class="px-3 text-gray-300">—</td><td class="px-3 text-gray-300">—</td><td class="px-3 text-gray-300">—</td><td class="px-3 text-gray-300">—</td><td class="px-3 text-gray-300">—</td><td class="px-3"></td></tr>
+                    <tr class="inactive-row hidden" data-name="инна алатортцева 101" data-inactive="1"><td class="pl-5 py-2.5"><div class="flex items-center gap-2.5"><span class="w-2 h-2 rounded-full bg-gray-300"></span><span class="text-gray-400">Инна Алатортцева</span><span class="text-xs text-gray-300">· вн. 101</span><span class="text-[11px] bg-gray-100 text-gray-400 rounded-full px-2 py-0.5">неактивен</span></div></td><td class="px-3 text-gray-300">—</td><td class="px-3 text-gray-300">—</td><td class="px-3 text-gray-300">—</td><td class="px-3 text-gray-300">—</td><td class="px-3 text-gray-300">—</td><td class="px-3"></td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="px-5 py-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-gray-400 border-t border-gray-100">
+                <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm bg-red-500"></span>срывы / фрод</span>
+                <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm bg-green-500"></span>шаги 2–6</span>
+                <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm bg-gray-300"></span>диалог не состоялся</span>
+                <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm bg-amber-400"></span>не разобрано</span>
+                <span class="ml-auto">Прототип · клик по строке оператора открывает его разбор</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════ ЭКРАН 2 · ОПЕРАТОР / ОБЗОР ══════════════════════ -->
+<div id="screen-overview" class="screen hidden">
+    <div class="max-w-[1400px] mx-auto px-6 py-6">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-2 text-sm min-w-0">
+                <button data-goto="operators" class="inline-flex items-center gap-1.5 text-gray-500 hover:text-gray-800 rounded-lg px-2 py-1 hover:bg-gray-100 transition">← Звонари</button>
+                <span class="text-gray-300">/</span>
+                <h1 class="text-lg font-semibold text-gray-900 truncate">Татьяна Смыкова</h1><span class="text-gray-400">· вн. 100</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <button class="btn btn-ghost">📅 29.08 – 04.09</button>
+                <button class="btn btn-ghost" data-toast="Отчёт отправлен на почту">📄 Отчёт</button>
+                <button class="btn btn-ghost !px-2.5" data-toast="Файл отчёта скачан">⬇</button>
+            </div>
+        </div>
+
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+            <button class="chip font-medium" data-goto="calls" data-filter="all">166 звонков</button>
+            <span class="text-[13px] rounded-full border border-gray-200 bg-white px-3 py-1.5 text-gray-500">60 разобрано · 36 %</span>
+            <button class="chip" data-goto="calls" data-filter="passed">1 до шага 6</button>
+            <button class="chip !border-red-200 !text-red-700 hover:!border-red-300" data-goto="calls" data-filter="fail1">39 · срыв на шаге 1</button>
+            <span class="text-[13px] rounded-full border border-gray-200 bg-white px-3 py-1.5 text-gray-500">0 ошибок</span>
+        </div>
+
+        <div class="mt-4 inline-flex bg-gray-100 rounded-xl p-1 text-sm">
+            <button class="tabbtn tabbtn-on" data-tab2="overview">Обзор</button>
+            <button class="tabbtn" data-goto="calls">Звонки · 166</button>
+            <button class="tabbtn" data-tab2="reports">Отчёты · 18</button>
+        </div>
+
+        <!-- ═══ ОБЗОР ═══ -->
+        <div id="tabOverview" class="mt-5 space-y-5">
+
+            <!-- KPI со спарклайнами -->
+            <div id="kpiRow" class="grid grid-cols-2 xl:grid-cols-4 gap-4"></div>
+
+            <!-- Дорожная карта + качество данных -->
+            <div class="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-5 items-stretch">
+                <div class="card p-5">
+                    <div class="flex flex-wrap items-baseline justify-between gap-2">
+                        <h2 class="font-semibold text-gray-900">Дорожная карта скрипта</h2>
+                        <span class="text-xs text-gray-400">наведите на узел · клик открывает звонки этапа</span>
+                    </div>
+                    <p class="text-[13px] text-gray-500 mt-0.5">Как 60 разобранных звонков двигались по шагам: лента сужается — звонки теряются, красные ответвления — срывы</p>
+                    <div id="rmWrap" class="mt-2 overflow-x-auto"></div>
+                    <div class="mt-2 pt-3 border-t border-gray-100 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-gray-400">
+                        <span class="inline-flex items-center gap-1.5"><span class="w-4 h-1.5 rounded-full bg-green-400"></span>прошли дальше</span>
+                        <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-red-500"></span>срыв на шаге</span>
+                        <span class="inline-flex items-center gap-1.5"><span class="w-4 h-1.5 rounded-full bg-slate-300"></span>вошли в шаг</span>
+                        <span class="inline-flex items-center gap-1.5"><span class="w-2 h-4 rounded bg-gray-200"></span>диалог не состоялся</span>
+                        <span class="ml-auto font-medium text-gray-500">конверсия диалог → встреча: <b class="text-gray-700">2 %</b></span>
+                    </div>
+                </div>
+
+                <div class="card p-5 flex flex-col">
+                    <h2 class="font-semibold text-gray-900">Качество данных</h2>
+                    <div class="mt-3 flex items-center gap-4">
+                        <div class="relative w-28 h-28 shrink-0">
+                            <svg viewBox="0 0 120 120" class="w-28 h-28 -rotate-90">
+                                <circle cx="60" cy="60" r="52" fill="none" stroke="#fde68a" stroke-width="13"/>
+                                <circle cx="60" cy="60" r="52" fill="none" stroke="#10b981" stroke-width="13" stroke-dasharray="117.5 326.7" stroke-linecap="round"/>
+                            </svg>
+                            <div class="absolute inset-0 flex flex-col items-center justify-center">
+                                <span class="text-xl font-semibold text-gray-900 leading-none">36 %</span>
+                                <span class="text-[10px] text-gray-400 mt-1">разобрано</span>
+                            </div>
+                        </div>
+                        <div class="space-y-1.5 text-sm min-w-0">
+                            <button class="w-full flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-gray-50 transition" data-goto="calls" data-filter="un">
+                                <span class="w-2 h-2 rounded-full bg-amber-400 shrink-0"></span><span class="text-gray-600 truncate">Не разобрано</span><span class="ml-auto font-semibold tabular-nums">106</span>
+                            </button>
+                            <button class="w-full flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-gray-50 transition" data-goto="calls" data-filter="fraud">
+                                <span class="w-2 h-2 rounded-full bg-red-400 shrink-0"></span><span class="text-gray-600 truncate">Фрод</span><span class="ml-auto font-semibold tabular-nums">1</span>
+                            </button>
+                            <div class="flex items-center gap-2 px-2 py-1">
+                                <span class="w-2 h-2 rounded-full bg-gray-300 shrink-0"></span><span class="text-gray-400 truncate">Ошибки</span><span class="ml-auto font-semibold tabular-nums text-gray-400">0</span>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">⚠ 106 звонков без разбора — по ним нет причин срывов и рекомендаций</p>
+                    <button id="btnUn" class="btn btn-primary w-full mt-3 justify-center">✦ Разобрать 106 звонков</button>
+                    <div id="unProg" class="hidden mt-3">
+                        <div class="flex justify-between text-xs text-gray-500 mb-1"><span id="unLbl">Разбираем…</span><span id="unPct">0 %</span></div>
+                        <div class="h-2 bg-gray-100 rounded-full overflow-hidden"><div id="unBar" class="h-full bg-green-600 rounded-full transition-all duration-300" style="width:0%"></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Длительность × исход + причины -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
+                <div class="card p-5">
+                    <div class="flex items-baseline justify-between">
+                        <h2 class="font-semibold text-gray-900">Длительность × исход</h2>
+                        <span class="text-xs text-gray-400">полоса — p25–p75 · точка — медиана</span>
+                    </div>
+                    <div id="durWrap" class="mt-4"></div>
+                    <p class="mt-3 text-[13px] text-gray-500 bg-green-50/70 border border-green-100 rounded-lg px-3 py-2">💡 Разговоры дольше 2 минут почти всегда доезжают до шага 3. Короткие = срыв на входе: проблема не в длине, а в первом касании.</p>
+                </div>
+
+                <div class="card p-5 flex flex-col">
+                    <div class="flex items-baseline justify-between">
+                        <h2 class="font-semibold text-gray-900">Из-за чего срывается шаг 1</h2>
+                        <span class="text-xs text-gray-400">39 срывов · классификация ИИ</span>
+                    </div>
+                    <div class="mt-4 space-y-3 flex-1">
+                        <div class="flex items-center gap-3 text-sm"><span class="w-44 shrink-0 text-gray-600 truncate">«нам это не интересно»</span><div class="flex-1 h-2.5 bg-gray-100 rounded-full overflow-hidden"><div class="h-full bg-red-400 rounded-full" style="width:62%"></div></div><span class="w-16 text-right tabular-nums text-gray-500">24 · 62 %</span></div>
+                        <div class="flex items-center gap-3 text-sm"><span class="w-44 shrink-0 text-gray-600 truncate">«перезвоните позже»</span><div class="flex-1 h-2.5 bg-gray-100 rounded-full overflow-hidden"><div class="h-full bg-red-300 rounded-full" style="width:15%"></div></div><span class="w-16 text-right tabular-nums text-gray-500">6 · 15 %</span></div>
+                        <div class="flex items-center gap-3 text-sm"><span class="w-44 shrink-0 text-gray-600 truncate">«не тот отдел»</span><div class="flex-1 h-2.5 bg-gray-100 rounded-full overflow-hidden"><div class="h-full bg-red-300 rounded-full" style="width:13%"></div></div><span class="w-16 text-right tabular-nums text-gray-500">5 · 13 %</span></div>
+                        <div class="flex items-center gap-3 text-sm"><span class="w-44 shrink-0 text-gray-600 truncate">связь / не слышно</span><div class="flex-1 h-2.5 bg-gray-100 rounded-full overflow-hidden"><div class="h-full bg-gray-300 rounded-full" style="width:10%"></div></div><span class="w-16 text-right tabular-nums text-gray-500">4 · 10 %</span></div>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-gray-100 flex items-center gap-2">
+                        <button class="chip !border-red-200 !text-red-700" data-goto="calls" data-filter="fail1">Слушать все 39 срывов →</button>
+                        <span class="ml-auto text-xs text-gray-400">главная зона роста</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Отчёт -->
+            <div class="card p-5">
+                <div class="flex flex-wrap items-center gap-3">
+                    <span class="w-8 h-8 rounded-lg bg-green-50 text-green-700 flex items-center justify-center">📄</span>
+                    <div>
+                        <div class="font-semibold text-gray-900">Последний отчёт <span class="font-normal text-gray-400 text-sm">· 03.09</span></div>
+                        <div class="text-xs text-gray-400">период 28.08 – 04.09 · сгенерирован автоматически</div>
+                    </div>
+                    <button class="btn btn-ghost !py-1.5 text-[13px] ml-auto" data-tab2="reports">Все отчёты (18) →</button>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mt-4 text-sm">
+                    <div class="rounded-xl border border-green-100 bg-green-50/40 p-4">
+                        <div class="font-medium text-green-700 mb-2">✅ Плюсы</div>
+                        <ul class="space-y-1.5 text-gray-600 list-disc pl-4">
+                            <li><b class="text-gray-800">Настойчивость:</b> диалог развивается после отказа (звонки №17, №12)</li>
+                            <li><b class="text-gray-800">Представление:</b> имя, компания, цель — чётко</li>
+                            <li><b class="text-gray-800">Перенаправление:</b> получены имена ЛПР («Аркадий», «Олег»)</li>
+                        </ul>
+                    </div>
+                    <div class="rounded-xl border border-red-100 bg-red-50/40 p-4">
+                        <div class="font-medium text-red-700 mb-2">⚠ Минусы</div>
+                        <ul class="space-y-1.5 text-gray-600 list-disc pl-4">
+                            <li>65 % диалогов срываются на шаге 1, чаще на «нам это не интересно»</li>
+                            <li>Скрипт ни разу не дошёл до вилки времени без срыва</li>
+                        </ul>
+                    </div>
+                    <div class="rounded-xl border border-amber-100 bg-amber-50/40 p-4">
+                        <div class="font-medium text-amber-700 mb-2">💡 Рекомендации</div>
+                        <ul class="space-y-1.5 text-gray-600 list-disc pl-4">
+                            <li>Первый ответ на «не интересно»: уточняющий вопрос вместо презентации</li>
+                            <li>Выяснять роль собеседника (ЛПР / не ЛПР) до предложения услуг</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Отчёты (список) -->
+        <div id="tabReports" class="mt-5 hidden space-y-3">
+            <div class="card p-4 flex items-center gap-4 hover:bg-gray-50 transition cursor-pointer" data-tab2="overview">
+                <div class="w-12 text-center shrink-0"><div class="text-sm font-semibold">03.09</div><div class="text-[11px] text-gray-400">28.08–04.09</div></div>
+                <p class="text-sm text-gray-600 truncate">Почти все звонки обрываются на первых шагах: «срыв на шаге 1» — 39 раз…</p><span class="ml-auto text-gray-300">›</span>
+            </div>
+            <div class="card p-4 flex items-center gap-4 hover:bg-gray-50 transition cursor-pointer" data-tab2="overview">
+                <div class="w-12 text-center shrink-0"><div class="text-sm font-semibold">27.08</div><div class="text-[11px] text-gray-400">21.08–27.08</div></div>
+                <p class="text-sm text-gray-600 truncate">Прогресс: 12 диалогов дошли до шага 3, лучше проработать возражение «дорого»…</p><span class="ml-auto text-gray-300">›</span>
+            </div>
+            <div class="card p-4 flex items-center gap-4 hover:bg-gray-50 transition cursor-pointer" data-tab2="overview">
+                <div class="w-12 text-center shrink-0"><div class="text-sm font-semibold">20.08</div><div class="text-[11px] text-gray-400">14.08–20.08</div></div>
+                <p class="text-sm text-gray-600 truncate">5 фрод-номеров добавлено в чёрный список, транскрибация стабильна…</p><span class="ml-auto text-gray-300">›</span>
+            </div>
+            <div class="card p-4 flex items-center gap-4 hover:bg-gray-50 transition cursor-pointer" data-tab2="overview">
+                <div class="w-12 text-center shrink-0"><div class="text-sm font-semibold">13.08</div><div class="text-[11px] text-gray-400">07.08–13.08</div></div>
+                <p class="text-sm text-gray-600 truncate">Первичный прогон анализа: базовые метрики, черновые рекомендации…</p><span class="ml-auto text-gray-300">›</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════ ЭКРАН 3 · ЗВОНКИ + ПАНЕЛЬ РАЗБОРА ══════════════════════ -->
+<div id="screen-calls" class="screen hidden">
+    <div class="max-w-[1400px] mx-auto px-6 py-6">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-2 text-sm min-w-0">
+                <button data-goto="operators" class="inline-flex items-center gap-1.5 text-gray-500 hover:text-gray-800 rounded-lg px-2 py-1 hover:bg-gray-100 transition">← Звонари</button>
+                <span class="text-gray-300">/</span>
+                <h1 class="text-lg font-semibold text-gray-900 truncate">Татьяна Смыкова</h1><span class="text-gray-400">· вн. 100</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <button class="btn btn-ghost">📅 29.08 – 04.09</button>
+                <button class="btn btn-ghost" data-goto="overview">📄 Отчёт</button>
+                <button class="btn btn-ghost !px-2.5" data-toast="Список звонков выгружен в CSV">⬇</button>
+            </div>
+        </div>
+
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+            <button class="chip font-medium" data-goto="overview">166 звонков</button>
+            <button class="chip" data-goto="overview">1 до шага 6</button>
+            <button class="chip !border-red-200 !text-red-700" data-goto="overview">39 · срыв на шаге 1</button>
+        </div>
+
+        <div class="mt-4 inline-flex bg-gray-100 rounded-xl p-1 text-sm">
+            <button class="tabbtn" data-goto="overview">Обзор</button>
+            <button class="tabbtn tabbtn-on">Звонки · 166</button>
+            <button class="tabbtn" data-goto="overview" data-tab2="reports">Отчёты · 18</button>
+        </div>
+
+        <div class="card mt-5 p-4">
+            <div class="flex flex-wrap items-center gap-2">
+                <div class="relative">
+                    <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+                    <input id="callSearch" type="text" placeholder="Поиск по тексту или времени" class="w-64 rounded-xl border border-gray-200 bg-gray-50 pl-9 pr-3 py-2 text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-600/30 focus:border-green-600/50 focus:bg-white transition">
+                </div>
+                <div id="filterChips" class="flex flex-wrap items-center gap-2">
+                    <button class="chip chip-on" data-filter="all">Все · 166</button>
+                    <button class="chip" data-filter="fail1">Срыв ш.1 · 39</button>
+                    <button class="chip" data-filter="step">Шаг 2–3 · 3</button>
+                    <button class="chip" data-filter="passed">Пройден · 1</button>
+                    <button class="chip" data-filter="nodialog">Не состоялись · 16</button>
+                    <button class="chip" data-filter="fraud">Фрод · 1</button>
+                    <button class="chip" data-filter="un">Не разобрано · 106</button>
+                </div>
+                <select id="dirSel" class="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-green-600/30">
+                    <option value="all">Направление: все</option>
+                    <option value="исходящий">Исходящие</option>
+                    <option value="входящий">Входящие</option>
+                </select>
+                <span class="ml-auto text-sm text-gray-400">Найдено <b id="fCount" class="text-gray-700">14</b> из <span id="fTotal">166</span></span>
+            </div>
+        </div>
+
+        <div class="card mt-4">
+            <div class="grid grid-cols-[20px_150px_60px_170px_minmax(180px,1fr)_84px] gap-2 px-4 py-2.5 border-b border-gray-100 text-xs font-medium text-gray-400">
+                <span></span><span>Время</span><span>Длит.</span><span>Прогресс</span><span>Итог</span><span class="text-right">Аудио</span>
+            </div>
+            <div id="callsList"></div>
+            <div class="flex items-center justify-center gap-1 py-3 text-sm text-gray-400 select-none" title="Заглушка прототипа">
+                <button class="px-2 py-1 rounded-md hover:bg-gray-100 text-gray-600">‹</button>
+                <button class="w-8 h-8 rounded-md bg-gray-900 text-white">1</button>
+                <button class="w-8 h-8 rounded-md hover:bg-gray-100">2</button>
+                <button class="w-8 h-8 rounded-md hover:bg-gray-100">3</button>
+                <button class="px-2 py-1 rounded-md hover:bg-gray-100 text-gray-600">›</button>
+                <span class="ml-2 text-xs">по 50</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════ DRAWER ══════════════════════ -->
+<div id="drawerBackdrop" class="fixed inset-0 bg-gray-900/25 hidden z-40"></div>
+<aside id="drawer" class="fixed top-0 right-0 h-full w-full max-w-[640px] bg-white shadow-2xl translate-x-full transition-transform duration-300 z-50 flex flex-col">
+    <div class="flex items-center gap-2 px-5 py-4 border-b border-gray-100">
+        <div class="min-w-0">
+            <div id="dTitle" class="font-semibold text-gray-900 truncate text-[15px]"></div>
+            <div id="dIdx" class="text-xs text-gray-400 mt-0.5"></div>
+        </div>
+        <div class="ml-auto flex items-center gap-1">
+            <button onclick="nav(-1)" class="w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Предыдущий (←)">‹</button>
+            <button onclick="nav(1)" class="w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Следующий (→)">›</button>
+            <button onclick="closeDrawer()" class="w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Закрыть (Esc)">✕</button>
+        </div>
+    </div>
+    <div class="px-5 py-4 border-b border-gray-100">
+        <div class="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+            <button id="btnPlay" onclick="togglePlay()" class="w-10 h-10 shrink-0 rounded-full bg-green-700 text-white flex items-center justify-center hover:bg-green-800 transition"></button>
+            <div id="seek" class="relative flex-1 h-2 bg-gray-200 rounded-full cursor-pointer" onclick="seekClick(event)">
+                <div id="seekFill" class="absolute left-0 top-0 h-full bg-green-600 rounded-full" style="width:0%"></div>
+            </div>
+            <span id="pTime" class="text-xs text-gray-500 tabular-nums whitespace-nowrap">0:00 / 0:45</span>
+            <button id="btnSpeed" onclick="cycleSpeed()" class="text-xs font-medium border border-gray-200 rounded-lg px-2 py-1 hover:bg-white transition bg-white">1×</button>
+            <button class="text-gray-400 hover:text-gray-600 transition" title="Скачать MP3">⬇</button>
+        </div>
+        <div id="dStatus" class="mt-3 flex flex-wrap items-center gap-2"></div>
+    </div>
+    <div class="px-5 pt-3 flex gap-1 text-sm border-b border-gray-100">
+        <button id="dtSteps" class="px-3 py-2 font-medium text-gray-900 border-b-2 border-green-700" onclick="setDrawerTab('steps')">Разбор по шагам</button>
+        <button id="dtTr" class="px-3 py-2 text-gray-500 border-b-2 border-transparent hover:text-gray-800" onclick="setDrawerTab('tr')">Транскрипт</button>
+    </div>
+    <div class="flex-1 overflow-y-auto px-5 py-4">
+        <div id="dSteps" class="space-y-1"></div>
+        <div id="dTranscript" class="hidden"></div>
+    </div>
+</aside>
+
+<div class="fixed bottom-4 right-4 z-[60] flex items-center gap-1 rounded-full bg-gray-900/90 text-white text-xs pl-3 pr-1.5 py-1.5 shadow-lg backdrop-blur">
+    <span id="pillLabel" class="px-1">1 · Звонари</span>
+    <button id="pillPrev" class="w-6 h-6 rounded-full hover:bg-white/10">‹</button>
+    <button id="pillNext" class="w-6 h-6 rounded-full hover:bg-white/10">›</button>
+</div>
+
+<div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-[70] bg-gray-900 text-white text-sm rounded-xl px-4 py-2.5 shadow-xl opacity-0 pointer-events-none transition-opacity duration-300"></div>
+
+<script>
+    /* ─────────── иконки ─────────── */
+    const svg=(d,cls='w-4 h-4')=>`<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+    const I={
+        play:`<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`,
+        pause:`<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="5" width="3.5" height="14" rx="1"/><rect x="13.5" y="5" width="3.5" height="14" rx="1"/></svg>`,
+        spin:svg('<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>','w-4 h-4 animate-spin'),
+        check:svg('<circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/>','w-4 h-4'),
+        xc:svg('<circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/>','w-4 h-4'),
+        minus:svg('<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>','w-4 h-4'),
+        out:svg('<path d="M7 17L17 7M8 7h9v9"/>','w-3 h-3'),
+        inn:svg('<path d="M17 7L7 17M16 17H7V8"/>','w-3 h-3'),
+        user:svg('<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 5-5 8-5s6.5 1 8 5"/>','w-3.5 h-3.5'),
+        bot:svg('<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M8 14h.01M16 14h.01"/>','w-3.5 h-3.5'),
+    };
+
+    /* ─────────── данные звонков ─────────── */
+    const T=['выход на ЛПР','знакомство','первичная потребность','вилка времени','предмет встречи','фиксация встречи'];
+    const GEN={1:'Оператор представилась и назвала цель звонка.',2:'Собеседник назвал имя и роль.',3:'Выявлен интерес: клиент описал текущую ситуацию.',4:'Согласована вилка времени.',5:'Определён предмет встречи.',6:'Встреча зафиксирована, приглашение отправлено.'};
+    function mkSteps(done,breakAt,p={}){const a=[];for(let i=1;i<=6;i++){
+        if(breakAt&&i===breakAt)a.push({n:i,state:'fail',proof:p.fail||'',missing:p.missing||''});
+        else if(i<=done)a.push({n:i,state:'done',proof:p[i]||GEN[i]});
+        else if(breakAt&&i>breakAt)a.push({n:i,state:'na'});
+        else a.push({n:i,state:'pending'});}return a;}
+
+    const calls=[
+        {id:1,day:'31.08, пятница',time:'10:47:42',dir:'исходящий',dur:'0:45',durS:45,status:'fail1',statusLabel:'Срыв на шаге 1',step:1,breakAt:1,
+            meta:[['Собеседник','случайный сотрудник'],['ЛПР подтверждён','нет'],['Макс. шаг','1/6'],['Уверенность','высокая']],
+            place:'Отказ собеседника от дальнейшего диалога на шаге 1.',
+            rec:'Уточнять, кто является ЛПР, до презентации услуг. Проработать ответ на возражение «нам это не интересно».',
+            steps:mkSteps(0,1,{fail:'Оператор пыталась выяснить, кто занимается продвижением, но собеседник ответил «у нас это не интересует» и завершил разговор.',missing:'Имя ЛПР, информация о контакте и времени связи.'}),
+            proofText:'у нас это не интересует',
+            transcript:[['00:03','op','Алло, здравствуйте! Меня зовут Татьяна, студия IQ-200. Подскажите, кто у вас занимается продвижением и рекламой?'],['00:11','cl','Алло. Здравствуйте. Это что за компания?'],['00:15','op','Мы занимаемся продвижением. Могу я поговорить с ответственным за сотрудничество в плане продвижения с помощью рекламы?'],['00:24','cl','Ой, что-то вас плохо слышно. Ещё раз, что вам надо?'],['00:28','op','Скажите, с кем могу поговорить о сотрудничестве в плане продвижения с помощью рекламы?'],['00:35','cl','А, у нас это не интересует.'],['00:40','op','Поняла вас. Всего доброго, до свидания.']]},
+        {id:2,day:'31.08, пятница',time:'10:49:03',dir:'исходящий',dur:'0:44',durS:44,status:'fail1',statusLabel:'Срыв на шаге 1',step:1,breakAt:1,
+            meta:[['Собеседник','сотрудник'],['ЛПР подтверждён','нет'],['Макс. шаг','1/6'],['Уверенность','высокая']],
+            place:'Отказ на шаге 1.',rec:'Задать уточняющий вопрос вместо презентации.',
+            steps:mkSteps(0,1,{fail:'Собеседник ответил «мы сами всё делаем» и отказался от продолжения.',missing:'Контакт ответственного за рекламу.'}),
+            proofText:'не интересует',
+            transcript:[['00:02','op','Здравствуйте! Меня зовут Татьяна, студия IQ-200. Кто у вас отвечает за продвижение и рекламу?'],['00:10','cl','Мы сами всем занимаемся. Что вы хотели?'],['00:14','op','Подскажите, с кем можно обсудить сотрудничество по продвижению сайта?'],['00:22','cl','У нас это не интересует.'],['00:26','op','Поняла вас. Хорошего дня!']]},
+        {id:3,day:'31.08, пятница',time:'10:50:46',dir:'исходящий',dur:'2:25',durS:145,status:'step',statusLabel:'Шаг 3 выполнен',step:3,breakAt:0,
+            meta:[['Собеседник','сотрудник'],['ЛПР подтверждён','нет'],['Макс. шаг','3/6'],['Уверенность','средняя']],
+            rec:'Дожать переход к вилке времени: предложить конкретный слот для созвона.',
+            steps:mkSteps(3,0,{1:'Чётко представилась, назвала компанию и цель.',2:'Собеседник включился в диалог, уточнил, что за студия.',3:'Выявлена потребность: мало заявок, клиент хочет больше.'}),
+            proofText:'заявок мало, хотелось бы больше',
+            transcript:[['00:03','op','Здравствуйте! Татьяна, студия IQ-200. Могу поговорить с тем, кто отвечает за привлечение клиентов?'],['00:12','cl','Да, я вас слушаю. Что за студия?'],['00:16','op','Мы проектируем сайты и настраиваем рекламу. Расскажите, как сейчас обстоят дела с заявками?'],['00:31','cl','В основном сарафан, заявок мало, хотелось бы больше.'],['00:36','op','Понимаю. Могу показать два-три кейса, как это решается у похожих компаний. Удобно будет?'],['00:44','cl','Давайте, присылайте на почту.'],['00:49','op','Хорошо, отправлю сегодня до вечера. Кого указать получателем?']]},
+        {id:4,day:'31.08, пятница',time:'11:04:03',dir:'исходящий',dur:'0:59',durS:59,status:'fail1',statusLabel:'Срыв на шаге 1',step:1,breakAt:1,
+            meta:[['Собеседник','сотрудник'],['ЛПР подтверждён','нет'],['Макс. шаг','1/6'],['Уверенность','высокая']],
+            place:'Отказ на шаге 1.',rec:'Уточнять роль собеседника до презентации.',
+            steps:mkSteps(0,1,{fail:'Собеседник отказался: «не рассматриваем подрядчиков».',missing:'Имя и роль собеседника.'}),
+            proofText:'не интересует',
+            transcript:[['00:02','op','Здравствуйте! Татьяна, студия IQ-200, продвижение и реклама. С кем могу обсудить сотрудничество?'],['00:11','cl','Мы не рассматриваем подрядчиков сейчас.'],['00:15','op','Подскажите, хотя бы, кто этим занимается на вашей стороне?'],['00:23','cl','Давайте без этого, не интересует.'],['00:27','op','Всего доброго!']]},
+        {id:5,day:'31.08, пятница',time:'11:08:53',dir:'входящий',dur:'3:54',durS:234,status:'fail1',statusLabel:'Срыв на шаге 1',step:1,breakAt:1,
+            meta:[['Собеседник','сотрудник'],['ЛПР подтверждён','нет'],['Макс. шаг','1/6'],['Уверенность','высокая']],
+            place:'Входящий звонок: отказ после первого вопроса.',rec:'Работать с возражением «всё уже есть»: задать вопрос про объём и качество лидов.',
+            steps:mkSteps(0,1,{fail:'Собеседник отказался от темы после первого вопроса.',missing:'Работа с возражением «всё уже есть».'}),
+            proofText:'не рассматриваем',
+            transcript:[['00:02','cl','Алло, вы звонили с этого номера?'],['00:05','op','Да, здравствуйте! Татьяна, студия IQ-200. Мы хотели обсудить продвижение вашего сайта.'],['00:16','cl','Мы рекламой не занимаемся, всё уже есть.'],['00:21','op','А кто у вас отвечает за направление, если можно?'],['00:29','cl','Слушайте, мы не рассматриваем. До свидания.']]},
+        {id:6,day:'31.08, пятница',time:'12:04:37',dir:'исходящий',dur:'0:51',durS:51,status:'step',statusLabel:'Шаг 2 выполнен',step:2,breakAt:0,
+            meta:[['Собеседник','маркетолог'],['ЛПР подтверждён','частично'],['Макс. шаг','2/6'],['Уверенность','средняя']],
+            rec:'Зафиксировать контакт и договориться о следующем касании.',
+            steps:mkSteps(2,0,{1:'Представилась и назвала цель.',2:'Собеседник представился: Сергей, маркетолог.'}),
+            proofText:'работаем с одним подрядчиком',
+            transcript:[['00:03','op','Здравствуйте! Татьяна, студия IQ-200. Подскажите, кто занимается продвижением компании?'],['00:12','cl','Я, Сергей, маркетолог.'],['00:15','op','Сергей, здравствуйте! Расскажите, как сейчас устроена работа с трафиком?'],['00:26','cl','Мы уже работаем с одним подрядчиком, пока всё устраивает.'],['00:31','op','Понял вас. Будем на связи, если что-то поменяется?'],['00:35','cl','Давайте.']]},
+        {id:7,day:'31.08, пятница',time:'12:07:43',dir:'исходящий',dur:'0:39',durS:39,status:'fail1',statusLabel:'Срыв на шаге 1',step:1,breakAt:1,
+            meta:[['Собеседник','случайный сотрудник'],['ЛПР подтверждён','нет'],['Макс. шаг','1/6'],['Уверенность','высокая']],
+            place:'Отказ на шаге 1.',rec:'Выход на лицо, принимающее решения.',
+            steps:mkSteps(0,1,{fail:'Ответственный не определён, собеседник ответил «не интересует».',missing:'Выход на ЛПР.'}),
+            proofText:'Не интересует',
+            transcript:[['00:02','op','Добрый день! Татьяна, студия IQ-200, рекламное продвижение. Могу поговорить с ответственным за маркетинг?'],['00:12','cl','Каким маркетингом? У нас всё нормально.'],['00:16','op','Я про привлечение клиентов через интернет…'],['00:24','cl','Не интересует.'],['00:26','op','Хорошо, извините за беспокойство.']]},
+        {id:8,day:'31.08, пятница',time:'12:09:39',dir:'исходящий',dur:'0:22',durS:22,status:'nodialog',statusLabel:'Технический · диалог не состоялся',step:0,breakAt:0,
+            meta:[['Причина','плохое качество связи']],
+            steps:mkSteps(0,1,{fail:'Технические проблемы связи, содержательный диалог не состоялся.',missing:'—'}),
+            transcript:[['00:01','op','Здравствуйте, компания IQ-200…'],['00:06','cl','(шум) Кто это? Алло?'],['00:12','op','Алло, вас слышно?'],['00:16','cl','Ничего не слышно… (сброс)']]},
+        {id:9,day:'31.08, пятница',time:'12:34:35',dir:'исходящий',dur:'1:13',durS:73,status:'fail1',statusLabel:'Срыв на шаге 1',step:1,breakAt:1,
+            meta:[['Собеседник','ответственный за рекламу'],['ЛПР подтверждён','да'],['Макс. шаг','1/6'],['Уверенность','высокая']],
+            place:'Двойной перенос: «перезвоните», затем «не интересно».',rec:'Фиксировать конкретное время повторного звонка.',
+            steps:mkSteps(0,1,{fail:'Собеседник дважды перенаправил разговор: «перезвоните», «не интересно».',missing:'Фиксация конкретного времени повторного звонка.'}),
+            proofText:'не интересно',
+            transcript:[['00:03','op','Здравствуйте! Татьяна, студия IQ-200. Кто у вас занимается рекламой и продвижением?'],['00:13','cl','Я этим занимаюсь, но времени нет. Перезвоните позже.'],['00:18','op','Когда удобнее — завтра в первой половине дня?'],['00:25','cl','Не знаю, у нас это не интересно пока.'],['00:29','op','Поняла. Всего доброго!']]},
+        {id:10,day:'31.08, пятница',time:'12:36:40',dir:'исходящий',dur:'0:53',durS:53,status:'nodialog',statusLabel:'Технический · диалог не состоялся',step:0,breakAt:0,
+            meta:[['Причина','линия с помехами']],
+            steps:mkSteps(0,1,{fail:'Линия с помехами, разговор прервался.',missing:'Повторный дозвон.'}),
+            transcript:[['00:01','op','Добрый день, студия IQ-200, по поводу продвижения!'],['00:07','cl','(факсимиле / тишина)'],['00:14','op','Алло? Вас плохо слышно… (сброс)']]},
+        {id:11,day:'01.09, понедельник',time:'09:12:05',dir:'исходящий',dur:'1:48',durS:108,status:'step',statusLabel:'Шаг 3 выполнен',step:3,breakAt:0,
+            meta:[['Собеседник','директор'],['ЛПР подтверждён','да'],['Макс. шаг','3/6'],['Уверенность','средняя']],
+            rec:'Договориться о конкретном времени созвона, отправить письмо-разбор до звонка.',
+            steps:mkSteps(3,0,{1:'Представилась, назвала цель.',2:'Собеседник представился: Алексей, директор.',3:'Выявлена потребность: нет заявок с сайта.'}),
+            proofText:'заявок с сайта почти нет',
+            transcript:[['00:04','op','Здравствуйте! Татьяна, студия IQ-200. Могу поговорить с тем, кто отвечает за привлечение клиентов?'],['00:15','cl','Да, я директор, Алексей. Слушаю.'],['00:19','op','Алексей, расскажите, откуда сейчас приходят клиенты?'],['00:33','cl','В основном рекомендации, заявок с сайта почти нет.'],['00:38','op','Понимаю. Могу разобрать вашу воронку и показать точки роста. Когда удобно созвониться?'],['00:52','cl','Давайте на следующей неделе, я занят.'],['00:56','op','Хорошо, созвонимся в понедельник?'],['01:02','cl','Напишите сначала на почту.']]},
+        {id:12,day:'01.09, понедельник',time:'09:31:27',dir:'исходящий',dur:'4:10',durS:250,status:'passed',statusLabel:'Скрипт пройден · встреча 05.09 15:00',step:6,breakAt:0,
+            meta:[['Собеседник','коммерческий директор'],['ЛПР подтверждён','да'],['Макс. шаг','6/6'],['Уверенность','высокая']],
+            rec:'Подготовить повестку и кейсы к встрече 05.09. Отправить подтверждение на почту.',
+            steps:mkSteps(6,0,{1:'Представилась, вышла на коммерческого директора.',2:'Собеседник: Владимир, коммерческий директор.',3:'Потребность: мало заявок (5–7/мес).',4:'Согласована вилка: пятница 15:00.',5:'Предмет: разбор воронки, 20 минут.',6:'Встреча зафиксирована, приглашение отправлено.'}),
+            proofText:'В пятницу в 15:00 — нормально',
+            transcript:[['00:05','op','Здравствуйте! Меня зовут Татьяна, студия IQ-200. Занимаемся продвижением и рекламой. Могу поговорить с ответственным за развитие?'],['00:20','cl','Здравствуйте! Владимир, коммерческий директор. Слушаю.'],['00:26','op','Владимир, расскажите, как сейчас обстоят дела с заявками?'],['00:41','cl','Заявок мало, всего 5–7 в месяц с сайта, хочется больше.'],['00:48','op','Понял. У похожих компаний мы вырастали до 30+ заявок. Удобно будет в пятницу в 15:00 показать разбор на 20 минут?'],['01:05','cl','В пятницу в 15:00 — нормально.'],['01:09','op','Отлично! Отправляю приглашение: созвон-демо, 05.09 в 15:00, вышлю повестку на почту.'],['01:22','cl','Хорошо, жду.']]},
+        {id:13,day:'01.09, понедельник',time:'10:02:11',dir:'исходящий',dur:'0:38',durS:38,status:'fraud',statusLabel:'Фрод (автоответчик)',step:0,breakAt:1,
+            meta:[['Собеседник','автоответчик'],['Рекомендация','исключить номер из обзвона']],
+            steps:mkSteps(0,1,{fail:'Вместо человека отвечает автоответчик.',missing:'—'}),
+            proofText:'Ваш звонок очень важен',
+            transcript:[['00:01','op','Здравствуйте! Татьяна, студия IQ-200…'],['00:06','bot','Ваш звонок очень важен для нас. Оставайтесь на линии.'],['00:14','op','…Алло?'],['00:18','bot','Ваш звонок очень важен для нас.']]},
+        {id:14,day:'01.09, понедельник',time:'10:15:44',dir:'входящий',dur:'2:05',durS:125,status:'un',statusLabel:'Не разобрано',step:0,breakAt:0,
+            meta:[['Статус','ожидает анализа']],
+            steps:null,
+            transcript:[['00:02','cl','Алло, вам тут кто-то звонил с этого номера?'],['00:07','op','Да, здравствуйте! Татьяна, студия IQ-200, мы звонили по вопросу продвижения.'],['00:18','cl','А, ну хорошо. Давайте потом, я на совещании.']]},
+    ];
+
+    const CHIP={
+        fail1:'bg-red-50 text-red-700 border-red-200',
+        step:'bg-green-50 text-green-700 border-green-200',
+        passed:'bg-green-600 text-white border-green-600',
+        nodialog:'bg-gray-100 text-gray-500 border-gray-200',
+        fraud:'bg-red-50 text-red-700 border-red-300 border-dashed',
+        un:'bg-amber-50 text-amber-700 border-amber-300 border-dashed',
+    };
+    const FILTERS={all:166,fail1:39,step:3,passed:1,nodialog:16,fraud:1,un:106};
+
+    /* ─────────── утилиты ─────────── */
+    const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+    const fmt=s=>{s=Math.floor(s);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');};
+    let toastT;
+    function toast(m){const t=$('#toast');t.textContent=m;t.style.opacity=1;clearTimeout(toastT);toastT=setTimeout(()=>t.style.opacity=0,2600);}
+
+    /* ─────────── экраны ─────────── */
+    const SCREENS=[['screen-operators','1 · Звонари'],['screen-overview','2 · Оператор · Обзор'],['screen-calls','3 · Звонки + разбор']];
+    let curScreen='screen-operators';
+    function show(id){
+        curScreen=id;
+        $$('.screen').forEach(s=>s.classList.add('hidden'));
+        const el=document.getElementById(id); el.classList.remove('hidden');
+        $('#pillLabel').textContent=SCREENS.find(s=>s[0]===id)[1];
+        history.replaceState(null,'','#'+id.replace('screen-',''));
+        window.scrollTo({top:0});
+        closeDrawer();
+        if(id==='screen-overview')requestAnimationFrame(()=>{const s=$('#rmSvg');if(s)s.classList.add('on');});
+    }
+    function pillNav(d){const i=SCREENS.findIndex(s=>s[0]===curScreen);show(SCREENS[(i+d+3)%3][0]);}
+    $('#pillPrev').onclick=()=>pillNav(-1);
+    $('#pillNext').onclick=()=>pillNav(1);
+
+    document.addEventListener('click',e=>{
+        const g=e.target.closest('[data-goto]');
+        if(g){e.stopPropagation();show('screen-'+g.dataset.goto);if(g.dataset.filter)setFilter(g.dataset.filter);if(g.dataset.tab2)setTab2(g.dataset.tab2);return;}
+        const t=e.target.closest('[data-toast]');
+        if(t){e.stopPropagation();toast(t.dataset.toast);}
+    });
+
+    /* ─────────── экран 1 ─────────── */
+    function toggleInactive(){
+        const rows=$$('.inactive-row'),open=rows[0].classList.contains('hidden');
+        rows.forEach(r=>r.classList.toggle('hidden',!open));
+        $('#inactChev').style.transform=open?'rotate(90deg)':'';
+    }
+    $('#onlyActive').addEventListener('change',e=>{
+        $('#inactiveHead').classList.toggle('hidden',e.target.checked);
+        if(e.target.checked)$$('.inactive-row').forEach(r=>r.classList.add('hidden'));
+    });
+    $('#opSearch').addEventListener('input',e=>{
+        const q=e.target.value.toLowerCase();
+        $$('#opRows tr[data-name]').forEach(tr=>tr.classList.toggle('hidden',q&&!tr.dataset.name.includes(q)));
+    });
+    let busy=false;
+    $('#btnProcess').addEventListener('click',()=>toast('Синхронизация CDR запущена'));
+    $('#btnAnalyze').addEventListener('click',()=>{
+        if(busy)return;busy=true;
+        const b=$('#btnAnalyze'),old=b.innerHTML;
+        b.innerHTML=I.spin+'Идёт анализ…';b.classList.add('pointer-events-none');
+        $('#stAn').classList.add('text-amber-600');
+        $('#stAnTime').textContent='· выполняется…';
+        setTimeout(()=>{
+            b.innerHTML=old;b.classList.remove('pointer-events-none');
+            $('#stAn').classList.remove('text-amber-600');$('#stAn').classList.add('text-gray-700');
+            $('#stAnTime').textContent='· завершён · только что';
+            $('#stAn').querySelector('span').className='w-2 h-2 rounded-full bg-green-500';
+            toast('Анализ завершён: разобрано 160 звонков');busy=false;
+        },2600);
+    });
+
+    /* ─────────── экран 2 · KPI со спарклайнами ─────────── */
+    const KPIS=[
+        {l:'Звонков',v:'166',note:'за период',d:'−58 %',bad:true,fc:'text-red-600',
+            bars:[210,380,295,410,240,166],bc:'bg-gray-200',lc:'bg-gray-400',f:'all'},
+        {l:'Диалогов',v:'43',note:'26 % от звонков',d:'−12 п.п.',bad:true,fc:'text-red-600',
+            bars:[46,72,62,84,34,43],bc:'bg-gray-200',lc:'bg-amber-400',f:'all'},
+        {l:'Срыв на шаге 1',v:'39',note:'65 % диалогов',d:'+8 п.п.',bad:true,fc:'text-red-600',
+            bars:[43,51,45,58,57,65],bc:'bg-red-100',lc:'bg-red-500',f:'fail1'},
+        {l:'Скрипт пройден',v:'1',note:'2 % диалогов · встреча 05.09',d:'равно пред.',bad:false,fc:'text-gray-400',
+            bars:[0,1,2,1,0,1],bc:'bg-green-100',lc:'bg-green-600',f:'passed'},
+    ];
+    function buildKPI(){
+        $('#kpiRow').innerHTML=KPIS.map((k,i)=>{
+            const mx=Math.max(...k.bars,1);
+            const bars=k.bars.map((b,j)=>`<span class="kpi-bar flex-1 rounded-t-sm ${j===k.bars.length-1?k.lc:k.bc}" style="height:${Math.max(6,b/mx*100)}%;transition-delay:${i*0.08+j*0.04}s" title="${b}"></span>`).join('');
+            return `<button class="card p-4 text-left hover:border-green-400 transition group" data-goto="calls" data-filter="${k.f}">
+      <div class="flex items-baseline justify-between gap-2">
+        <span class="text-[13px] text-gray-500">${k.l}</span>
+        <span class="text-[11px] font-medium ${k.fc}">${k.d}</span>
+      </div>
+      <div class="mt-0.5 text-2xl font-semibold tracking-tight text-gray-900 group-hover:text-green-800 transition">${k.v}</div>
+      <div class="text-[11px] text-gray-400">${k.note}</div>
+      <div class="mt-3 flex items-end gap-1 h-8">${bars}</div>
+      <div class="mt-1.5 text-[10px] text-gray-300">5 пред. периодов → текущий</div>
+    </button>`;
+        }).join('');
+    }
+
+    /* ─────────── экран 2 · дорожная карта скрипта (sankey) ─────────── */
+    const RM={steps:[
+            {t:'выход на ЛПР',n:43,d:39},
+            {t:'знакомство',n:4,d:2},
+            {t:'первичная потребность',n:2,d:1},
+            {t:'вилка времени',n:1,d:0},
+            {t:'предмет встречи',n:1,d:0},
+            {t:'фиксация встречи',n:1,d:0},
+        ],meet:1,total:60};
+    function buildRoadmap(){
+        const mainY=128,H=n=>Math.max(5,5+n*1.05);
+        const SX=30,X=[136,271,406,541,676,811],MX=946,W=12;
+        let dl=0;const dly=()=>`style="transition-delay:${(dl+=0.07).toFixed(2)}s"`;
+        let s='';
+        /* потоки */
+        s+=`<polygon data-f="0" class="rm flow" ${dly()} fill="#cbd5e1" points="${SX+W/2},${mainY-H(RM.total)/2} ${X[0]-W/2},${mainY-H(RM.steps[0].n)/2} ${X[0]-W/2},${mainY+H(RM.steps[0].n)/2} ${SX+W/2},${mainY+H(RM.total)/2}"/>`;
+        for(let i=1;i<6;i++){
+            const a=RM.steps[i-1],b=RM.steps[i];
+            s+=`<polygon data-f="${i}" class="rm flow" ${dly()} fill="#4ade80" points="${X[i-1]+W/2},${mainY-H(a.n)/2} ${X[i]-W/2},${mainY-H(b.n)/2} ${X[i]-W/2},${mainY+H(b.n)/2} ${X[i-1]+W/2},${mainY+H(a.n)/2}"/>`;
+        }
+        s+=`<polygon data-f="6" class="rm flow" ${dly()} fill="#10b981" points="${X[5]+W/2},${mainY-3} ${MX-W/2},${mainY-3} ${MX-W/2},${mainY+3} ${X[5]+W/2},${mainY+3}"/>`;
+        /* старт */
+        s+=`<g class="rm" data-node="s" data-goto="calls" data-filter="all" style="cursor:pointer">
+    <rect x="${SX-W/2}" y="${mainY-H(RM.total)/2}" width="${W}" height="${H(RM.total)}" rx="6" fill="#94a3b8"/>
+    <text x="${SX}" y="${mainY-H(RM.total)/2-24}" text-anchor="middle" class="rn">${RM.total}</text>
+    <text x="${SX}" y="${mainY-H(RM.total)/2-8}" text-anchor="middle" class="rl">разобрано</text>
+    <title>60 разобранных звонков периода</title></g>`;
+        /* не-диалоги вниз от старта */
+        const yS=mainY+H(RM.total)/2;
+        s+=`<g class="rm" data-node="s" data-goto="calls" data-filter="nodialog" style="cursor:pointer">
+    <rect x="${SX-W/2}" y="${yS}" width="${W}" height="40" rx="6" fill="#e2e8f0"/>
+    <text x="${SX}" y="${yS+58}" text-anchor="middle" class="rn">17</text>
+    <text x="${SX}" y="${yS+72}" text-anchor="middle" class="rl">не диалог</text>
+    <title>16 — диалог не состоялся (связь/сброс) · 1 — фрод (автоответчик)</title></g>`;
+        /* шаги */
+        RM.steps.forEach((st,i)=>{
+            const h=H(st.n),yB=mainY+h/2;
+            s+=`<g class="rm" data-node="${i}" data-goto="calls" data-filter="${i===0?'fail1':'step'}" style="cursor:pointer">
+      <rect x="${X[i]-W/2}" y="${mainY-h/2}" width="${W}" height="${h}" rx="6" fill="#334155"/>
+      <text x="${X[i]}" y="${mainY-h/2-26}" text-anchor="middle" class="rn">${st.n}</text>
+      <text x="${X[i]}" y="${mainY-h/2-10}" text-anchor="middle" class="rl">шаг ${i+1} · ${st.t}</text>
+      <title>Шаг ${i+1} «${st.t}»: вошло ${st.n} · сорвалось ${st.d} · прошло дальше ${st.n-st.d}</title></g>`;
+            if(st.d){
+                const big=st.d>=10;
+                s+=`<g class="rm" data-node="${i}" data-goto="calls" data-filter="fail1" style="cursor:pointer">
+        <line x1="${X[i]}" y1="${yB+2}" x2="${X[i]}" y2="200" stroke="#f87171" stroke-width="${big?4:2.5}"/>
+        <circle cx="${X[i]}" cy="214" r="${big?15:11}" fill="${big?'#dc2626':'#fee2e2'}" stroke="${big?'#dc2626':'#fecaca'}" stroke-width="1.5"/>
+        <text x="${X[i]}" y="${big?218.5:218}" text-anchor="middle" class="${big?'font-semibold':'fill-red-700'}" fill="${big?'#ffffff':'#b91c1c'}" font-size="${big?13:11}">${st.d}</text>
+        <title>Срыв на шаге ${i+1}: ${st.d} звонков</title></g>`;
+            }
+        });
+        /* встреча */
+        s+=`<g class="rm" data-node="6" data-goto="calls" data-filter="passed" style="cursor:pointer">
+    <rect x="${MX-W/2}" y="${mainY-3}" width="${W}" height="6" rx="3" fill="#059669"/>
+    <text x="${MX}" y="${mainY-28}" text-anchor="middle" class="rn">${RM.meet}</text>
+    <text x="${MX}" y="${mainY-12}" text-anchor="middle" class="rl">🤝 встреча</text>
+    <title>Скрипт пройден: встреча назначена — 1 звонок</title></g>`;
+        $('#rmWrap').innerHTML=`<svg id="rmSvg" viewBox="0 0 980 250" class="w-full min-w-[840px]">${s}</svg>`;
+        const rm=$('#rmSvg');
+        rm.addEventListener('mouseover',e=>{
+            const g=e.target.closest('[data-node]');if(!g)return;
+            const i=g.dataset.node;
+            rm.classList.add('dim');
+            rm.querySelectorAll('.rm.hot').forEach(el=>el.classList.remove('hot'));
+            if(i==='s'){
+                rm.querySelectorAll('[data-node="s"]').forEach(el=>el.classList.add('hot'));
+                const f=rm.querySelector('[data-f="0"]');if(f)f.classList.add('hot');
+            }else{
+                const j=+i;
+                rm.querySelectorAll(`[data-node="${j}"]`).forEach(el=>el.classList.add('hot'));
+                [j,j+1].forEach(k=>{const f=rm.querySelector(`[data-f="${k}"]`);if(f)f.classList.add('hot');});
+            }
+        });
+        rm.addEventListener('mouseleave',()=>{
+            rm.classList.remove('dim');
+            rm.querySelectorAll('.rm.hot').forEach(el=>el.classList.remove('hot'));
+        });
+    }
+
+    /* ─────────── экран 2 · длительность × исход ─────────── */
+    const DUR=[
+        {l:'Срыв на ш. 1',n:39,lo:35,hi:65,med:47,bar:'bg-red-200',dot:'bg-red-500'},
+        {l:'Шаги 2–3',n:3,lo:108,hi:145,med:125,bar:'bg-green-200',dot:'bg-green-500'},
+        {l:'Пройден',n:1,lo:250,hi:250,med:250,bar:'bg-green-300',dot:'bg-green-700'},
+    ];
+    function buildDur(){
+        const T=300;
+        const grid=[0,60,120,180,240,300].map(t=>`<div class="absolute inset-y-0 border-l border-gray-100" style="left:${t/T*100}%"></div>`).join('');
+        const ax=[0,1,2,3,4,5].map(m=>`<span class="absolute text-[10px] text-gray-300 tabular-nums" style="left:${m*20}%;top:126px;transform:translateX(-50%)">${m}${m===5?' мин':''}</span>`).join('');
+        const rows=DUR.map((r,i)=>{
+            const y=i*40+10;
+            const range=r.lo!==r.hi?`<div class="absolute top-1/2 -translate-y-1/2 h-2.5 rounded-full ${r.bar}" style="left:${r.lo/T*100}%;width:${(r.hi-r.lo)/T*100}%"></div>`:'';
+            return `<div class="absolute left-0 right-0" style="top:${y}px">
+      <div class="relative h-3">${range}
+        <div class="absolute top-1/2 -translate-y-1/2 -ml-1.5 w-3 h-3 rounded-full ${r.dot} border-2 border-white shadow" style="left:${r.med/T*100}%"></div>
+        <span class="absolute text-[11px] tabular-nums text-gray-400" style="left:calc(${r.med/T*100}% + 9px);top:50%;transform:translateY(-50%)">${fmt(r.med)}</span>
+      </div></div>`;
+        }).join('');
+        const labels=DUR.map((r,i)=>`<div class="absolute right-2 text-right" style="top:${i*40+9}px">
+    <div class="text-[13px] text-gray-700 font-medium">${r.l}</div><div class="text-[11px] text-gray-400">n=${r.n}</div></div>`).join('');
+        $('#durWrap').innerHTML=`<div class="flex">
+    <div class="relative w-28 shrink-0 h-[150px]">${labels}</div>
+    <div class="relative flex-1 h-[150px]">${grid}${rows}${ax}</div></div>`;
+    }
+
+    /* ─────────── экран 2 · кнопка «разобрать 106» ─────────── */
+    $('#btnUn').addEventListener('click',()=>{
+        const b=$('#btnUn'),p=$('#unProg'),bar=$('#unBar');
+        b.classList.add('hidden');p.classList.remove('hidden');
+        let done=0;const total=106;
+        const t=setInterval(()=>{
+            done=Math.min(total,done+Math.ceil(total/40));
+            const pc=Math.round(done/total*100);
+            bar.style.width=pc+'%';
+            $('#unLbl').textContent=`Разбираем… ${done}/${total}`;
+            $('#unPct').textContent=pc+' %';
+            if(done>=total){clearInterval(t);
+                $('#unLbl').textContent='Готово: 106 звонков разобрано';
+                toast('Анализ завершён — обзор обновится в реальном сервисе');}
+        },90);
+    });
+
+    /* ─────────── экран 2: табы ─────────── */
+    function setTab2(name){
+        show('screen-overview');
+        $('#tabOverview').classList.toggle('hidden',name!=='overview');
+        $('#tabReports').classList.toggle('hidden',name!=='reports');
+        $$('[data-tab2]').forEach(b=>{
+            if(!b.classList.contains('tabbtn'))return;
+            b.classList.toggle('tabbtn-on',b.dataset.tab2===name);
+        });
+    }
+    $$('[data-tab2]').forEach(b=>b.addEventListener('click',()=>setTab2(b.dataset.tab2)));
+
+    /* ─────────── экран 3: фильтры и список ─────────── */
+    let activeFilter='all',visibleCalls=[];
+    function dots(c){
+        if(c.status==='un'||c.status==='nodialog'||c.status==='fraud')
+            return `<span class="inline-flex gap-1">${'<span class="w-2.5 h-2.5 rounded-[3px] bg-gray-200"></span>'.repeat(6)}</span>`;
+        let o='';for(let i=1;i<=6;i++){let cl='bg-gray-200';if(c.breakAt===i)cl='bg-red-500';else if(c.step>=i)cl='bg-green-500';o+=`<span class="w-2.5 h-2.5 rounded-[3px] ${cl}"></span>`;}
+        return `<span class="inline-flex gap-1">${o}</span>`;
+    }
+    function rowHTML(c){
+        return `<div class="call-row grid grid-cols-[20px_150px_60px_170px_minmax(180px,1fr)_84px] items-center gap-2 px-4 py-2.5 border-b border-gray-100 hover:bg-gray-50 cursor-pointer text-sm transition" data-id="${c.id}">
+    <span class="text-gray-300">›</span>
+    <span><span class="font-medium tabular-nums text-gray-800">${c.time}</span><br>
+      <span class="text-[11px] text-gray-400 inline-flex items-center gap-1">${c.dir==='исходящий'?I.out:I.inn}${c.dir}</span></span>
+    <span class="tabular-nums text-gray-500">${c.dur}</span>
+    <span class="flex items-center gap-2">${dots(c)}<span class="text-xs text-gray-400 tabular-nums">${c.step?c.step+'/6':'–'}</span></span>
+    <span><span class="inline-flex items-center text-xs rounded-full border px-2.5 py-1 ${CHIP[c.status]}">${c.statusLabel}</span></span>
+    <span class="flex items-center justify-end gap-1 text-gray-400">
+      <button class="p-1.5 rounded-md hover:bg-gray-100 hover:text-gray-700 transition" data-stop data-view="tr" title="Слушать и читать">🎧</button>
+      <button class="p-1.5 rounded-md hover:bg-gray-100 hover:text-green-700 transition" data-stop data-view="steps" title="ИИ-разбор">✦</button>
+    </span></div>`;
+    }
+    function renderCalls(){
+        const q=$('#callSearch').value.toLowerCase(),d=$('#dirSel').value;
+        visibleCalls=calls.filter(c=>
+            (activeFilter==='all'||c.status===activeFilter)&&
+            (d==='all'||c.dir===d)&&
+            (!q||(c.time+' '+c.statusLabel+' '+c.day).toLowerCase().includes(q)));
+        let html='',lastDay=null;
+        visibleCalls.forEach(c=>{
+            if(c.day!==lastDay){lastDay=c.day;html+=`<div class="px-4 py-2 bg-gray-50/70 text-[11px] font-semibold uppercase tracking-wider text-gray-400 border-b border-gray-100">${c.day} · ${calls.filter(x=>x.day===c.day).length} звонков</div>`;}
+            html+=rowHTML(c);
+        });
+        if(!visibleCalls.length)html=`<div class="px-4 py-10 text-center text-sm text-gray-400">Ничего не найдено — ослабьте фильтры</div>`;
+        $('#callsList').innerHTML=html;
+        $('#fCount').textContent=visibleCalls.length;
+        $('#fTotal').textContent=FILTERS[activeFilter];
+        markRow();
+    }
+    function setFilter(id){
+        activeFilter=id;
+        $$('#filterChips [data-filter]').forEach(b=>b.classList.toggle('chip-on',b.dataset.filter===id));
+        renderCalls();
+    }
+    $('#filterChips').addEventListener('click',e=>{const b=e.target.closest('[data-filter]');if(b)setFilter(b.dataset.filter);});
+    $('#callSearch').addEventListener('input',renderCalls);
+    $('#dirSel').addEventListener('change',renderCalls);
+    $('#callsList').addEventListener('click',e=>{
+        const row=e.target.closest('.call-row');if(!row)return;
+        const btn=e.target.closest('[data-stop]');
+        openCall(+row.dataset.id);
+        if(btn)setDrawerTab(btn.dataset.view);
+    });
+
+    /* ─────────── drawer ─────────── */
+    let curId=null,drawerOpen=false;
+    function markRow(){$$('.call-row').forEach(r=>r.classList.toggle('!bg-green-50',+r.dataset.id===curId&&drawerOpen));}
+    function openCall(id){
+        curId=id;const c=calls.find(x=>x.id===id);
+        $('#dTitle').innerHTML=`${c.day.split(',')[0]} · <span class="tabular-nums">${c.time}</span>
+    <span class="ml-1 text-[11px] font-normal rounded-md bg-gray-100 text-gray-500 px-1.5 py-0.5 align-middle">${c.dir}</span>`;
+        const list=visibleCalls.length?visibleCalls:calls;
+        $('#dIdx').textContent=`Звонок ${list.findIndex(x=>x.id===id)+1} из ${list.length} · ${c.dur}`;
+        loadPlayer(c);
+        $('#dStatus').innerHTML=statusHTML(c);
+        $('#dSteps').innerHTML=stepsBlock(c);
+        $('#dTranscript').innerHTML=trBlock(c);
+        setDrawerTab('steps');
+        $('#drawer').classList.remove('translate-x-full');
+        $('#drawerBackdrop').classList.remove('hidden');
+        drawerOpen=true;markRow();
+    }
+    function closeDrawer(){
+        $('#drawer').classList.add('translate-x-full');
+        $('#drawerBackdrop').classList.add('hidden');
+        drawerOpen=false;P.playing=false;setPlayIcon();markRow();
+    }
+    $('#drawerBackdrop').addEventListener('click',closeDrawer);
+    function nav(d){
+        const list=visibleCalls.length?visibleCalls:calls;
+        let i=list.findIndex(c=>c.id===curId);if(i<0)i=0;
+        openCall(list[(i+d+list.length)%list.length].id);
+    }
+    document.addEventListener('keydown',e=>{
+        if(!drawerOpen)return;
+        if(e.key==='Escape')closeDrawer();
+        if(e.key==='ArrowRight')nav(1);
+        if(e.key==='ArrowLeft')nav(-1);
+    });
+    function setDrawerTab(n){
+        $('#dtSteps').className='px-3 py-2 '+(n==='steps'?'font-medium text-gray-900 border-b-2 border-green-700':'text-gray-500 border-b-2 border-transparent hover:text-gray-800');
+        $('#dtTr').className='px-3 py-2 '+(n==='tr'?'font-medium text-gray-900 border-b-2 border-green-700':'text-gray-500 border-b-2 border-transparent hover:text-gray-800');
+        $('#dSteps').classList.toggle('hidden',n!=='steps');
+        $('#dTranscript').classList.toggle('hidden',n!=='tr');
+    }
+    $('#dtSteps').onclick=()=>setDrawerTab('steps');
+    $('#dtTr').onclick=()=>setDrawerTab('tr');
+
+    function statusHTML(c){
+        let h=`<span class="inline-flex items-center text-xs rounded-full border px-2.5 py-1 font-medium ${CHIP[c.status]}">${c.statusLabel}</span>`;
+        (c.meta||[]).forEach(([k,v])=>h+=`<span class="text-xs bg-gray-100 text-gray-600 rounded-full px-2.5 py-1">${k}: <b class="font-medium text-gray-700">${v}</b></span>`);
+        if(c.status==='un')h+=`<button class="text-xs font-medium rounded-full px-3 py-1.5 bg-amber-500 text-white hover:bg-amber-600 transition" data-toast="Отправлено на анализ — в реальном сервисе звонок попадёт в очередь">✦ Разобрать звонок</button>`;
+        return h;
+    }
+    function stepsBlock(c){
+        if(!c.steps)return `<div class="rounded-xl border border-dashed border-amber-300 bg-amber-50 p-4 text-sm text-amber-800">Этот звонок ещё не разобран. Транскрипт доступен — запустите анализ, чтобы получить разбор по шагам и рекомендации.</div>`;
+        let h='';
+        c.steps.filter(s=>s.state==='fail').forEach(s=>{
+            h+=`<div class="mb-2 rounded-lg border border-red-200 bg-red-50/60 p-3">
+      <div class="flex items-center gap-2 font-medium text-red-700 text-sm">${I.xc} Шаг ${s.n} — ${T[s.n-1]}
+        <span class="ml-auto text-[11px] font-medium bg-red-100 text-red-700 rounded-full px-2 py-0.5">Не выполнен</span></div>
+      ${s.proof?`<p class="mt-1.5 text-[13px] text-gray-600"><span class="text-gray-400">Доказательство:</span> ${s.proof}</p>`:''}
+      ${s.missing?`<p class="mt-1 text-[13px] text-gray-600"><span class="text-gray-400">Чего не хватило:</span> ${s.missing}</p>`:''}</div>`;
+        });
+        c.steps.filter(s=>s.state==='done').forEach(s=>{
+            h+=`<div class="flex items-start gap-2.5 py-2 border-b border-gray-100 last:border-0">
+      <span class="text-green-600 mt-0.5">${I.check}</span>
+      <div class="text-sm"><span class="font-medium text-gray-700">Шаг ${s.n} — ${T[s.n-1]}</span>
+        <span class="text-[11px] text-green-700 bg-green-50 rounded-full px-2 py-0.5 ml-1">Выполнен</span>
+        <p class="text-[13px] text-gray-500 mt-0.5">${s.proof}</p></div></div>`;
+        });
+        const rest=c.steps.filter(s=>s.state==='na'||s.state==='pending');
+        if(rest.length){
+            const na=rest[0].state==='na';
+            h+=`<button class="mt-2 w-full flex items-center gap-2 text-sm text-gray-500 hover:text-gray-800 py-1.5 transition" onclick="this.nextElementSibling.classList.toggle('hidden');this.querySelector('.rot').classList.toggle('rotate-90')">
+      <span class="rot inline-flex transition-transform">›</span> Шаги ${rest[0].n}–6 · ${na?'не применимы':'не достигнуты'} (${rest.length})</button>
+      <div class="hidden">`+
+                rest.map(s=>`<div class="flex items-center gap-2.5 py-2 border-b border-gray-100 text-sm text-gray-400">
+        ${I.minus}<span>Шаг ${s.n} — ${T[s.n-1]}</span><span class="ml-auto text-[11px]">${na?'Не применим':'Не достигнут'}</span></div>`).join('')+`</div>`;
+        }
+        if(c.place)h+=`<div class="mt-3 text-[13px]"><span class="text-gray-400">Место срыва:</span> <span class="text-gray-700">${c.place}</span></div>`;
+        if(c.rec)h+=`<div class="mt-2 rounded-lg border-l-2 border-green-600 bg-green-50/60 p-3 text-[13px] text-gray-700"><b>Рекомендация:</b> ${c.rec}</div>`;
+        return h;
+    }
+    function trBlock(c){
+        return c.transcript.map(t=>{
+            const isOp=t[1]==='op',isBot=t[1]==='bot',sec=toSec(t[0]);
+            let text=t[2];
+            if(c.proofText&&text.includes(c.proofText))text=text.replaceAll(c.proofText,`<mark>${c.proofText}</mark>`);
+            const av=isBot?I.bot:I.user;
+            const avc=isBot?'bg-gray-800 text-white':isOp?'bg-green-100 text-green-700':'bg-gray-200 text-gray-600';
+            const who=isBot?'Автоответчик':isOp?'Оператор':'Клиент';
+            return `<div class="flex gap-3 py-2.5 border-b border-gray-100 last:border-0 cursor-pointer group" onclick="seekTo(${sec})" title="Перейти к ${t[0]}">
+      <span class="text-[11px] tabular-nums text-gray-400 pt-1 w-9 shrink-0">${t[0]}</span>
+      <span class="shrink-0 w-6 h-6 rounded-full flex items-center justify-center ${avc}">${av}</span>
+      <p class="text-[13px] leading-relaxed text-gray-700 group-hover:text-gray-900 transition"><span class="font-medium">${who}:</span> ${text}</p></div>`;
+        }).join('');
+    }
+    const toSec=t=>{const[a,b]=t.split(':').map(Number);return a*60+b;};
+
+    /* ─────────── фейковый плеер ─────────── */
+    const P={t:0,dur:45,playing:false,sp:1};
+    function setPlayIcon(){$('#btnPlay').innerHTML=P.playing?I.pause:I.play;}
+    function loadPlayer(c){P.t=0;P.dur=c.durS;P.sp=1;P.playing=false;$('#btnSpeed').textContent='1×';setPlayIcon();updP();$('#pTime').textContent=`0:00 / ${c.dur}`;}
+    function updP(){$('#seekFill').style.width=(P.dur?P.t/P.dur*100:0)+'%';const c=calls.find(x=>x.id===curId);$('#pTime').textContent=`${fmt(P.t)} / ${c?c.dur:'0:00'}`;}
+    function togglePlay(){P.playing=!P.playing;setPlayIcon();}
+    function seekTo(s){P.t=Math.min(s,P.dur);updP();}
+    function seekClick(e){const r=e.currentTarget.getBoundingClientRect();seekTo((e.clientX-r.left)/r.width*P.dur);}
+    function cycleSpeed(){P.sp=P.sp===1?1.5:P.sp===1.5?2:1;$('#btnSpeed').textContent=P.sp+'×';}
+    setInterval(()=>{if(P.playing){P.t+=0.2*P.sp;if(P.t>=P.dur){P.t=P.dur;P.playing=false;setPlayIcon();}updP();}},200);
+
+    /* ─────────── старт ─────────── */
+    buildKPI();
+    buildRoadmap();
+    buildDur();
+    renderCalls();
+    const h=location.hash.replace('#','');
+    const start={operators:'screen-operators',overview:'screen-overview',calls:'screen-calls'}[h];
+    show(start||'screen-operators');
+</script>
+</body>
+</html>

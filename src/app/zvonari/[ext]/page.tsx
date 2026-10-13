@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Download, FileBarChart, History, Loader2, Sparkles } from "lucide-react";
@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   loadStoredPeriod,
+  PERIOD_STORAGE_KEY,
   todayISO,
   OUTCOME_SCRIPT_COMPLETED,
   PeriodControl,
@@ -80,7 +81,20 @@ export default function ZvonariCallerPage() {
     if (!isNaN(parsedPage) && parsedPage >= 0) setCallPage(parsedPage);
   }, []);
 
+  // Первый запуск при монтировании всегда видит ещё дефолтные from/to —
+  // эффект восстановления выше в этом же проходе только планирует setState,
+  // применится он лишь на следующем рендере. Без пропуска первого запуска
+  // мы бы на долю секунды затирали URL дефолтом поверх того, что пришло по
+  // ссылке или из localStorage (та же гонка, что чинили в /zvonari, см.
+  // page.tsx). Заодно пишем период в тот же localStorage, что и список —
+  // раньше период, изменённый прямо на карточке звонаря, никуда не
+  // сохранялся и терялся при следующем заходе не по прямой ссылке.
+  const skipUrlSync = useRef(true);
   useEffect(() => {
+    if (skipUrlSync.current) {
+      skipUrlSync.current = false;
+      return;
+    }
     const params = new URLSearchParams();
     params.set("from", from);
     params.set("to", to);
@@ -90,6 +104,7 @@ export default function ZvonariCallerPage() {
     if (callSearch) params.set("q", callSearch);
     if (callPage > 0) params.set("page", String(callPage));
     window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+    window.localStorage.setItem(PERIOD_STORAGE_KEY, JSON.stringify({ from, to }));
   }, [from, to, tab, roadmapFilter, errorKindFilter, callSearch, callPage]);
 
   // Звонки периода — единственный источник данных для шапки, воронки и

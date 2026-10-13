@@ -31,6 +31,24 @@ type Call struct {
 	LastError string    `json:"last_error,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// FraudPrecheck* — фрод-сигнал, определённый на этапе транскрибации по
+	// аудио (см. transcribe.Client.transcribeOpenRouter), отдельно от
+	// analytics_json (тот пишет анализ по критериям, не связанным с фродом).
+	// FraudPrecheckSuspected == nil значит "предфильтр не выполнялся вообще"
+	// (GPU/CPU транскрибация, звонок ещё не обработан) — это НЕ то же самое,
+	// что false ("выполнялся, фрода не нашёл"), см. SetCallTranscript.
+	FraudPrecheckSuspected *bool  `json:"fraud_precheck_suspected,omitempty"`
+	FraudPrecheckCheck     string `json:"fraud_precheck_check,omitempty"`
+	FraudPrecheckQuote     string `json:"fraud_precheck_quote,omitempty"`
+	FraudPrecheckPosition  string `json:"fraud_precheck_position,omitempty"`
+	// FraudReviewStatus — "pending" (ждёт решения человека) / "confirmed" /
+	// "rejected", пусто если звонок не был кандидатом на фрод вообще.
+	// Единственный источник, влияющий на фактическое исключение из оплаты —
+	// это внешний расчёт, который смотрит "confirmed"; сам по себе
+	// FraudPrecheckSuspected ничего не исключает, см. миграцию 034.
+	FraudReviewStatus string     `json:"fraud_review_status,omitempty"`
+	FraudReviewedAt   *time.Time `json:"fraud_reviewed_at,omitempty"`
 }
 
 // CallListResponse представляет ответ со списком звонков

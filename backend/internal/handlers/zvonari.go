@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/xuri/excelize/v2"
 
 	"invoices-backend/internal/models"
 	"invoices-backend/internal/pbx"
@@ -297,6 +298,31 @@ func (h *Handlers) GetOutcomeCounts(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": counts})
 }
 
+// GetCriteriaScores обрабатывает GET /api/zvonari/calls/criteria-scores?from=&to=
+// Замена старых "Скрипт до конца"/"Срыв на шаге 1" — те колонки больше не
+// имеют смысла (руководитель отменил оценку по скрипту, см.
+// CountCriteriaScoresByCaller). Отдаёт {met_true, applicable} на каждого
+// звонаря — фронтенд сам форматирует как X/Y или %.
+func (h *Handlers) GetCriteriaScores(w http.ResponseWriter, r *http.Request) {
+	from, to, err := parseRangeParams(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	scores, err := h.zvonari.CriteriaScores(r.Context(), from, to)
+	if err != nil {
+		log.Printf("GetCriteriaScores failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to get criteria scores")
+		return
+	}
+	out := make(map[string]map[string]int, len(scores))
+	for callerID, s := range scores {
+		out[callerID] = map[string]int{"met_true": s.MetTrue, "applicable": s.Applicable}
+	}
+	respondWithJSON(w, http.StatusOK, map[string]interface{}{"data": out})
+}
+
 // GetFraudCounts обрабатывает GET /api/zvonari/calls/fraud-counts?from=&to=
 // Число звонков с fraud_suspected=true (не сброшенный вовремя автоответчик)
 // на каждого звонаря за период — для выявления АФК-прослушивания
@@ -391,6 +417,112 @@ func (h *Handlers) AnalyzeCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondWithJSON(w, http.StatusOK, models.CallResponse{Data: *call})
+}
+
+// GetFraudCandidates обрабатывает GET /api/zvonari/calls/fraud-candidates?from=&to=
+// Список звонков, помеченных фрод-предфильтром на транскрибации и ждущих
+// решения человека (задача 7) — очередь для confirm/reject UI.
+func (h *Handlers) GetFraudCandidates(w http.ResponseWriter, r *http.Request) {
+	from, to, err := parseRangeParams(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	calls, err := h.zvonari.FraudCandidates(r.Context(), from, to)
+	if err != nil {
+		log.Printf("GetFraudCandidates failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to load fraud candidates")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, models.CallListResponse{Data: calls})
+}
+
+// ReviewFraudCandidate обрабатывает POST /api/zvonari/calls/{id}/fraud-review
+// Тело: {"status": "confirmed"|"rejected"}. Записывает решение человека —
+// само по себе ничего не исключает из оплаты (это делает внешний расчёт,
+// который смотрит на "confirmed"), просто фиксирует его.
+func (h *Handlers) ReviewFraudCandidate(w http.ResponseWriter, r *http.Request) {
+	callID := chi.URLParam(r, "id")
+
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if err := h.zvonari.ReviewFraudCandidate(r.Context(), callID, req.Status); err != nil {
+		log.Printf("ReviewFraudCandidate failed: %v", err)
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respondWithJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// fraudReviewStatusLabels — человекочитаемые подписи для колонки "Статус
+// проверки" в экспорте, пусто (никогда не проверялся) отдельно от каждого
+// из трёх реальных состояний.
+var fraudReviewStatusLabels = map[string]string{
+	"":          "Ожидает проверки",
+	"pending":   "Ожидает проверки",
+	"confirmed": "Подтверждён",
+	"rejected":  "Отклонён",
+}
+
+// GetFraudExportXLSX обрабатывает GET /api/zvonari/calls/fraud-export.xlsx?from=&to=
+// Выгрузка всех фрод-кандидатов за период (включая уже проверенные человеком)
+// в .xlsx — для передачи во внешний расчёт оплаты или офлайн-разбора.
+func (h *Handlers) GetFraudExportXLSX(w http.ResponseWriter, r *http.Request) {
+	from, to, err := parseRangeParams(r)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	rows, err := h.zvonari.FraudExportRows(r.Context(), from, to)
+	if err != nil {
+		log.Printf("GetFraudExportXLSX: loading rows failed: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to load fraud calls")
+		return
+	}
+
+	f := excelize.NewFile()
+	defer f.Close()
+	const sheet = "Фрод-звонки"
+	f.SetSheetName(f.GetSheetName(0), sheet)
+
+	headers := []string{"Дата", "Время", "Звонарь", "Разговор, сек", "Всего, сек", "Статус проверки", "Позиция фразы", "Цитата", "Транскрипт"}
+	headerStyle, _ := f.NewStyle(&excelize.Style{Font: &excelize.Font{Bold: true}})
+	for col, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(col+1, 1)
+		f.SetCellValue(sheet, cell, h)
+		f.SetCellStyle(sheet, cell, cell, headerStyle)
+	}
+	for i, row := range rows {
+		r := i + 2
+		f.SetCellValue(sheet, fmt.Sprintf("A%d", r), row.StartedAt.Format("2006-01-02"))
+		f.SetCellValue(sheet, fmt.Sprintf("B%d", r), row.StartedAt.Format("15:04:05"))
+		f.SetCellValue(sheet, fmt.Sprintf("C%d", r), row.CallerName)
+		f.SetCellValue(sheet, fmt.Sprintf("D%d", r), row.TalkTimeSec)
+		f.SetCellValue(sheet, fmt.Sprintf("E%d", r), row.DurationSec)
+		f.SetCellValue(sheet, fmt.Sprintf("F%d", r), fraudReviewStatusLabels[row.ReviewStatus])
+		f.SetCellValue(sheet, fmt.Sprintf("G%d", r), row.Position)
+		f.SetCellValue(sheet, fmt.Sprintf("H%d", r), row.Quote)
+		f.SetCellValue(sheet, fmt.Sprintf("I%d", r), row.Transcript)
+	}
+	f.SetColWidth(sheet, "A", "B", 12)
+	f.SetColWidth(sheet, "C", "C", 20)
+	f.SetColWidth(sheet, "D", "E", 12)
+	f.SetColWidth(sheet, "F", "G", 18)
+	f.SetColWidth(sheet, "H", "I", 60)
+
+	filename := fmt.Sprintf("zvonari_fraud_%s_%s.xlsx", from.Format("2006-01-02"), to.Format("2006-01-02"))
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	if err := f.Write(w); err != nil {
+		log.Printf("GetFraudExportXLSX: writing xlsx failed: %v", err)
+	}
 }
 
 // GetCallerCallDistribution обрабатывает GET /api/zvonari/callers/{id}/distribution?from=&to=
@@ -508,8 +640,13 @@ func (h *Handlers) ExportCallerCallsCSV(w http.ResponseWriter, r *http.Request) 
 	cw := csv.NewWriter(w)
 	_ = cw.Write([]string{"Дата", "Время", "Направление", "Длительность звонка (сек)", "Время разговора (сек)", "Тип звонка", "Исход", "Фрод (не сброшен автоответчик)", "Транскрипт", "Общая оценка за период"})
 	for _, c := range calls {
+		// fraud_precheck_suspected (транскрибация, 2026-09-29) is checked
+		// first — the current source of truth; the old analytics_json field
+		// only ever applies to calls analyzed before that date, never both.
 		fraud := ""
-		if zvonari.ExtractFraudSuspected(c.AnalyticsJSON) {
+		if c.FraudPrecheckSuspected != nil && *c.FraudPrecheckSuspected {
+			fraud = "да"
+		} else if zvonari.ExtractFraudSuspected(c.AnalyticsJSON) {
 			fraud = "да"
 		}
 		_ = cw.Write([]string{

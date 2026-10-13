@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"invoices-backend/internal/analysis"
 	"invoices-backend/internal/callreport"
 	"invoices-backend/internal/database"
 	"invoices-backend/internal/models"
@@ -24,6 +25,12 @@ type Service struct {
 	db         *database.DB
 	pbx        *pbx.Client
 	transcribe *transcribe.Client
+	// analysis — direct OpenRouter client for the 4-criteria per-call
+	// scoring (2026-09-29, see internal/analysis's package doc for why this
+	// bypasses Hermes). callreport (Hermes) is kept alongside it purely for
+	// RequestCallerReport's period-summary synthesis — a different job this
+	// package doesn't do.
+	analysis   *analysis.Client
 	callreport *callreport.Client
 
 	syncMu     sync.Mutex
@@ -31,9 +38,12 @@ type Service struct {
 
 	// Pause state for the currently running background job — separate lock
 	// from syncMu so GetSyncStatus never has to take both at once. Pausing
-	// doesn't cancel anything in flight (maxConcurrentProcessing is 1
-	// anyway); it just stops the loop from starting the *next* call/batch
-	// until resumed, via a blocking receive on resumeCh.
+	// doesn't cancel anything in flight — it just stops the loop from
+	// starting the *next* call/batch until resumed, via a blocking receive
+	// on resumeCh. On TRANSCRIBE_FORMAT=gpu this means at most 1 call still
+	// running (see maxConcurrentProcessing); on openrouter, up to
+	// maxConcurrentProcessingOpenRouter calls can still be in flight when a
+	// pause is requested.
 	pauseMu  sync.Mutex
 	paused   bool
 	resumeCh chan struct{}
@@ -58,9 +68,9 @@ type Service struct {
 	healthCachedAt time.Time
 }
 
-func NewService(db *database.DB, pbxClient *pbx.Client, transcribeClient *transcribe.Client, callreportClient *callreport.Client) *Service {
+func NewService(db *database.DB, pbxClient *pbx.Client, transcribeClient *transcribe.Client, analysisClient *analysis.Client, callreportClient *callreport.Client) *Service {
 	return &Service{
-		db: db, pbx: pbxClient, transcribe: transcribeClient, callreport: callreportClient,
+		db: db, pbx: pbxClient, transcribe: transcribeClient, analysis: analysisClient, callreport: callreportClient,
 		stages: map[string]*StageStatus{
 			"sync":       {State: StageIdle},
 			"transcribe": {State: StageIdle},
@@ -390,18 +400,42 @@ type SyncResult struct {
 	AnalyzeErrors    int `json:"analyze_errors"`
 }
 
-// maxConcurrentProcessing bounds how many calls are transcribed at once.
-// Measured directly on this host (isolated, in-process, not confounded by
-// analytics or network overhead): 1 stream at cpu_threads=2 transcribes at
-// 2.07x realtime; 2 concurrent streams manage only 2.21x *aggregate* — i.e.
-// concurrency buys almost nothing here, this Docker VM's CPU scheduling
-// just doesn't scale past a single well-tuned stream. Pushing to 4
-// concurrent (an earlier attempt) made it actively worse — full
-// oversubscription collapsed aggregate throughput to ~1x. Given that
+// maxConcurrentProcessingCPU bounds how many calls are transcribed at once
+// on the local whisper path (TRANSCRIBE_FORMAT=gpu, which falls back to the
+// CPU box). Measured directly on this host (isolated, in-process, not
+// confounded by analytics or network overhead): 1 stream at cpu_threads=2
+// transcribes at 2.07x realtime; 2 concurrent streams manage only 2.21x
+// *aggregate* — i.e. concurrency buys almost nothing here, this Docker VM's
+// CPU scheduling just doesn't scale past a single well-tuned stream.
+// Pushing to 4 concurrent (an earlier attempt) made it actively worse —
+// full oversubscription collapsed aggregate throughput to ~1x. Given that
 // ceiling, sequential processing (1) is simpler and avoids the
 // timeout/contention failures concurrency was causing, for no real speed
 // cost — see decision to decouple transcription from analytics below.
-const maxConcurrentProcessing = 1
+const maxConcurrentProcessingCPU = 1
+
+// maxConcurrentProcessingOpenRouter — TRANSCRIBE_FORMAT=openrouter has none
+// of maxConcurrentProcessingCPU's local-CPU bottleneck, but OpenRouter has
+// its own: an account-level "in-flight budget" cap independent of account
+// credit balance. 10 (tried 2026-09-28) tripped it immediately — 695 of
+// 2748 calls in one batch failed with HTTP 402
+// reason="in_flight_budget_exhausted", and since FormatOpenRouter has no
+// CPU fallback (see Format's doc comment in transcribe/client.go), those
+// calls came back with transcript_text wiped and nothing to replace it —
+// real data loss, not just a slower retry. Dropped to 5 the same day,
+// untested — if this also 402s, drop further; there's no known-safe number
+// yet, only one known-too-high one.
+const maxConcurrentProcessingOpenRouter = 5
+
+// maxConcurrentProcessing picks the concurrency ceiling for the transcribe
+// stage based on which format is actually configured — see the two
+// constants above for why they differ.
+func (s *Service) maxConcurrentProcessing() int {
+	if s.transcribe.IsOpenRouter() {
+		return maxConcurrentProcessingOpenRouter
+	}
+	return maxConcurrentProcessingCPU
+}
 
 // pending is a call queued for transcribe+analyze, shared by SyncCalls
 // (freshly-inserted CDR rows) and RetryFailedCalls (existing rows stuck on
@@ -605,7 +639,7 @@ func (s *Service) processConcurrently(ctx context.Context, toProcess []pending, 
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	sem := make(chan struct{}, maxConcurrentProcessing)
+	sem := make(chan struct{}, s.maxConcurrentProcessing())
 	for _, p := range toProcess {
 		s.waitIfPaused(ctx)
 		// Stop() cancels ctx — without this check the loop would keep
@@ -672,7 +706,7 @@ func (s *Service) transcribeOnly(ctx context.Context, call *models.Call, pbxUUID
 	}
 
 	_ = s.db.SetCallTranscriptStatus(ctx, call.ID, "transcribing")
-	tr, err := s.transcribe.Transcribe(ctx, pbxUUID+".mp3", audio)
+	tr, err := s.transcribe.Transcribe(ctx, pbxUUID+".mp3", audio, call.TalkTimeSec)
 	if err != nil {
 		log.Printf("zvonari: transcribe failed for call %s: %v", pbxUUID, err)
 		_ = s.db.SetCallTranscriptError(ctx, call.ID, "failed", "transcribe_failed", err.Error())
@@ -686,7 +720,11 @@ func (s *Service) transcribeOnly(ctx context.Context, call *models.Call, pbxUUID
 		log.Printf("zvonari: call %s transcript looks hallucinated (%d chars, %ds audio) — flagging, not discarding",
 			pbxUUID, len(tr.Text), effectiveDurationSec(call.TalkTimeSec, call.DurationSec))
 	}
-	if err := s.db.SetCallTranscript(ctx, call.ID, tr.Text, tr.Engine, hallucinationSuspected); err != nil {
+	if tr.Fraud.Suspected {
+		log.Printf("zvonari: call %s flagged as fraud candidate at transcription time (%s)", pbxUUID, tr.Fraud.Check)
+	}
+	if err := s.db.SetCallTranscript(ctx, call.ID, tr.Text, tr.Engine, hallucinationSuspected,
+		tr.Fraud.Suspected, tr.Fraud.Check, tr.Fraud.Quote, tr.Fraud.Position); err != nil {
 		log.Printf("zvonari: saving transcript failed for call %s: %v", pbxUUID, err)
 	}
 }
@@ -746,14 +784,27 @@ func transcriptImplausiblyLong(text string, talkTimeSec, durationSec int) bool {
 // legitimately working.
 const analyzeBatchSize = 25
 
-// analyzeBatchCtxTimeout mirrors callreport.analyzeHTTPTimeout — kept as an
-// independent context deadline (see the call site) rather than trusting the
-// http.Client timeout alone.
-const analyzeBatchCtxTimeout = 25 * time.Minute
+// analyzeConcurrency bounds how many /analyze-call-equivalent OpenRouter
+// requests run at once for the 4-criteria rubric (2026-09-29, direct
+// OpenRouter path — see internal/analysis). Deliberately conservative:
+// this account already hit OpenRouter's per-account in-flight-budget cap
+// once at concurrency=10 for transcription (see maxConcurrentProcessingOpenRouter's
+// doc comment) with real data loss, and this runs against the very same
+// OpenRouter account/budget, concurrently with transcription's own
+// requests — not a separate budget to spend from. 5 matches the value
+// transcription was dialed back to after that incident.
+const analyzeConcurrency = 5
+
+// analyzeCallCtxTimeout bounds a single criteria-scoring request — generous
+// relative to analysis.analyzeTimeout's own 2-minute httpClient.Timeout,
+// same belt-and-suspenders reasoning the old batch path used (an
+// independent context deadline as a second, standard-Go way for a hung
+// request to actually get cancelled).
+const analyzeCallCtxTimeout = 3 * time.Minute
 
 func (s *Service) AnalyzeCalls(ctx context.Context, from, to time.Time) (*SyncResult, error) {
-	if !s.callreport.Configured() {
-		return nil, fmt.Errorf("аналитика недоступна (не настроен CALL_ANALYTICS_URL)")
+	if !s.analysis.Configured() {
+		return nil, fmt.Errorf("анализ по критериям недоступен (не настроен OPENROUTER_API_KEY)")
 	}
 
 	calls, err := s.db.ListCallsNeedingAnalysis(ctx, from, to)
@@ -769,72 +820,42 @@ func (s *Service) AnalyzeCalls(ctx context.Context, from, to time.Time) (*SyncRe
 	s.stages["analyze"] = &StageStatus{State: StageRunning, Total: len(calls), StartedAt: &now}
 	s.syncMu.Unlock()
 
-	for start := 0; start < len(calls); start += analyzeBatchSize {
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	sem := make(chan struct{}, analyzeConcurrency)
+	for _, call := range calls {
 		s.waitIfPaused(ctx)
-		// Stop() cancels ctx — don't start another batch once cancelled;
-		// the in-flight one (if any) already aborted via batchCtx below.
 		if ctx.Err() != nil {
 			break
 		}
-		end := start + analyzeBatchSize
-		if end > len(calls) {
-			end = len(calls)
-		}
-		batch := calls[start:end]
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(call models.Call) {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-		reqs := make([]callreport.AnalyzeCallRequest, len(batch))
-		for i, c := range batch {
-			reqs[i] = callreport.AnalyzeCallRequest{
-				CallID:      c.ID,
-				Transcript:  c.TranscriptText,
-				DurationSec: c.DurationSec,
-				TalkTimeSec: c.TalkTimeSec,
-				Direction:   c.Direction,
-			}
-		}
-
-		// Belt-and-suspenders alongside callreport.Client's own httpClient.Timeout:
-		// a real production run left a batch hung for 5+ hours with neither a
-		// result nor an error ever coming back, well past that client timeout —
-		// cause unconfirmed, but an explicit per-call context deadline is the
-		// more standard Go mechanism and gives a second, independent way for
-		// the request to actually get cancelled instead of relying on exactly
-		// one timeout path that's already been observed not to fire.
-		batchCtx, cancel := context.WithTimeout(ctx, analyzeBatchCtxTimeout)
-		batchResult, err := s.callreport.AnalyzeCallsBatch(batchCtx, reqs)
-		cancel()
-		if err != nil {
-			// Whole-batch failure (timeout, service down) — every call in it
-			// stays without analytics_json, so the next AnalyzeCalls run
-			// picks them all back up via ListCallsNeedingAnalysis.
-			log.Printf("zvonari: batch analysis failed for %d calls: %v", len(batch), err)
-			result.AnalyzeErrors += len(batch)
-			s.syncMu.Lock()
-			s.syncStatus.Processed += len(batch)
-			s.stages["analyze"].Done += len(batch)
-			s.syncMu.Unlock()
-			continue
-		}
-
-		byID := make(map[string]json.RawMessage, len(batchResult.Results))
-		for _, r := range batchResult.Results {
-			byID[r.CallID] = r.AnalyticsJSON
-		}
-		for _, call := range batch {
-			analytics, ok := byID[call.ID]
-			if !ok || len(analytics) == 0 {
-				log.Printf("zvonari: no analysis result for call %s in batch response", call.PBXUUID)
+			callCtx, cancel := context.WithTimeout(ctx, analyzeCallCtxTimeout)
+			defer cancel()
+			scored, err := s.analysis.AnalyzeCall(callCtx, call.TranscriptText, call.DurationSec)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				log.Printf("zvonari: analysis failed for call %s: %v", call.PBXUUID, err)
 				result.AnalyzeErrors++
-			} else if err := s.db.SetCallAnalytics(ctx, call.ID, analytics); err != nil {
-				log.Printf("zvonari: saving analytics failed for call %s: %v", call.PBXUUID, err)
-				result.AnalyzeErrors++
+			} else {
+				analyticsJSON, marshalErr := json.Marshal(scored)
+				if marshalErr != nil || s.db.SetCallAnalytics(ctx, call.ID, analyticsJSON) != nil {
+					log.Printf("zvonari: saving analytics failed for call %s: %v", call.PBXUUID, marshalErr)
+					result.AnalyzeErrors++
+				}
 			}
 			s.syncMu.Lock()
 			s.syncStatus.Processed++
 			s.stages["analyze"].Done++
 			s.syncMu.Unlock()
-		}
+		}(call)
 	}
+	wg.Wait()
 
 	if ctx.Err() != nil {
 		s.markStageFailed("analyze")
@@ -894,24 +915,22 @@ func (s *Service) RecordingURL(ctx context.Context, callID string) (string, erro
 // analytics_json by hand. Unlike RetranscribeCall this always re-analyzes
 // regardless of current analytics_json state.
 func (s *Service) AnalyzeCall(ctx context.Context, callID string) (*models.Call, error) {
-	if !s.callreport.Configured() {
-		return nil, fmt.Errorf("аналитика недоступна (не настроен CALL_ANALYTICS_URL)")
+	if !s.analysis.Configured() {
+		return nil, fmt.Errorf("анализ по критериям недоступен (не настроен OPENROUTER_API_KEY)")
 	}
 	call, err := s.db.GetCallByID(ctx, callID)
 	if err != nil {
 		return nil, err
 	}
-	result, err := s.callreport.AnalyzeCall(ctx, callreport.AnalyzeCallRequest{
-		CallID:      call.ID,
-		Transcript:  call.TranscriptText,
-		DurationSec: call.DurationSec,
-		TalkTimeSec: call.TalkTimeSec,
-		Direction:   call.Direction,
-	})
+	scored, err := s.analysis.AnalyzeCall(ctx, call.TranscriptText, call.DurationSec)
 	if err != nil {
 		return nil, fmt.Errorf("analyzing call: %w", err)
 	}
-	if err := s.db.SetCallAnalytics(ctx, call.ID, result.AnalyticsJSON); err != nil {
+	analyticsJSON, err := json.Marshal(scored)
+	if err != nil {
+		return nil, fmt.Errorf("encoding analytics: %w", err)
+	}
+	if err := s.db.SetCallAnalytics(ctx, call.ID, analyticsJSON); err != nil {
 		return nil, fmt.Errorf("saving analytics: %w", err)
 	}
 	return s.db.GetCallByID(ctx, callID)
@@ -1039,6 +1058,13 @@ func (s *Service) OutcomeCounts(ctx context.Context, from, to time.Time) (map[st
 	return s.db.CountOutcomesByCaller(ctx, from, to)
 }
 
+// CriteriaScores returns each caller's combined 4-criteria score for the
+// period — see database.CriteriaScore's doc comment for why it's a combined
+// MetTrue/Applicable rather than a per-call average.
+func (s *Service) CriteriaScores(ctx context.Context, from, to time.Time) (map[string]database.CriteriaScore, error) {
+	return s.db.CountCriteriaScoresByCaller(ctx, from, to)
+}
+
 // FraudCounts returns each caller's count of fraud_suspected calls
 // (operator hit an answering machine/voicemail and didn't hang up promptly)
 // in [from, to) — the time-padding-detection counterpart to OutcomeCounts,
@@ -1046,6 +1072,36 @@ func (s *Service) OutcomeCounts(ctx context.Context, from, to time.Time) (map[st
 // of its values — see CountFraudSuspectedByCaller.
 func (s *Service) FraudCounts(ctx context.Context, from, to time.Time) (map[string]int, error) {
 	return s.db.CountFraudSuspectedByCaller(ctx, from, to)
+}
+
+// FraudCandidates lists every call awaiting human fraud review in [from, to)
+// — the задача 7 confirm/reject queue.
+func (s *Service) FraudCandidates(ctx context.Context, from, to time.Time) ([]models.Call, error) {
+	return s.db.ListFraudCandidates(ctx, from, to)
+}
+
+// FraudExportRows lists every fraud-precheck-flagged call in [from, to],
+// including already-reviewed ones, for the xlsx export.
+func (s *Service) FraudExportRows(ctx context.Context, from, to time.Time) ([]database.FraudExportRow, error) {
+	return s.db.ListFraudExportRows(ctx, from, to)
+}
+
+// validFraudReviewStatuses — closed set a human decision can move a
+// candidate to; "pending" isn't included since that's the starting state
+// SetCallTranscript sets on detection, never something a review action
+// moves a call back to.
+var validFraudReviewStatuses = map[string]bool{"confirmed": true, "rejected": true}
+
+// ReviewFraudCandidate records a human's confirm/reject decision on a fraud
+// candidate (see fraud_review_status in migration 034) — the only thing that
+// actually matters for the external payment exclusion the person doing that
+// review relies on; fraud_precheck_suspected by itself never excludes
+// anything automatically.
+func (s *Service) ReviewFraudCandidate(ctx context.Context, callID, status string) error {
+	if !validFraudReviewStatuses[status] {
+		return fmt.Errorf("status должен быть 'confirmed' или 'rejected', получено %q", status)
+	}
+	return s.db.SetFraudReviewStatus(ctx, callID, status)
 }
 
 // CallDistribution buckets a caller's calls for a period by their Hermes
@@ -1064,17 +1120,29 @@ func (s *Service) CallDistribution(ctx context.Context, callerID string, from, t
 	return dist, nil
 }
 
+// ExtractOutcome reads a human-readable label from analytics_json — either
+// the current 4-criteria shape (analytics_json.score, e.g. "3/4", 2026-09-29
+// onward) or the retired 13-outcome shape (analytics_json.outcome, calls
+// analyzed before the rubric swap) — see ExtractCallType's doc comment for
+// why old calls are read as-is rather than backfilled.
 func ExtractOutcome(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return "не проанализировано"
 	}
 	var parsed struct {
+		Score   string `json:"score"`
 		Outcome string `json:"outcome"`
 	}
-	if err := json.Unmarshal(raw, &parsed); err != nil || parsed.Outcome == "" {
+	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return "не проанализировано"
 	}
-	return parsed.Outcome
+	if parsed.Score != "" {
+		return "оценка " + parsed.Score
+	}
+	if parsed.Outcome != "" {
+		return parsed.Outcome
+	}
+	return "не проанализировано"
 }
 
 // ExtractCallType reads analytics_json.call_type ("технический" /
@@ -1108,8 +1176,13 @@ const healthCacheTTL = 30 * time.Second
 type HealthStatus struct {
 	TranscribeCPU transcribe.PingResult `json:"transcribe_cpu"`
 	TranscribeGPU transcribe.PingResult `json:"transcribe_gpu"`
-	Analytics     callreport.PingResult `json:"analytics"`
-	CheckedAt     time.Time             `json:"checked_at"`
+	// AnalysisCriteria — direct OpenRouter path for the 4-criteria scoring
+	// (see internal/analysis). Analytics below still covers Hermes, which
+	// this service now only calls for RequestCallerReport's period-summary
+	// synthesis, not per-call scoring anymore.
+	AnalysisCriteria analysis.PingResult   `json:"analysis_criteria"`
+	Analytics        callreport.PingResult `json:"analytics"`
+	CheckedAt        time.Time             `json:"checked_at"`
 }
 
 // Health pings the CPU/GPU transcribe services and the call-analytics
@@ -1127,9 +1200,10 @@ func (s *Service) Health(ctx context.Context) HealthStatus {
 
 	var wg sync.WaitGroup
 	status := HealthStatus{CheckedAt: time.Now()}
-	wg.Add(3)
+	wg.Add(4)
 	go func() { defer wg.Done(); status.TranscribeCPU = s.transcribe.PingCPU() }()
 	go func() { defer wg.Done(); status.TranscribeGPU = s.transcribe.PingGPU() }()
+	go func() { defer wg.Done(); status.AnalysisCriteria = s.analysis.Ping() }()
 	go func() { defer wg.Done(); status.Analytics = s.callreport.Ping(ctx) }()
 	wg.Wait()
 

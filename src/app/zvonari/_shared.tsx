@@ -20,6 +20,7 @@ import {
   HelpCircle,
   Target,
   Calendar as CalendarIcon,
+  Volume2,
 } from "lucide-react";
 
 import { Caller, Call, CallAnalytics, StageStatus, PingResult } from "@/lib/api";
@@ -30,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { CallDrawer } from "./_call_drawer";
 
 // ---------------------------------------------------------------------------
 // Период, тренды
@@ -187,15 +189,11 @@ export function computeKpi(
   callCounts: Record<string, number>,
   statusCounts: Record<string, Record<string, number>>,
   outcomeCounts: Record<string, Record<string, number>>,
-  fraudCounts: Record<string, number>
+  fraudCounts: Record<string, number>,
+  criteriaScores: Record<string, { met_true: number; applicable: number }> = {}
 ) {
   const totalCalls = Object.values(callCounts).reduce((a, b) => a + b, 0);
   const totalDone = Object.values(statusCounts).reduce((sum, s) => sum + (s.done ?? 0), 0);
-  const totalScriptCompleted = Object.values(outcomeCounts).reduce(
-    (sum, o) => sum + (o[OUTCOME_SCRIPT_COMPLETED] ?? 0),
-    0
-  );
-  const totalStep1Broken = Object.values(outcomeCounts).reduce((sum, o) => sum + (o[OUTCOME_STEP1_BROKEN] ?? 0), 0);
   // Backend buckets under "не проанализировано" via COALESCE(...outcome, 'не проанализировано')
   // — that only catches NULL analytics_json, not legacy rows with an
   // explicit empty-string outcome (CallOutcome's own "" variant, see
@@ -205,7 +203,12 @@ export function computeKpi(
     0
   );
   const totalFraud = Object.values(fraudCounts).reduce((a, b) => a + b, 0);
-  return { totalCalls, totalDone, totalScriptCompleted, totalStep1Broken, totalUnanalyzed, totalFraud };
+  // Совокупный балл по 4 критериям (2026-09-29, заменил Скрипт-до-конца/
+  // Срыв-на-шаге-1) — суммарно по ВСЕМ звонкам и критериям, не среднее по
+  // отдельным звонкам (см. database.CriteriaScore на бэкенде).
+  const totalCriteriaMet = Object.values(criteriaScores).reduce((sum, s) => sum + s.met_true, 0);
+  const totalCriteriaApplicable = Object.values(criteriaScores).reduce((sum, s) => sum + s.applicable, 0);
+  return { totalCalls, totalDone, totalUnanalyzed, totalFraud, totalCriteriaMet, totalCriteriaApplicable };
 }
 
 // ---------------------------------------------------------------------------
@@ -411,7 +414,7 @@ export function trackSegmentsFromDistribution(distribution: Record<string, numbe
 // Разбор по шагам конкретного звонка (раскрытая строка)
 // ---------------------------------------------------------------------------
 
-function stepStatusMeta(status: string | undefined): { icon: ReactNode; className: string } {
+export function stepStatusMeta(status: string | undefined): { icon: ReactNode; className: string } {
   switch (status) {
     case "Выполнен":
     case "Использован":
@@ -781,7 +784,8 @@ export function CallDetailList({
   onPageChange: (page: number) => void;
 }) {
   const [localFilters, setLocalFilters] = useState<LocalCallFilters>(EMPTY_LOCAL_FILTERS);
-  const [expandedCallId, setExpandedCallId] = useState<string | null>(null);
+  const [openCallId, setOpenCallId] = useState<string | null>(null);
+  const [openTab, setOpenTab] = useState<"steps" | "transcript">("steps");
   const filters: CallFilters = useMemo(() => ({ ...localFilters, search }), [localFilters, search]);
   const filtered = useMemo(
     () => filterCalls(calls, filters, roadmapFilter, errorKindFilter),
@@ -793,6 +797,26 @@ export function CallDetailList({
     () => filtered.slice(currentPage * CALLS_PAGE_SIZE, (currentPage + 1) * CALLS_PAGE_SIZE),
     [filtered, currentPage]
   );
+  const openCall = filtered.find((c) => c.id === openCallId) ?? null;
+
+  function openDrawer(callId: string, tab: "steps" | "transcript" = "steps") {
+    setOpenCallId(callId);
+    setOpenTab(tab);
+  }
+
+  // Предыдущий/следующий работает по всему отфильтрованному списку, не
+  // только по текущей странице — на границе страницы заодно переключает
+  // onPageChange, чтобы таблица под панелью не расходилась с тем, что в ней
+  // открыто.
+  function navigateDrawer(direction: 1 | -1) {
+    const idx = filtered.findIndex((c) => c.id === openCallId);
+    if (idx < 0) return;
+    const nextIdx = idx + direction;
+    if (nextIdx < 0 || nextIdx >= filtered.length) return;
+    setOpenCallId(filtered[nextIdx].id);
+    const nextPage = Math.floor(nextIdx / CALLS_PAGE_SIZE);
+    if (nextPage !== currentPage) onPageChange(nextPage);
+  }
   // page живёт в родителе (участвует в URL) — сброс на смену
   // фильтров/списка через эффект, не через render-phase adjustment (тот
   // приём годится только для собственного state компонента).
@@ -930,29 +954,29 @@ export function CallDetailList({
                 const isAnalyzing = analyzingIds.has(call.id);
                 const analytics = call.analytics_json;
                 const isFraud = !!analytics?.fraud_suspected;
-                const isExpanded = expandedCallId === call.id;
+                const isOpen = openCallId === call.id;
                 const notDone = call.transcript_status !== "done";
                 return (
                   <Fragment key={call.id}>
                     <TableRow
                       role="button"
                       tabIndex={0}
-                      className={`h-11 cursor-pointer transition-colors hover:bg-accent/50 ${isExpanded ? "bg-accent/30" : ""} ${
+                      className={`h-11 cursor-pointer transition-colors hover:bg-accent/50 ${isOpen ? "bg-accent/30" : ""} ${
                         isFraud ? "border-l-4 border-l-destructive" : ""
                       }`}
-                      onClick={() => setExpandedCallId(isExpanded ? null : call.id)}
+                      onClick={() => openDrawer(call.id)}
                       onKeyDown={(event) => {
                         if (event.target !== event.currentTarget) return
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault()
-                          setExpandedCallId(isExpanded ? null : call.id)
+                          openDrawer(call.id)
                         }
                       }}
                     >
                       <TableCell>
                         <ChevronRight
                           className={`h-4 w-4 text-muted-foreground transition-transform duration-150 ${
-                            isExpanded ? "rotate-90 text-primary" : ""
+                            isOpen ? "rotate-90 text-primary" : ""
                           }`}
                         />
                       </TableCell>
@@ -994,6 +1018,26 @@ export function CallDetailList({
                               variant="ghost"
                               size="sm"
                               className="h-7 px-2 text-muted-foreground transition-transform hover:text-foreground active:scale-95"
+                              disabled={call.transcript_status === "no_recording"}
+                              aria-label="Прослушать запись"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openDrawer(call.id, "transcript");
+                              }}
+                            >
+                              <Volume2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {call.transcript_status === "no_recording" ? "Нет записи" : "Прослушать запись"}
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-muted-foreground transition-transform hover:text-foreground active:scale-95"
                               disabled={isRetranscribing}
                               aria-label="Перетранскрибировать"
                               onClick={() => onRetranscribe(call.id)}
@@ -1020,21 +1064,6 @@ export function CallDetailList({
                         </Tooltip>
                       </TableCell>
                     </TableRow>
-                    {isExpanded && (
-                      <TableRow className="hover:bg-transparent">
-                        <TableCell colSpan={6} className="bg-accent/10">
-                          <div className="space-y-2 py-1">
-                            {analytics?.steps && <StepBreakdown analytics={analytics} />}
-                            {call.hangup_cause && !analytics?.steps && (
-                              <p className="text-xs text-muted-foreground">Причина завершения: {call.hangup_cause}</p>
-                            )}
-                            <p className="whitespace-pre-wrap rounded-md bg-muted/50 p-2 text-sm text-muted-foreground">
-                              {call.transcript_text || "Транскрипт недоступен"}
-                            </p>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    )}
                   </Fragment>
                 );
               })}
@@ -1069,6 +1098,15 @@ export function CallDetailList({
           )}
         </div>
       )}
+      <CallDrawer
+        call={openCall}
+        calls={filtered}
+        initialTab={openTab}
+        onClose={() => setOpenCallId(null)}
+        onNavigate={navigateDrawer}
+        onAnalyze={onAnalyze}
+        isAnalyzing={!!openCallId && analyzingIds.has(openCallId)}
+      />
     </div>
   );
 }
@@ -1192,10 +1230,15 @@ export interface CallerStats {
   done: number;
   donePct: number;
   outcomes: Record<string, number>;
+  // criteriaScore — совокупный балл по 4 критериям (2026-09-29, заменил
+  // "Скрипт до конца"/"Срыв на шаге 1", см. computeKpi). undefined значит
+  // "applicable=0" — 0% некорректно отражал бы "ни разу не оценено" тем же
+  // цветом/смыслом, что и "оценено, но 0 критериев выполнено".
+  criteriaScore?: { metTrue: number; applicable: number };
   fraudCount: number;
   problemRatio: number;
   isProblem: boolean;
 }
 
-export type SortKey = "name" | "total" | "donePct" | "scriptCompleted" | "step1Broken" | "fraud" | "problem";
-export const SORT_KEYS: SortKey[] = ["name", "total", "donePct", "scriptCompleted", "step1Broken", "fraud", "problem"];
+export type SortKey = "name" | "total" | "donePct" | "criteriaScore" | "fraud" | "problem";
+export const SORT_KEYS: SortKey[] = ["name", "total", "donePct", "criteriaScore", "fraud", "problem"];

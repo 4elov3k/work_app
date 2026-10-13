@@ -8,6 +8,7 @@ import (
 
 	"github.com/lib/pq"
 
+	"invoices-backend/internal/analysis"
 	"invoices-backend/internal/callreport"
 	"invoices-backend/internal/database"
 	"invoices-backend/internal/docparse"
@@ -32,7 +33,7 @@ type Handlers struct {
 
 // NewHandlers создает новый экземпляр handlers
 func NewHandlers(db *database.DB) *Handlers {
-	zvonariService := zvonari.NewService(db, pbx.NewFromEnv(), transcribe.NewFromEnv(), callreport.NewFromEnv())
+	zvonariService := zvonari.NewService(db, pbx.NewFromEnv(), transcribe.NewFromEnv(), analysis.NewFromEnv(), callreport.NewFromEnv())
 	return &Handlers{
 		db:        db,
 		redmine:   redmine.NewFromEnv(),

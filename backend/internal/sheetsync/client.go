@@ -1,10 +1,11 @@
 // Package sheetsync talks to the Hermes sheets-sync service, which is the
 // only thing with real Google Sheets access — work_app's backend has no
-// Google credentials of its own. This client only calls two endpoints:
-// "what's the next act number" and "register this act's row" — the actual
+// Google credentials of its own. This client calls "what's the next
+// act/invoice number" and "register this act's/invoice's row" — the actual
 // find-last-row/write-without-shifting-columns logic lives entirely on the
-// sheets-sync side (see hermes/data/skills/.../act_number_sync.py), so a
-// work_app change here can never accidentally corrupt the real spreadsheet.
+// sheets-sync side (see hermes/data/skills/.../act_number_sync.py and
+// invoice_number_sync.py), so a work_app change here can never accidentally
+// corrupt the real spreadsheet.
 package sheetsync
 
 import (
@@ -46,10 +47,21 @@ type NextNumberResult struct {
 }
 
 func (c *Client) NextActNumber(ctx context.Context) (*NextNumberResult, error) {
+	return c.nextNumber(ctx, "/next-act-number")
+}
+
+// NextInvoiceNumber reads the next invoice number from the invoice-numbering
+// registry sheet — a separate spreadsheet from the acts registry (see
+// SHEETS_SYNC_INVOICES_SPREADSHEET_ID on the sheets-sync side).
+func (c *Client) NextInvoiceNumber(ctx context.Context) (*NextNumberResult, error) {
+	return c.nextNumber(ctx, "/next-invoice-number")
+}
+
+func (c *Client) nextNumber(ctx context.Context, path string) (*NextNumberResult, error) {
 	if !c.Configured() {
 		return nil, fmt.Errorf("SHEETS_SYNC_URL is not configured")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/next-act-number", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +108,55 @@ func (c *Client) RegisterAct(ctx context.Context, contract, date string) (*Write
 		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/write-act-row", bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	c.authorize(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("calling sheets-sync: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, apiError(body, resp.StatusCode)
+	}
+
+	var result WriteRowResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parsing sheets-sync response: %w", err)
+	}
+	return &result, nil
+}
+
+// RegisterInvoice writes a new row for a just-created invoice. Like
+// RegisterAct, sheets-sync recomputes the next row/number itself at write
+// time rather than trusting a caller-supplied value. Category is one of the
+// three fixed project buckets ("Продвижение"/"Разработка"/"Хостинг") a
+// human picks in the UI — it is NOT derived from the invoice's service line
+// items, which can be several and don't map 1:1 onto a bucket. sheets-sync
+// validates it server-side too, but callers should only ever pass one of
+// the three values to begin with.
+func (c *Client) RegisterInvoice(ctx context.Context, legalName, counterparty, category, date string) (*WriteRowResult, error) {
+	if !c.Configured() {
+		return nil, fmt.Errorf("SHEETS_SYNC_URL is not configured")
+	}
+	payload, err := json.Marshal(map[string]string{
+		"legal_name":   legalName,
+		"counterparty": counterparty,
+		"category":     category,
+		"date":         date,
+	})
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/write-invoice-row", bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}

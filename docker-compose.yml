@@ -44,6 +44,7 @@ services:
       - ./backend/migrations/031_redmine_control_event_notified_at.sql:/docker-entrypoint-initdb.d/031_redmine_control_event_notified_at.sql
       - ./backend/migrations/032_zvonari_engine_tracking.sql:/docker-entrypoint-initdb.d/032_zvonari_engine_tracking.sql
       - ./backend/migrations/033_zvonari_error_kind.sql:/docker-entrypoint-initdb.d/033_zvonari_error_kind.sql
+      - ./backend/migrations/034_zvonari_fraud_precheck.sql:/docker-entrypoint-initdb.d/034_zvonari_fraud_precheck.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U invoices_user -d invoices_db"]
       interval: 10s
@@ -83,6 +84,9 @@ services:
       TRANSCRIBE_FORMAT: ${TRANSCRIBE_FORMAT:-gpu}
       TRANSCRIBE_OPENROUTER_MODEL: ${TRANSCRIBE_OPENROUTER_MODEL:-google/gemini-2.5-flash-lite}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # ANALYSIS_OPENROUTER_MODEL — 4-критериальная оценка звонка (2026-09-29,
+      # см. internal/analysis/client.go), напрямую в OpenRouter, в обход Hermes.
+      ANALYSIS_OPENROUTER_MODEL: ${ANALYSIS_OPENROUTER_MODEL:-openai/gpt-6-luna}
       CALL_ANALYTICS_URL: ${CALL_ANALYTICS_URL:-http://hermes_call_analytics:8646}
       CALL_ANALYTICS_TOKEN: ${CALL_ANALYTICS_TOKEN:-}
       SABY_BASE_URL: ${SABY_BASE_URL:-https://online.sbis.ru}
