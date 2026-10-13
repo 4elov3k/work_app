@@ -20,6 +20,7 @@ import {
   ScriptFunnel,
   CallDetailList,
 } from "../_shared";
+import { ReportPreview, ReportView } from "../_report_view";
 
 type Tab = "overview" | "calls" | "reports";
 const TAB_VALUES: Tab[] = ["overview", "calls", "reports"];
@@ -423,18 +424,14 @@ export default function ZvonariCallerPage() {
                           {new Date((report ?? history![0]).requested_at).toLocaleDateString("ru-RU")}, период{" "}
                           {(report ?? history![0]).period_start} – {(report ?? history![0]).period_end}
                         </p>
-                        <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-                          {(report ?? history![0]).summary_text}
-                        </p>
-                        {history && history.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => setTab("reports")}
-                            className="mt-3 text-xs text-primary hover:underline"
-                          >
-                            Ещё {history.length - 1} {history.length - 1 === 1 ? "отчёт" : "отчёта"} →
-                          </button>
-                        )}
+                        <ReportPreview report={report ?? history![0]} />
+                        <button
+                          type="button"
+                          onClick={() => setTab("reports")}
+                          className="mt-3 text-xs text-primary hover:underline"
+                        >
+                          Открыть отчёт полностью{history && history.length > 1 ? ` · ещё ${history.length - 1} в истории` : ""} →
+                        </button>
                       </>
                     ) : (
                       <p className="text-sm text-muted-foreground">
@@ -473,14 +470,14 @@ export default function ZvonariCallerPage() {
           </TabsContent>
 
           <TabsContent value="reports" className="mt-4 space-y-3">
-            {report && (
+            {(report ?? history?.[0]) && (
               <Card className="rounded-lg border-border shadow-none">
                 <CardContent className="pt-5">
-                  <h4 className="mb-2 flex items-center gap-1.5 text-sm font-medium">
+                  <h4 className="mb-4 flex items-center gap-1.5 text-sm font-medium">
                     <FileBarChart className="h-4 w-4 text-primary" />
-                    Текущий отчёт
+                    {report ? "Текущий отчёт" : "Последний отчёт"}
                   </h4>
-                  <p className="whitespace-pre-wrap text-sm text-muted-foreground">{report.summary_text}</p>
+                  <ReportView report={(report ?? history![0])} calls={calls ?? []} onAnalyze={handleAnalyzeCall} analyzingIds={analyzingIds} />
                 </CardContent>
               </Card>
             )}
@@ -493,13 +490,16 @@ export default function ZvonariCallerPage() {
               <p className="text-sm text-muted-foreground">Отчётов по этому звонарю ещё не было</p>
             ) : (
               <div className="space-y-2">
+                <h4 className="text-sm font-medium text-muted-foreground">История</h4>
                 {history.map((r) => (
                   <details key={r.id} className="group rounded-md border border-border p-3 transition-colors hover:bg-accent/40">
                     <summary className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground group-open:text-foreground">
                       <History className="h-3.5 w-3.5" />
                       {new Date(r.requested_at).toLocaleString("ru-RU")} — {r.period_start} — {r.period_end}
                     </summary>
-                    <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{r.summary_text}</p>
+                    <div className="mt-3">
+                      <ReportView report={r} calls={calls ?? []} onAnalyze={handleAnalyzeCall} analyzingIds={analyzingIds} />
+                    </div>
                   </details>
                 ))}
               </div>

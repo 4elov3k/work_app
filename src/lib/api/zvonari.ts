@@ -17,8 +17,42 @@ export interface CallerReport {
   period_start: string;
   period_end: string;
   summary_text: string;
-  metrics_json?: unknown;
+  metrics_json?: CallerReportMetrics | null;
   requested_at: string;
+}
+
+// Ключи 4 качеств — те же, что в рубрике оценки звонка (hermes
+// call_analytics_server.py, CRITERIA_KEYS).
+export type CriterionKey = "listening" | "goal_understanding" | "questions" | "objection_handling";
+
+export interface ReportCallRef {
+  number: number;
+  call_id: string;
+  started_at: string;
+}
+
+// metrics_json отчёта по звонарю: by_criterion считает hermes по оценкам
+// звонков; report — структурированный разбор (с 2026-10-13, у старых
+// отчётов его нет — только summary_text и, возможно, by_criterion).
+export interface CallerReportMetrics {
+  total_calls?: number;
+  scored_calls?: number;
+  overall_score?: string;
+  by_criterion?: Partial<Record<CriterionKey, { met: number; applicable: number }>>;
+  report?: {
+    summary?: string;
+    criteria?: Partial<Record<CriterionKey, {
+      label?: string;
+      verdict?: string | null;
+      comment?: string | null;
+      example_call?: ReportCallRef | null;
+    }>>;
+    strengths?: string[];
+    growth_areas?: string[];
+    manager_actions?: { action?: string; why?: string; how?: string; calls?: ReportCallRef[] }[];
+    calls_to_review?: (ReportCallRef & { why?: string })[];
+    focus_next?: string;
+  };
 }
 
 // CallStepStatus — статусы шагов 1/2/3/5/6 по регламенту IQ-200 v1.2
