@@ -107,6 +107,11 @@ func main() {
 
 			r.Get("/invoices", h.GetInvoices)
 			r.Post("/invoices/duplicate", h.DuplicateInvoice)
+			// Google-авторизация sheets-sync (переподключение токена из интерфейса)
+			r.Get("/google/status", h.GetGoogleAuthStatus)
+			r.Post("/google/auth-url", h.StartGoogleAuth)
+			r.Post("/google/auth-code", h.FinishGoogleAuth)
+
 			r.Get("/invoices/next-number-from-sheet", h.GetInvoiceNumberFromSheet)
 			r.Post("/invoices/{id}/register-in-sheet", h.RegisterInvoiceInSheet)
 			r.Get("/invoices/{id}/services", h.GetInvoiceWithServices)

@@ -184,6 +184,87 @@ func (c *Client) RegisterInvoice(ctx context.Context, legalName, counterparty, c
 	return &result, nil
 }
 
+// GoogleStatus — состояние Google-токена, через который sheets-sync ходит в
+// таблицы. OAuth-приложение в тестовом режиме, поэтому refresh-токен умирает
+// примерно через 7 дней после согласия, и его приходится переподключать.
+type GoogleStatus struct {
+	Authenticated   bool    `json:"authenticated"`
+	State           string  `json:"state"`
+	Message         string  `json:"message"`
+	AuthorizedAt    *string `json:"authorized_at"`
+	HasClientSecret bool    `json:"has_client_secret"`
+}
+
+func (c *Client) GoogleStatus(ctx context.Context) (*GoogleStatus, error) {
+	var result GoogleStatus
+	if err := c.do(ctx, http.MethodGet, "/google/status", nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GoogleAuthURL starts a fresh OAuth session on the sheets-sync side (it keeps
+// the state/PKCE verifier) and returns the consent link for the browser.
+func (c *Client) GoogleAuthURL(ctx context.Context) (string, error) {
+	var result struct {
+		URL string `json:"url"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/google/auth-url", struct{}{}, &result); err != nil {
+		return "", err
+	}
+	return result.URL, nil
+}
+
+// GoogleAuthCode exchanges the redirect URL (or bare code) the user pasted
+// after consent for a new token.
+func (c *Client) GoogleAuthCode(ctx context.Context, code string) (*GoogleStatus, error) {
+	var result GoogleStatus
+	if err := c.do(ctx, http.MethodPost, "/google/auth-code", map[string]string{"code": code}, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *Client) do(ctx context.Context, method, path string, payload, out any) error {
+	if !c.Configured() {
+		return fmt.Errorf("SHEETS_SYNC_URL is not configured")
+	}
+	var reqBody io.Reader
+	if payload != nil {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		reqBody = bytes.NewReader(data)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reqBody)
+	if err != nil {
+		return err
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	c.authorize(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("calling sheets-sync: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return apiError(body, resp.StatusCode)
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("parsing sheets-sync response: %w", err)
+	}
+	return nil
+}
+
 func (c *Client) authorize(req *http.Request) {
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)

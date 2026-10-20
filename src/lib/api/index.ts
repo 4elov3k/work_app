@@ -5,3 +5,4 @@ export * from './client';
 export * from './documents';
 export * from './redmine';
 export * from './zvonari';
+export * from './google';

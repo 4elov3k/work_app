@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
 import CreateCustomerDialog from "./components/CreateCustomerDialog";
+import GoogleAuthDialog from "./components/GoogleAuthDialog";
 import DeleteCustomerButton from "./[customer]/components/deleteCustomerButton";
 
 
@@ -111,6 +112,7 @@ export default function Home() {
               Звонари
             </Button>
           </Link>
+          <GoogleAuthDialog />
           <CreateCustomerDialog onCreated={handleCustomerCreated} />
         </div>
       </div>
