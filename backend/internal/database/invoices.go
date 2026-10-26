@@ -457,6 +457,26 @@ func (db *DB) DuplicateInvoice(ctx context.Context, req models.DuplicateInvoiceR
 	return &newInvoice, nil
 }
 
+// FindInvoiceOwnerByNumber возвращает контрагента и дату счёта с таким
+// номером (номера уникальны глобально); found=false, если номер свободен.
+func (db *DB) FindInvoiceOwnerByNumber(ctx context.Context, number string) (customerName, date string, found bool, err error) {
+	query := `
+		SELECT c.name, i.date
+		FROM invoices i
+		JOIN customers c ON c.id = i.customer_id
+		WHERE i.number = $1
+		LIMIT 1
+	`
+	err = db.QueryRowContext(ctx, query, number).Scan(&customerName, &date)
+	if err == sql.ErrNoRows {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, fmt.Errorf("failed to find invoice by number: %w", err)
+	}
+	return customerName, date, true, nil
+}
+
 // CheckInvoiceNumberExists проверяет существование номера счета у контрагента
 // CheckInvoiceNumberExists проверяет, занят ли номер счёта. Номера счетов
 // уникальны глобально, поэтому contract_id в условие не входит; contractID

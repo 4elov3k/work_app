@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -104,6 +105,22 @@ func (h *Handlers) GetInvoiceNumberFromSheet(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		log.Printf("sheetsync: next-invoice-number failed: %v", err)
 		respondWithError(w, http.StatusBadGateway, "Не удалось получить номер из таблицы")
+		return
+	}
+
+	// Таблица считает следующий номер только по своим строкам. Если счёт
+	// создали в приложении без записи в реестр, номер уже занят в базе —
+	// говорим об этом сразу, а не 409-кой при сохранении.
+	customerName, date, taken, err := h.db.FindInvoiceOwnerByNumber(r.Context(), result.Number)
+	if err != nil {
+		log.Printf("sheetsync: check invoice number %s failed: %v", result.Number, err)
+		respondWithError(w, http.StatusInternalServerError, "Не удалось проверить номер счета")
+		return
+	}
+	if taken {
+		respondWithError(w, http.StatusConflict, fmt.Sprintf(
+			"Номер %s из таблицы уже занят счетом %s от %s, который не внесен в таблицу. Допишите его в реестр (строка %d) и синхронизируйте снова.",
+			result.Number, customerName, date, result.Row))
 		return
 	}
 
